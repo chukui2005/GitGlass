@@ -1,14 +1,14 @@
-# GitGlass V0.2 发布验收报告
+# GitGlass V0.3 发布验收报告
 
 **结论：通过**
-**验收范围：** Command Ledger、Branch Workspace 及 V0.2 发布阻断项。
+**验收范围：** Command Ledger、Branch Workspace 和 Remote Sync Workspace。
 
 ## 构建与测试输出
 
 ```text
 npm test
-Test Files  4 passed (4)
-Tests       8 passed (8)
+Test Files  5 passed (5)
+Tests       10 passed (10)
 
 npm run build
 vite v8.3.7 building client environment for production...
@@ -40,6 +40,20 @@ vite v8.3.7 building client environment for production...
 
 测试结束后会递归删除临时仓库。
 
+## 真实远程同步集成测试
+
+`tests/remote-sync.integration.test.cjs` 不使用 mock。它创建一个临时 bare `origin` 和两个本地 clone，全部 Git 操作都通过真实 `GitCommandService` 调用本机 Git：
+
+1. 读取 upstream、经脱敏的 remote URL 和 Ahead / Behind；
+2. 计划、确认并记录 `git fetch origin`；
+3. 创建本地领先提交，计划、确认并记录普通 `git push origin main:main`；
+4. 由第二个 clone 产生远程提交，Fetch 后以 `git pull --ff-only origin main` 完成快进；
+5. 在 Behind 状态写入未提交工作区改动，验证 Pull 被阻断且不自动 stash；
+6. 生成本地/远程分叉，验证 Pull 在执行前因无法 fast-forward 被阻断，且 `merge-base` 的 exit code 保留；
+7. 验证 Ledger 包含 remote、remote URL、Ahead / Behind、fetch、push 和 pull 的真实记录，并验证三种远程实际操作与其计划共享 `operationId`。
+
+另有 URL 脱敏单元测试，确认凭据、query 参数和 fragment 不会进入 Command Ledger。
+
 ## 人工 UI 验收
 
 已在 Electron 渲染器中检查以下场景：
@@ -49,13 +63,11 @@ vite v8.3.7 building client environment for production...
 - Command Ledger 显示用户与后台记录，展开项包括 cwd、原始 argv、完整命令、stdout、stderr、退出代码和复制控件。
 - 异步通知使用 `aria-live="polite"`；存在 h1、skip link、深色 `color-scheme`、输入项的 name/autocomplete 和键盘焦点态。
 - 1024px 宽度下 stdout 与 stderr 均保留，以纵向方式显示。
+- 远程同步位于右侧操作上下文：Push 使用青绿色、Behind/Pull 使用黄色，脏工作区或安全阻断使用红色；没有远程时显示可操作的空状态。
 
-截图：
+## 截图
 
-- `output/design/gitglass-1440.png`
-- `output/design/gitglass-1280.png`
-- `output/design/gitglass-1024.png`
-- `output/qa/live-ledger-argv.png`
+本次无可交付的 V0.3 截图。当前自动化主机没有可用 display surface，Electron 的 `capturePage()` 返回 `Current display surface not available`；旧 V0.2 截图不作为本版 UI 证据。应在具备桌面显示表面的验收机上打开任意带 remote 的本地仓库，复核远程同步区的 Ahead / Behind、脱敏 URL、计划命令确认和 Command Ledger 展开详情。
 
 ## 安全审计
 
@@ -65,4 +77,4 @@ vite v8.3.7 building client environment for production...
 rg -n "shell\s*:\s*true|\beval\s*\(|execSync|child_process|spawn\(" . -g '!node_modules' -g '!dist' -g '!output'
 ```
 
-应用运行时代码中，唯一的 `child_process.spawn` 位于 `electron/git-command-service.cjs`，并固定采用 `spawn('git', argv, { shell: false, windowsHide: true })`。未发现 `shell:true`、`eval`、字符串命令执行、自动 stash、强制切换、push、pull、merge 或 rebase。
+应用运行时代码中，唯一的 `child_process.spawn` 位于 `electron/git-command-service.cjs`，并固定采用 `spawn('git', argv, { shell: false, windowsHide: true })`。未发现 `shell:true`、`eval`、字符串命令执行、自动 stash、强制切换、force push、远程删除、自动 merge、rebase 或 reset。V0.3 仅以明确 argv 实现普通 push、fetch 与 `pull --ff-only`。

@@ -1,4 +1,4 @@
-# GitGlass V0.2 architecture
+# GitGlass V0.3 architecture
 
 ## CommandRecord is the audit boundary
 
@@ -13,15 +13,31 @@ startedAt, endedAt, stdout, stderr, exitCode, ok
 
 `source` is `user` for an explicit interaction and `background` for refreshes, status, diff, branch, and history reads. Records are retained in reverse chronological order in the in-memory ledger and exposed through the narrow `repo:ledger` IPC endpoint.
 
+`GitCommandService.run()` supports an output-redaction function for the narrow case where a Git command returns a remote URL. Redaction happens before the immutable record is retained or sent over IPC: URL username/password, query parameters, and fragments never enter the Command Ledger.
+
 ## Planned versus executed
 
-`GitCommandService.plan()` returns an object with `phase: "planned"` and a newly generated `operationId`; it is intentionally not a `CommandRecord`, has no execution timestamps/output/exit code, and is never inserted into the ledger. Branch switching first returns this plan. The renderer returns that exact `operationId` on explicit confirmation; `executeSwitch` first rechecks that the worktree is clean, then produces a real CommandRecord carrying the same ID.
+`GitCommandService.plan()` returns an object with `phase: "planned"` and a newly generated `operationId`; it is intentionally not a `CommandRecord`, has no execution timestamps/output/exit code, and is never inserted into the ledger. Branch switching and remote synchronization first return this plan. The renderer returns that exact `operationId` on explicit confirmation; execution rechecks its safety preconditions, then produces a real CommandRecord carrying the same ID.
 
 ## Repository operations
 
 `RepositoryService` owns Git argument construction and data parsing. It uses `--` for file paths and validates repository paths, commit messages, and branch names before building argv. It does not stash, force-switch, reset a worktree, or discard data. If the worktree is dirty, branch switching is blocked with an explanation.
 
-The Electron main process exposes a small context-isolated preload surface. The renderer cannot access Node or child processes. It can request state, diffs, ledger records, commits, branches, a branch plan, or an explicitly confirmed branch action.
+The Electron main process exposes a small context-isolated preload surface. The renderer cannot access Node or child processes. It can request state, diffs, ledger records, commits, branches, remote overview data, and an explicitly confirmed branch or remote action.
+
+## Remote synchronization safety boundary
+
+`RepositoryService.remoteOverview()` reads `git remote`, `git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`, `git remote get-url <remote>`, and `git rev-list --left-right --count @{upstream}...HEAD`. Each is a background CommandRecord. It returns a clear absence reason for a missing remote or upstream instead of fabricating counts.
+
+Remote plans are built only from validated data read from the current repository:
+
+| Operation | Exact argv | Required preconditions |
+| --- | --- | --- |
+| Fetch | `['fetch', remote]` | at least one configured remote |
+| Push | `['push', remote, '<local>:<upstream>']` | upstream exists and Ahead > 0 |
+| Pull | `['pull', '--ff-only', remote, upstreamBranch]` | upstream exists, Behind > 0, worktree clean, and `merge-base --is-ancestor HEAD @{upstream}` succeeds |
+
+Before any operation is executed, the repository repeats the overview and safety checks with the planned `operationId`. It never uses `--force`, `--force-with-lease`, a remote deletion refspec, automatic merge/rebase/stash, reset, or a force checkout. A failed `pull --ff-only` remains an ordinary CommandRecord with its original stdout, stderr, and exit code.
 
 ## Renderer API contract
 
@@ -37,6 +53,9 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `getCommits()` | `{ record, commits }` | one `background` log record |
 | `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; generated `plan.operationId` is not a record |
 | `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record with the reviewed plan's operation ID if safe |
+| `getRemoteOverview()` | `{ remote, upstream, ahead, behind, reason, suggestion, state }` | background records for remote/upstream URL/count reads |
+| `prepareRemote(kind)` | `{ ok, blocked, reason, plan, overview }` | background remote safety reads; plan is not a ledger entry |
+| `executeRemote(kind, operationId)` | `{ execution, ok, blocked, reason, plan, overview }` | repeats safety reads, then appends one user record with the planned operation ID |
 
 `file` is `{ path, area: 'staged' | 'unstaged' }`. `branches` contains `{ name, current, hash }`; `commits` contains `{ hash, parents, subject, author, authoredAt }`. A plan's `argv` is the exact Git argument array (for example `['switch', 'feature/report']`); `displayCommand` includes the executable. The renderer must display a planned branch command as a proposal until `executeBranch` returns an `execution` record; it must never add a plan to the ledger.
 

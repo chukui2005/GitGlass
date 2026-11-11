@@ -10,4 +10,7 @@ contextBridge.exposeInMainWorld('gitglass', {
   getCommits: () => ipcRenderer.invoke('repo:commits'),
   prepareBranch: (branch, create) => ipcRenderer.invoke('branch:prepare', branch, create),
   executeBranch: (branch, create, operationId) => ipcRenderer.invoke('branch:execute', branch, create, operationId),
+  getRemoteOverview: () => ipcRenderer.invoke('remote:overview'),
+  prepareRemote: (kind) => ipcRenderer.invoke('remote:prepare', kind),
+  executeRemote: (kind, operationId) => ipcRenderer.invoke('remote:execute', kind, operationId),
 })
