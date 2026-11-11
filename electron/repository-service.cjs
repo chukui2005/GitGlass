@@ -1,0 +1,53 @@
+const { parseStatus, parseBranches, parseCommits } = require('./git-parsers.cjs')
+
+function isPath(value) { return typeof value === 'string' && value.length > 0 && !value.includes('\0') }
+function isBranchName(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255 && !value.startsWith('-') && !/[\0\s~^:?*\\[\\]|]|\.\.|\/$|\.$/.test(value)
+}
+
+class RepositoryService {
+  constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
+  get cwd() { return this.getRepoPath() }
+  run(argv, intent, source = 'background', operationId) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId }) }
+  plan(argv, intent, operationId) { return this.commands.plan({ argv, intent, cwd: this.cwd, operationId }) }
+
+  async state() {
+    const [branchRecord, statusRecord] = await Promise.all([
+      this.run(['branch', '--show-current'], 'Read current branch'),
+      this.run(['status', '--porcelain=v1', '-z'], 'Read working tree status'),
+    ])
+    if (!statusRecord.ok) return { ok: false, error: statusRecord.stderr || statusRecord.stdout, path: this.cwd, branch: '', files: [], records: [branchRecord, statusRecord] }
+    return { ok: true, path: this.cwd, branch: branchRecord.stdout.trim() || 'DETACHED HEAD', files: parseStatus(statusRecord.stdout), records: [branchRecord, statusRecord] }
+  }
+
+  diff(file) {
+    if (!file || !isPath(file.path)) return Promise.resolve(this.invalid('Read diff', 'Invalid file path.'))
+    return this.run(file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path], 'Read file diff')
+  }
+  stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
+  unstage(path) { return isPath(path) ? this.run(['restore', '--staged', '--', path], 'Unstage file', 'user') : Promise.resolve(this.invalid('Unstage file', 'Invalid file path.')) }
+  stageAll() { return this.run(['add', '-A'], 'Stage all changes', 'user') }
+  unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
+  commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
+  branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
+  commits() { return this.run(['log', '-30', '--pretty=format:%h%x1f%p%x1f%s%x1f%an%x1f%aI'], 'Read recent commits').then((record) => ({ record, commits: record.ok ? parseCommits(record.stdout) : [] })) }
+
+  async prepareSwitch(branch, create = false) {
+    if (!isBranchName(branch)) return { ok: false, blocked: true, reason: '分支名无效。', plan: null }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null }
+    if (state.files.length) return { ok: false, blocked: true, reason: '工作区存在未提交或未暂存的变更。GitGlass 不会自动 stash、丢弃或覆盖它们。', plan: null, state }
+    const argv = create ? ['switch', '-c', branch] : ['switch', branch]
+    return { ok: true, blocked: false, plan: this.plan(argv, create ? 'Create and switch branch' : 'Switch branch'), state }
+  }
+  async executeSwitch(branch, create = false, operationId) {
+    const prepared = await this.prepareSwitch(branch, create)
+    if (!prepared.ok) return { execution: null, ...prepared }
+    // A plan stores Git arguments (not a shell command and not the executable).
+    // Execute the exact reviewed argv without dropping its first argument.
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', operationId)
+    return { execution, ...prepared, state: await this.state() }
+  }
+  invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }
+}
+module.exports = { RepositoryService, isBranchName, isPath }
