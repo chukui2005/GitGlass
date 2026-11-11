@@ -15,7 +15,7 @@ startedAt, endedAt, stdout, stderr, exitCode, ok
 
 ## Planned versus executed
 
-`GitCommandService.plan()` returns an object with `phase: "planned"`; it is intentionally not a `CommandRecord`, has no execution timestamps/output/exit code, and is never inserted into the ledger. Branch switching first returns this plan. Only an explicit confirmation calls `executeSwitch`, which first rechecks that the worktree is clean, then produces a real CommandRecord.
+`GitCommandService.plan()` returns an object with `phase: "planned"` and a newly generated `operationId`; it is intentionally not a `CommandRecord`, has no execution timestamps/output/exit code, and is never inserted into the ledger. Branch switching first returns this plan. The renderer returns that exact `operationId` on explicit confirmation; `executeSwitch` first rechecks that the worktree is clean, then produces a real CommandRecord carrying the same ID.
 
 ## Repository operations
 
@@ -35,8 +35,8 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `getLedger()` | `CommandRecord[]` newest first | read-only |
 | `getBranches()` | `{ record, branches }` | one `background` branch record |
 | `getCommits()` | `{ record, commits }` | one `background` log record |
-| `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; `plan.phase === 'planned'` is not a record |
-| `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record only if safe |
+| `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; generated `plan.operationId` is not a record |
+| `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record with the reviewed plan's operation ID if safe |
 
 `file` is `{ path, area: 'staged' | 'unstaged' }`. `branches` contains `{ name, current, hash }`; `commits` contains `{ hash, parents, subject, author, authoredAt }`. A plan's `argv` is the exact Git argument array (for example `['switch', 'feature/report']`); `displayCommand` includes the executable. The renderer must display a planned branch command as a proposal until `executeBranch` returns an `execution` record; it must never add a plan to the ledger.
 
