@@ -2,3 +2,8 @@ node_modules/
 dist/
 demo-repo/
 output/
+.env
+.env.*
+!.env.example
+.DS_Store
+.vscode/
