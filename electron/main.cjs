@@ -27,6 +27,9 @@ ipcMain.handle('repo:branches', () => repository.branches())
 ipcMain.handle('repo:commits', () => repository.commits())
 ipcMain.handle('branch:prepare', (_event, branch, create) => repository.prepareSwitch(branch, Boolean(create)))
 ipcMain.handle('branch:execute', (_event, branch, create, operationId) => repository.executeSwitch(branch, Boolean(create), operationId))
+ipcMain.handle('remote:overview', () => repository.remoteOverview())
+ipcMain.handle('remote:prepare', (_event, kind) => repository.prepareRemote(kind))
+ipcMain.handle('remote:execute', (_event, kind, operationId) => repository.executeRemote(kind, operationId))
 ipcMain.handle('git:operate', async (_event, action, payload = {}) => {
   let execution
   if (action === 'stage') execution = await repository.stage(payload.path)

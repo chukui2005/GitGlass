@@ -33,7 +33,7 @@ class GitCommandService {
 
   history() { return [...this.records] }
 
-  async run({ argv, intent, source, cwd, operationId = null }) {
+  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null }) {
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
@@ -41,6 +41,12 @@ class GitCommandService {
     }
     const finish = (exitCode, error = '') => {
       if (error) record.stderr += error
+      // Some Git queries can legitimately return a credential-bearing URL.
+      // Redact before the immutable audit record is retained or sent over IPC.
+      if (typeof redactOutput === 'function') {
+        record.stdout = redactOutput(record.stdout)
+        record.stderr = redactOutput(record.stderr)
+      }
       record.exitCode = Number.isInteger(exitCode) ? exitCode : -1
       record.ok = record.exitCode === 0
       record.endedAt = this.now()

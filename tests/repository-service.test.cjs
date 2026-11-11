@@ -1,4 +1,4 @@
-const { RepositoryService } = require('../electron/repository-service.cjs')
+const { RepositoryService, redactRemoteUrl } = require('../electron/repository-service.cjs')
 
 function commandsFor(records) {
   return { run: async (request) => ({ ...request, id: 'record', operationId: request.operationId || 'operation', argv: ['git', ...request.argv], displayCommand: `git ${request.argv.join(' ')}`, stdout: records.shift() ?? '', stderr: '', exitCode: 0, ok: true }), plan: (request) => ({ phase: 'planned', ...request, operationId: request.operationId || 'planned-operation', argv: [...request.argv], displayCommand: `git ${request.argv.join(' ')}` }) }
@@ -25,5 +25,13 @@ describe('Branch workspace safety', () => {
       expect(result).toMatchObject({ ok: false, blocked: true, plan: null })
       expect(result.validation.argv).toEqual(['check-ref-format', '--branch', name])
     }
+  })
+})
+
+describe('Remote URL safety', () => {
+  it('removes credentials, query parameters, and fragments before a remote URL reaches the ledger', () => {
+    const value = redactRemoteUrl('https://token:secret@example.test/team/repo.git?access_token=abc#private\n')
+    expect(value).toBe('https://example.test/team/repo.git\n')
+    expect(redactRemoteUrl('git@example.test:team/repo.git?token=secret')).toBe('git@example.test:team/repo.git')
   })
 })
