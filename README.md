@@ -24,6 +24,6 @@ Choose a local repository with **打开仓库**. GitGlass invokes the user's ins
 
 The Electron renderer is sandboxed with context isolation. It has a small, fixed preload API; only the main process can invoke Git. Git is executed with `spawn('git', args, { shell: false })`, so a filename or commit message is passed as an argument rather than interpolated into a shell command. Commit messages are limited to 4096 characters and all file operations use Git's `--` path separator.
 
-## Demo repository
+## Local demo repository
 
-`demo-repo/` is a small real Git repository seeded for smoke testing. It begins with one modified, unstaged file. Its `.git` directory is intentionally local-only and is not part of this project’s source artifact.
+`demo-repo/` is an optional, local-only smoke-test fixture. It is intentionally ignored by this repository because it contains its own Git history; clone GitGlass and select any local Git repository to test the application.
