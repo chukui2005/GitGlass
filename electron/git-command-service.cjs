@@ -25,15 +25,17 @@ class GitCommandService {
     this.records = []
   }
 
+  createOperationId() { return this.idFactory() }
+
   plan({ argv, intent, cwd, operationId = null }) {
-    return { phase: 'planned', operationId, intent, argv: [...argv], displayCommand: displayGitCommand(argv), cwd }
+    return { phase: 'planned', operationId: operationId || this.createOperationId(), intent, argv: [...argv], displayCommand: displayGitCommand(argv), cwd }
   }
 
   history() { return [...this.records] }
 
   async run({ argv, intent, source, cwd, operationId = null }) {
     const record = {
-      id: this.idFactory(), operationId: operationId || this.idFactory(), intent, source,
+      id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
       cwd: cwd || '', startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
     }
