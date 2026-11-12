@@ -5,5 +5,5 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   clearScreen: false,
-  test: { globals: true },
+  test: { globals: true, fileParallelism: false },
 })

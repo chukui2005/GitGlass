@@ -1,4 +1,4 @@
-# GitGlass V0.3 发布验收报告
+# GitGlass V0.4 发布验收报告
 
 **结论：通过**
 **验收范围：** Command Ledger、Branch Workspace 和 Remote Sync Workspace。
@@ -78,3 +78,15 @@ rg -n "shell\s*:\s*true|\beval\s*\(|execSync|child_process|spawn\(" . -g '!node_
 ```
 
 应用运行时代码中，唯一的 `child_process.spawn` 位于 `electron/git-command-service.cjs`，并固定采用 `spawn('git', argv, { shell: false, windowsHide: true })`。未发现 `shell:true`、`eval`、字符串命令执行、自动 stash、强制切换、force push、远程删除、自动 merge、rebase 或 reset。V0.3 仅以明确 argv 实现普通 push、fetch 与 `pull --ff-only`。
+
+## V0.4 Safety & Recovery 验收
+
+`tests/safety-recovery.integration.test.cjs` 使用真实临时 Git 仓库和本机 Git，不使用 mock：
+
+1. 修改已跟踪文件，验证 prepare 不改文件；确认后通过 `git restore --worktree -- note.txt` 恢复 HEAD 内容，并验证计划/执行 operationId 相同。
+2. 验证未跟踪文件及已暂存文件都不能进入丢弃流程。
+3. 验证已合并分支只能用 `git branch -d feature/merged` 删除，且记录为 user source。
+4. 验证未合并分支被阻断，并断言整段真实 Ledger 没有 `git branch -D`。
+5. 读取真实 reflog，创建 `rescue/...` 分支，验证其 ref 精确指向所选完整 SHA，且计划/执行 operationId 相同。
+
+人工 Electron 验收覆盖高风险丢弃确认页、未合并分支阻断页，以及创建救援分支后的 Command Ledger 详情。所有 V0.4 确认控件使用明确动词；风险提示使用红/橙/绿状态色，主交互保持 Workbench Light 的蓝色。

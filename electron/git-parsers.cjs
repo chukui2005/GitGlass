@@ -42,4 +42,12 @@ function parseCommits(raw) {
   })
 }
 
-module.exports = { parseStatus, parseBranches, parseCommits }
+function parseReflog(raw) {
+  return raw.split('\n').filter(Boolean).map((line) => {
+    const [hash, shortHash, selector, subject] = line.split('\x1f')
+    const match = selector?.match(/@\{(.+)\}$/)
+    return { hash, shortHash, selector, occurredAt: match?.[1] || '', action: selector || '', subject: subject || '' }
+  }).filter((entry) => /^[0-9a-f]{40}$/i.test(entry.hash))
+}
+
+module.exports = { parseStatus, parseBranches, parseCommits, parseReflog }
