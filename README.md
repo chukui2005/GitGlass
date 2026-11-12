@@ -1,4 +1,4 @@
-# GitGlass V0.3
+# GitGlass V0.4
 
 GitGlass 是一款透明执行的桌面 Git 工作台：它直接调用用户本机的 `git`，并把计划、实际命令与 Git 状态变化放在同一个界面中。
 
@@ -38,6 +38,16 @@ npm run dev
 - 工作区有改动时，分支创建和切换都会被阻断。GitGlass 不会自动 stash、丢弃改动或强制切换。
 - V0.3 仍不包含远程分支管理、merge 或 rebase；远程同步范围仅限普通 Push、Fetch 与 `pull --ff-only`。
 
+## Safety & Recovery Center
+
+GitGlass V0.4 为三个常见恢复场景提供“计划 → 风险确认 → 执行 → 账本”的窄操作范围：
+
+- 仅可丢弃单个、已跟踪、未暂存文件的改动：`git restore --worktree -- <path>`。必须查看 Diff 并输入文件名确认；未跟踪文件、已暂存文件、批量丢弃、`git clean`、`reset --hard` 与 `checkout .` 都不提供。
+- 仅可删除已合并且非当前的本地分支。GitGlass 先执行 `git merge-base --is-ancestor <branch> HEAD`，只在成功后计划 `git branch -d <branch>`；永不使用 `git branch -D`。
+- 恢复中心读取最近 20 条 reflog，并只允许创建 `rescue/<timestamp>-<shortSha>` 救援分支：`git branch rescue/<timestamp>-<shortSha> <fullSha>`。它不会 reset、切换或重写 HEAD，也不会覆盖现有分支。
+
+所有 V0.4 计划与最终执行共享同一个 `operationId`。计划只是预览，不会进入 Command Ledger；真实执行仍保存完整 argv、cwd、stdout、stderr 与 exit code。
+
 ## 安全与执行模型
 
 渲染进程启用 context isolation 与 sandbox，只有 Electron 主进程能执行 Git。唯一的执行入口是 `GitCommandService`，使用：
@@ -55,4 +65,4 @@ npm test
 npm run build
 ```
 
-测试同时包含 CommandRecord/解析单元测试、真实工作流测试，以及用 bare origin 和两个本地 clone 运行的远程同步集成测试。完整架构和验收证据见 [ARCHITECTURE.md](ARCHITECTURE.md) 与 [QA_REPORT.md](QA_REPORT.md)。
+测试同时包含 CommandRecord/解析单元测试、真实工作流测试、远程同步集成测试，以及真实临时仓库的安全与恢复集成测试。完整架构和验收证据见 [ARCHITECTURE.md](ARCHITECTURE.md) 与 [QA_REPORT.md](QA_REPORT.md)。

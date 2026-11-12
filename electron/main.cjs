@@ -30,6 +30,13 @@ ipcMain.handle('branch:execute', (_event, branch, create, operationId) => reposi
 ipcMain.handle('remote:overview', () => repository.remoteOverview())
 ipcMain.handle('remote:prepare', (_event, kind) => repository.prepareRemote(kind))
 ipcMain.handle('remote:execute', (_event, kind, operationId) => repository.executeRemote(kind, operationId))
+ipcMain.handle('safety:discard:prepare', (_event, filePath) => repository.prepareDiscard(filePath))
+ipcMain.handle('safety:discard:execute', (_event, filePath, operationId) => repository.executeDiscard(filePath, operationId))
+ipcMain.handle('safety:branch-delete:prepare', (_event, branch) => repository.prepareDeleteMergedBranch(branch))
+ipcMain.handle('safety:branch-delete:execute', (_event, branch, operationId) => repository.executeDeleteMergedBranch(branch, operationId))
+ipcMain.handle('recovery:reflog', () => repository.reflog())
+ipcMain.handle('recovery:rescue:prepare', (_event, hash, branch) => repository.prepareRescueBranch(hash, branch))
+ipcMain.handle('recovery:rescue:execute', (_event, hash, branch, operationId) => repository.executeRescueBranch(hash, branch, operationId))
 ipcMain.handle('git:operate', async (_event, action, payload = {}) => {
   let execution
   if (action === 'stage') execution = await repository.stage(payload.path)
@@ -48,7 +55,7 @@ ipcMain.handle('git:operate', async (_event, action, payload = {}) => {
 
 app.whenReady().then(() => {
   if (process.env.GITGLASS_REPOSITORY && fs.existsSync(process.env.GITGLASS_REPOSITORY)) repoPath = path.resolve(process.env.GITGLASS_REPOSITORY)
-  mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1040, minHeight: 680, backgroundColor: '#101722', titleBarStyle: 'hiddenInset', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', titleBarStyle: 'hiddenInset', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) mainWindow.loadURL(devUrl)
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))

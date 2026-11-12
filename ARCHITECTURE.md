@@ -71,3 +71,15 @@ Renderer intent -> preload IPC -> RepositoryService -> GitCommandService
 ```
 
 Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout and cwd stay in their CommandRecord for copy and inspection.
+
+## V0.4 Safety & Recovery boundary
+
+V0.4 retains the same `GitCommandService` execution boundary. New state-changing actions are never run from renderer clicks: the renderer first calls a `prepare*` IPC method, displays the returned non-ledger plan and risk explanation, then sends the unchanged `operationId` to a matching `execute*` method. The service repeats its checks immediately before running the reviewed argv as a `user` CommandRecord.
+
+| Operation | Prechecks | Exact execution argv |
+| --- | --- | --- |
+| Discard one file | path is present in unstaged state, not staged, and `git ls-files --error-unmatch -- <path>` succeeds | `['restore', '--worktree', '--', path]` |
+| Delete merged branch | valid non-current local ref and `git merge-base --is-ancestor <branch> HEAD` succeeds | `['branch', '-d', branch]` |
+| Create rescue branch | 40-hex commit, valid rescue ref, verified commit, and target branch absent | `['branch', rescueBranch, fullSha]` |
+
+The recovery reader uses `git reflog -20 --date=iso --pretty=format:%H%x1f%h%x1f%gd%x1f%gs` as a background record. Reflog entries can only be used to create a new branch; V0.4 deliberately exposes no reset, force checkout, history rewrite, `git clean`, `restore --source`, `checkout .`, `reset --hard`, or `branch -D` route. Branch names and commit SHA values are validated before becoming argv entries, and file paths retain Git's `--` separator.

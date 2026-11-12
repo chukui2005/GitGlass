@@ -1,8 +1,14 @@
-const { parseStatus, parseBranches, parseCommits } = require('./git-parsers.cjs')
+const { parseStatus, parseBranches, parseCommits, parseReflog } = require('./git-parsers.cjs')
 
 function isPath(value) { return typeof value === 'string' && value.length > 0 && !value.includes('\0') }
 function isBranchInput(value) { return typeof value === 'string' && value.length > 0 && value.length <= 255 && !value.includes('\0') }
 function isRemoteName(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) }
+function isCommitHash(value) { return typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value) }
+function rescueBranchName(timestamp, shortHash) {
+  const safeTime = String(timestamp || '').replace(/[^0-9A-Za-z]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown-time'
+  const safeHash = String(shortHash || '').toLowerCase().replace(/[^0-9a-f]/g, '').slice(0, 12)
+  return `rescue/${safeTime}-${safeHash || 'unknown'}`
+}
 
 function redactRemoteUrl(value) {
   return String(value || '').split(/(\r?\n)/).map((line) => {
@@ -131,6 +137,73 @@ class RepositoryService {
     const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
     return { execution, ...prepared, state: await this.state() }
   }
+
+  async prepareDiscard(path, operationId) {
+    if (!isPath(path)) return { ok: false, blocked: true, reason: '文件路径无效。', plan: null }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    const matching = state.files.filter((file) => file.path === path)
+    if (!matching.some((file) => file.area === 'unstaged')) return { ok: false, blocked: true, reason: '只能丢弃当前未暂存的单个文件。', plan: null, state }
+    if (matching.some((file) => file.area === 'staged')) return { ok: false, blocked: true, reason: '该文件包含已暂存内容，不能直接丢弃未暂存改动。', plan: null, state }
+    const tracked = await this.run(['ls-files', '--error-unmatch', '--', path], 'Check tracked file for discard')
+    if (!tracked.ok) return { ok: false, blocked: true, reason: '未跟踪文件不会被 GitGlass 删除或丢弃。', plan: null, state, tracked }
+    const diff = await this.run(['diff', '--', path], 'Read discard diff summary')
+    if (!diff.ok || !diff.stdout) return { ok: false, blocked: true, reason: '没有可丢弃的未暂存文本差异。', plan: null, state, diff }
+    return { ok: true, blocked: false, kind: 'discard', path, diff: diff.stdout, state, plan: this.plan(['restore', '--worktree', '--', path], 'Discard unstaged file changes', operationId) }
+  }
+
+  async executeDiscard(path, operationId) {
+    const prepared = await this.prepareDiscard(path, operationId)
+    if (!prepared.ok) return { execution: null, ...prepared }
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
+    return { execution, ...prepared, state: await this.state() }
+  }
+
+  async prepareDeleteMergedBranch(branch, operationId) {
+    if (!isBranchInput(branch)) return { ok: false, blocked: true, reason: '分支名无效。', plan: null }
+    const validation = await this.run(['check-ref-format', '--branch', branch], 'Validate branch name for deletion')
+    if (!validation.ok) return { ok: false, blocked: true, reason: '分支名不符合 Git ref 规则。', plan: null, validation }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    if (state.branch === branch) return { ok: false, blocked: true, reason: '不能删除当前分支。', plan: null, state }
+    const exists = await this.run(['branch', '--list', '--format=%(refname:short)', branch], 'Check local branch exists')
+    if (!exists.ok || !exists.stdout.split(/\r?\n/).map((name) => name.trim()).includes(branch)) return { ok: false, blocked: true, reason: '本地分支不存在。', plan: null, state, exists }
+    const merged = await this.run(['merge-base', '--is-ancestor', branch, 'HEAD'], 'Check branch merged into current HEAD')
+    if (!merged.ok) return { ok: false, blocked: true, reason: '该分支尚未合并。GitGlass 不会使用 -D 强制删除。', plan: null, state, merged }
+    return { ok: true, blocked: false, kind: 'delete-merged-branch', branch, state, plan: this.plan(['branch', '-d', branch], 'Delete merged local branch', operationId) }
+  }
+
+  async executeDeleteMergedBranch(branch, operationId) {
+    const prepared = await this.prepareDeleteMergedBranch(branch, operationId)
+    if (!prepared.ok) return { execution: null, ...prepared }
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
+    return { execution, ...prepared, state: await this.state() }
+  }
+
+  reflog() {
+    return this.run(['reflog', '-20', '--date=iso', '--pretty=format:%H%x1f%h%x1f%gd%x1f%gs'], 'Read recovery reflog').then((record) => ({ record, entries: record.ok ? parseReflog(record.stdout) : [], reason: record.ok ? '' : record.stderr || record.stdout || '无法读取 reflog。' }))
+  }
+
+  async prepareRescueBranch(hash, suggestedBranch, operationId) {
+    if (!isCommitHash(hash)) return { ok: false, blocked: true, reason: '目标提交 SHA 无效。', plan: null }
+    const branch = typeof suggestedBranch === 'string' && suggestedBranch ? suggestedBranch : rescueBranchName(new Date().toISOString(), hash.slice(0, 7))
+    if (!isBranchInput(branch)) return { ok: false, blocked: true, reason: '救援分支名无效。', plan: null }
+    const validation = await this.run(['check-ref-format', '--branch', branch], 'Validate rescue branch name')
+    if (!validation.ok) return { ok: false, blocked: true, reason: '救援分支名不符合 Git ref 规则。', plan: null, validation }
+    const commit = await this.run(['rev-parse', '--verify', `${hash}^{commit}`], 'Verify rescue commit')
+    if (!commit.ok) return { ok: false, blocked: true, reason: '目标提交不存在或不是可保存的提交。', plan: null, commit }
+    const exists = await this.run(['branch', '--list', '--format=%(refname:short)', branch], 'Check rescue branch does not exist')
+    if (!exists.ok || exists.stdout.split(/\r?\n/).map((name) => name.trim()).includes(branch)) return { ok: false, blocked: true, reason: '目标救援分支已存在；GitGlass 不会覆盖已有分支。', plan: null, exists }
+    return { ok: true, blocked: false, kind: 'rescue-branch', hash: commit.stdout.trim(), branch, plan: this.plan(['branch', branch, commit.stdout.trim()], 'Create reflog rescue branch', operationId) }
+  }
+
+  async executeRescueBranch(hash, branch, operationId) {
+    const prepared = await this.prepareRescueBranch(hash, branch, operationId)
+    if (!prepared.ok) return { execution: null, ...prepared }
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
+    return { execution, ...prepared, state: await this.state() }
+  }
+
   invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }
 }
-module.exports = { RepositoryService, isBranchInput, isPath, isRemoteName, redactRemoteUrl, parseAheadBehind }
+module.exports = { RepositoryService, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind }
