@@ -72,7 +72,7 @@ class RepositoryService {
       // 依赖“每个未暂存条目都是精确文件路径”。
       this.run(['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'Read working tree status'),
     ])
-    if (!statusRecord.ok) return { ok: false, error: statusRecord.stderr || statusRecord.stdout, path: this.cwd, branch: '', files: [], records: [branchRecord, statusRecord] }
+    if (!statusRecord.ok) return { ok: false, error: '无法读取工作区状态。请确认仓库仍可访问后刷新。', path: this.cwd, branch: '', files: [], records: [branchRecord, statusRecord] }
     return { ok: true, path: this.cwd, branch: branchRecord.stdout.trim() || 'DETACHED HEAD', files: parseStatus(statusRecord.stdout), records: [branchRecord, statusRecord] }
   }
 
@@ -98,7 +98,7 @@ class RepositoryService {
     return this.run(['add', '--', ...normalized.paths], 'Stage selected files', 'user')
   }
   rejectedStage(reason, paths) {
-    return this.commands.recordRejection({ argv: ['add', '--', ...(Array.isArray(paths) ? paths : [])], intent: 'Stage selected files', source: 'user', cwd: this.cwd, stderr: reason })
+    return this.commands.recordRejection({ argv: ['add', '--', ...(Array.isArray(paths) ? paths : [])], intent: 'Stage selected files', source: 'user', cwd: this.cwd, stderr: reason, userMessage: reason })
   }
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
@@ -110,7 +110,7 @@ class RepositoryService {
       return {
         record,
         commits: record.ok ? parseCommits(record.stdout) : [],
-        reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : record.stderr || record.stdout || '无法读取提交历史。',
+        reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请刷新后重试；诊断信息已保留在命令账本。',
       }
     })
   }
@@ -119,7 +119,7 @@ class RepositoryService {
     if (!isCommitHash(hash)) return { ok: false, reason: '提交 SHA 无效。', record: this.invalid('Verify history commit', 'Invalid commit SHA.') }
     const record = await this.run(['rev-parse', '--verify', `${hash}^{commit}`], 'Verify history commit')
     // 提交给用户的原因始终是中文；原始 stderr 保留在账本记录里可审计。
-    return record.ok ? { ok: true, hash: record.stdout.trim(), record } : { ok: false, reason: '提交不存在或不是 commit。', detail: record.stderr || '', record }
+    return record.ok ? { ok: true, hash: record.stdout.trim(), record } : { ok: false, reason: '提交不存在或不是有效提交。', detail: record.stderr || '', record }
   }
 
   async commitDetail(hash) {
@@ -148,7 +148,7 @@ class RepositoryService {
       filesChanged: summary ? summary.filesChanged : 0,
       insertions: summary ? summary.insertions : 0,
       deletions: summary ? summary.deletions : 0,
-      reason: detail.ok ? '' : detail.stderr || detail.stdout || '无法读取提交详情。',
+      reason: detail.ok ? '' : '无法读取提交详情。请返回提交历史后重试。',
     }
   }
 
@@ -158,7 +158,7 @@ class RepositoryService {
     const record = await this.run(['show', '--no-ext-diff', '--format=', '--find-renames', verified.hash], 'Read commit diff', 'background', undefined, undefined, 1024 * 1024)
     // Git 对二进制文件只输出英文 "Binary files … differ"；由界面替换为中文说明。
     const binary = record.ok && /^Binary files .+ differ$/m.test(record.stdout)
-    return { ok: record.ok, hash: verified.hash, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取提交 Diff。' }
+    return { ok: record.ok, hash: verified.hash, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : '无法读取提交差异。请返回提交历史后重试；诊断信息已保留在命令账本。' }
   }
 
   async compareCommits(baseSha, targetSha) {
@@ -166,7 +166,7 @@ class RepositoryService {
     if (!base.ok || !target.ok) return { ok: false, reason: base.reason || target.reason || '比较提交无效。', suggestion: '仓库状态刷新后选中的提交可能已失效，请回到历史列表重新选择。' }
     const record = await this.run(['diff', '--no-ext-diff', '--find-renames', base.hash, target.hash], 'Compare commits', 'background', undefined, undefined, 1024 * 1024)
     const binary = record.ok && /^Binary files .+ differ$/m.test(record.stdout)
-    return { ok: record.ok, base: base.hash, target: target.hash, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取提交比较。' }
+    return { ok: record.ok, base: base.hash, target: target.hash, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : '无法比较这两个提交。请返回提交历史后重新选择；诊断信息已保留在命令账本。' }
   }
 
   async fileHistory(filePath) {
@@ -174,7 +174,7 @@ class RepositoryService {
     const tracked = await this.run(['ls-files', '--error-unmatch', '--', filePath], 'Verify tracked history file')
     if (!tracked.ok) return { ok: false, reason: '只能查看已跟踪文件的历史。', entries: [], record: tracked }
     const record = await this.run(['log', '-50', '--follow', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%aI%x1f%D', '--', filePath], 'Read file history')
-    return { ok: record.ok, path: filePath, record, entries: record.ok ? parseCommits(record.stdout) : [], reason: record.ok ? '' : record.stderr || '无法读取文件历史。' }
+    return { ok: record.ok, path: filePath, record, entries: record.ok ? parseCommits(record.stdout) : [], reason: record.ok ? '' : '无法读取文件历史。请返回提交详情后重试；诊断信息已保留在命令账本。' }
   }
 
   async fileCommitDiff(hash, filePath) {
@@ -185,26 +185,26 @@ class RepositoryService {
     // 文件已从当前工作区消失，但该提交中的 Diff 仍然真实存在。
     const record = await this.run(['show', '--no-ext-diff', '--format=', verified.hash, '--', filePath], 'Read historical file diff', 'background', undefined, undefined, 1024 * 1024)
     const binary = record.ok && /^Binary files .+ differ$/m.test(record.stdout)
-    return { ok: record.ok, hash: verified.hash, path: filePath, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取文件历史 Diff。' }
+    return { ok: record.ok, hash: verified.hash, path: filePath, record, diff: record.stdout, binary, truncated: record.outputTruncated, reason: record.ok ? '' : '无法读取文件历史差异。请返回文件历史后重试；诊断信息已保留在命令账本。' }
   }
 
   async remoteOverview() {
     const state = await this.state()
     const remotesRecord = await this.run(['remote'], 'List remotes')
     const remotes = remotesRecord.ok ? remotesRecord.stdout.split(/\r?\n/).map((name) => name.trim()).filter(isRemoteName) : []
-    if (!remotesRecord.ok) return { ok: false, state, remotes: [], reason: remotesRecord.stderr || remotesRecord.stdout || '无法读取远程仓库。', suggestion: '确认当前目录是有效的 Git 仓库。', records: [remotesRecord] }
-    if (!remotes.length) return { ok: true, state, remotes, upstream: null, remote: null, ahead: 0, behind: 0, reason: '此仓库尚未配置远程仓库。', suggestion: '添加 remote 后即可 Fetch，并为当前分支设置 upstream 以使用 Push 和 Pull。', records: [remotesRecord] }
+    if (!remotesRecord.ok) return { ok: false, state, remotes: [], reason: '无法读取远程仓库配置。', suggestion: '确认仓库仍可访问后刷新；诊断信息已保留在命令账本。', records: [remotesRecord] }
+    if (!remotes.length) return { ok: true, state, remotes, upstream: null, remote: null, ahead: 0, behind: 0, reason: '此仓库尚未配置远程仓库。', suggestion: '添加远程仓库后即可获取远程更新；为当前分支设置上游分支后可推送和拉取。', records: [remotesRecord] }
 
     const upstreamRecord = await this.run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], 'Read branch upstream')
     const upstream = upstreamRecord.ok ? parseUpstream(upstreamRecord.stdout) : null
     const remoteName = upstream?.remote || remotes[0]
     const urlRecord = await this.run(['remote', 'get-url', remoteName], 'Read remote URL', 'background', undefined, redactRemoteUrl)
     const remote = { name: remoteName, url: urlRecord.ok ? urlRecord.stdout.trim() : '' }
-    if (!upstream) return { ok: true, state, remotes, remote, upstream: null, ahead: 0, behind: 0, reason: '当前分支尚未配置 upstream。', suggestion: '设置 upstream 后即可看到 Ahead / Behind，并安全使用 Push 和 Pull。', records: [remotesRecord, upstreamRecord, urlRecord] }
+    if (!upstream) return { ok: true, state, remotes, remote, upstream: null, ahead: 0, behind: 0, reason: '当前分支尚未配置上游分支。', suggestion: '设置上游分支后即可查看领先与落后状态，并安全推送或拉取。', records: [remotesRecord, upstreamRecord, urlRecord] }
 
     const countRecord = await this.run(['rev-list', '--left-right', '--count', '@{upstream}...HEAD'], 'Read ahead and behind counts')
     const counts = countRecord.ok ? parseAheadBehind(countRecord.stdout) : null
-    if (!counts) return { ok: false, state, remotes, remote, upstream, ahead: 0, behind: 0, reason: countRecord.stderr || countRecord.stdout || '无法读取 Ahead / Behind。', suggestion: '先 Fetch 远程仓库，然后重试。', records: [remotesRecord, upstreamRecord, urlRecord, countRecord] }
+    if (!counts) return { ok: false, state, remotes, remote, upstream, ahead: 0, behind: 0, reason: '无法读取远程同步状态。', suggestion: '先获取远程更新后重试；诊断信息已保留在命令账本。', records: [remotesRecord, upstreamRecord, urlRecord, countRecord] }
     return { ok: true, state, remotes, remote, upstream, ...counts, reason: '', suggestion: '', records: [remotesRecord, upstreamRecord, urlRecord, countRecord] }
   }
 
@@ -214,16 +214,16 @@ class RepositoryService {
     if (!overview.ok && kind !== 'fetch') return { ok: false, blocked: true, reason: overview.reason, overview, plan: null }
     if (!remote) return { ok: false, blocked: true, reason: overview.reason || '没有可用的远程仓库。', overview, plan: null }
     if (kind === 'fetch') return { ok: true, blocked: false, kind, remote, overview, plan: this.plan(['fetch', remote], 'Fetch remote', operationId) }
-    if (!overview.upstream || !overview.state.branch || overview.state.branch === 'DETACHED HEAD') return { ok: false, blocked: true, reason: overview.reason || '当前分支没有可用的 upstream。', overview, plan: null }
+    if (!overview.upstream || !overview.state.branch || overview.state.branch === 'DETACHED HEAD') return { ok: false, blocked: true, reason: overview.reason || '当前分支没有可用的上游分支。', overview, plan: null }
     if (kind === 'push') {
-      if (overview.ahead <= 0) return { ok: false, blocked: true, reason: '当前分支没有领先于 upstream 的提交，因此没有可安全推送的内容。', overview, plan: null }
+      if (overview.ahead <= 0) return { ok: false, blocked: true, reason: '当前分支没有领先于上游分支的提交，因此没有可安全推送的内容。', overview, plan: null }
       return { ok: true, blocked: false, kind, remote, overview, plan: this.plan(['push', remote, `${overview.state.branch}:${overview.upstream.branch}`], 'Push branch safely', operationId) }
     }
     if (kind === 'pull') {
-      if (overview.behind <= 0) return { ok: false, blocked: true, reason: '当前分支没有落后于 upstream 的提交，因此不需要 Pull。', overview, plan: null }
+      if (overview.behind <= 0) return { ok: false, blocked: true, reason: '当前分支没有落后于上游分支的提交，因此无需拉取。', overview, plan: null }
       if (overview.state.files.length) return { ok: false, blocked: true, reason: '工作区存在未提交或未暂存的变更。GitGlass 不会自动 stash、丢弃或覆盖它们。', overview, plan: null }
       const fastForward = await this.run(['merge-base', '--is-ancestor', 'HEAD', '@{upstream}'], 'Check fast-forward safety')
-      if (!fastForward.ok) return { ok: false, blocked: true, reason: '本地历史无法安全 fast-forward 到 upstream；GitGlass 不会自动 merge 或 rebase。', overview, plan: null, fastForward }
+      if (!fastForward.ok) return { ok: false, blocked: true, reason: '本地历史无法安全 fast-forward 到上游分支；GitGlass 不会自动合并或变基。', overview, plan: null, fastForward }
       return { ok: true, blocked: false, kind, remote, overview, plan: this.plan(['pull', '--ff-only', remote, overview.upstream.branch], 'Pull with fast-forward only', operationId) }
     }
     return { ok: false, blocked: true, reason: '不支持的远程操作。', overview, plan: null }
@@ -302,7 +302,7 @@ class RepositoryService {
   }
 
   reflog() {
-    return this.run(['reflog', '-20', '--date=iso', '--pretty=format:%H%x1f%h%x1f%gd%x1f%gs'], 'Read recovery reflog').then((record) => ({ record, entries: record.ok ? parseReflog(record.stdout) : [], reason: record.ok ? '' : record.stderr || record.stdout || '无法读取 reflog。' }))
+    return this.run(['reflog', '-20', '--date=iso', '--pretty=format:%H%x1f%h%x1f%gd%x1f%gs'], 'Read recovery reflog').then((record) => ({ record, entries: record.ok ? parseReflog(record.stdout) : [], reason: record.ok ? '' : '无法读取恢复记录。请刷新后重试；诊断信息已保留在命令账本。' }))
   }
 
   async prepareRescueBranch(hash, suggestedBranch, operationId) {

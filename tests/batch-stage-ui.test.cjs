@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.jsx'), 'utf8')
+const notices = fs.readFileSync(path.join(__dirname, '..', 'src', 'user-notices.js'), 'utf8')
 const ledger = fs.readFileSync(path.join(__dirname, '..', 'src', 'workbench-ledger.js'), 'utf8')
 const service = fs.readFileSync(path.join(__dirname, '..', 'electron', 'repository-service.cjs'), 'utf8')
 const commandService = fs.readFileSync(path.join(__dirname, '..', 'electron', 'git-command-service.cjs'), 'utf8')
@@ -99,12 +100,12 @@ describe('V0.5.3 batch stage UI structure', () => {
   })
 
   it('shows honest Chinese feedback for failures without pretending atomic completion', () => {
-    expect(source).toContain('暂存未全部完成，请查看命令账本与当前文件状态。')
+    expect(notices).toContain('暂存未全部完成，请查看命令账本与当前文件状态。')
     // 本地校验被拒（记录带 rejected 标记）时直接展示中文原因。
-    expect(source).toContain('execution?.rejected')
-    expect(source).toContain('所选文件无效，本次未执行 Git 命令；请刷新后重试。')
+    expect(notices).toContain('execution?.rejected')
+    expect(notices).toContain('本地校验拒绝，未执行 Git 命令。')
     // 成功提示按实际 argv 数量计数。
-    expect(source).toContain('已暂存所选')
+    expect(notices).toContain('已暂存所选')
   })
 
   it('enforces the server-side unstaged whitelist before running git add (P1)', () => {

@@ -43,6 +43,7 @@ import {
   relativeTime,
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
+import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
 import "./styles.css";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
@@ -174,6 +175,7 @@ function FileSection({
   isChecked,
   onToggleCheck,
   busy,
+  emptyText,
 }) {
   return (
     <section className="file-section">
@@ -182,7 +184,7 @@ function FileSection({
         <b>{files.length}</b>
       </div>
       {toolbar}
-      {files.map((file, index) => (
+      {files.length ? files.map((file, index) => (
         <FileRow
           key={`${file.area}-${file.path}-${index}`}
           file={file}
@@ -196,7 +198,7 @@ function FileSection({
           onToggleCheck={onToggleCheck}
           busy={busy}
         />
-      ))}
+      )) : <p className="section-empty">{emptyText || "此区域没有文件。"}</p>}
     </section>
   );
 }
@@ -477,7 +479,7 @@ function BranchContext({ plan, onCancel, onConfirm, loading }) {
   );
 }
 function RemotePlanContext({ plan, onCancel, onConfirm, loading }) {
-  const labels = { fetch: "确认 Fetch", push: "确认 Push", pull: "确认 Pull" };
+  const labels = { fetch: "确认获取远程更新", push: "确认推送", pull: "确认拉取" };
   const details =
     plan.kind === "push" ? (
       <>
@@ -488,7 +490,7 @@ function RemotePlanContext({ plan, onCancel, onConfirm, loading }) {
         ；不会使用 <code>--force</code>。
       </>
     ) : plan.kind === "pull" ? (
-      <>将仅以 fast-forward 同步；不会自动 merge、rebase、stash 或丢弃文件。</>
+      <>将仅以快进方式同步；不会自动合并、变基、暂存或丢弃文件。</>
     ) : (
       <>
         将读取 <code>{plan.remote}</code> 的远程引用；不会修改工作区文件。
@@ -639,6 +641,11 @@ function CommitInspector({
   onOperate,
   preview,
 }) {
+  const commitHint = !staged.length
+    ? "先暂存至少一个文件，才能创建提交。"
+    : !message.trim()
+      ? "请填写提交说明后再创建提交。"
+      : "";
   return (
     <section className="inspector-flow">
       <div className="inspector-heading">
@@ -683,6 +690,7 @@ function CommitInspector({
       >
         提交 {staged.length || ""}
       </button>
+      {commitHint && <p className="inspector-hint">{commitHint}</p>}
       <div className="operation-preview">
         <span>下一条命令</span>
         <code>{preview}</code>
@@ -695,7 +703,7 @@ function RecoveryContext({ entries, reason, loading, onRescue, onClose }) {
     <section className="inspector-flow recovery-context">
       <div className="inspector-heading">
         <span>恢复中心</span>
-        <h2>Reflog 救援分支</h2>
+        <h2>恢复记录中的救援分支</h2>
       </div>
       <p className="inspector-copy">
         救援分支只保存一个可回到的提交点，不会移动当前分支或改写历史。
@@ -721,7 +729,7 @@ function RecoveryContext({ entries, reason, loading, onRescue, onClose }) {
           </button>
         ))}
         {!entries.length && !reason && (
-          <p className="inspector-copy">没有可用的 reflog 记录。</p>
+          <p className="inspector-copy">没有可用的恢复记录。</p>
         )}
       </div>
       <button type="button" className="text-action" onClick={onClose}>
@@ -736,7 +744,7 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
     return (
       <section className="remote-summary">
         <div className="section-label">
-          <span>远程</span>
+          <span>远程仓库</span>
         </div>
         <p>{remote.reason}</p>
         <span>{remote.suggestion}</span>
@@ -748,7 +756,7 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
         <span>远程</span>
         <button
           type="button"
-          aria-label="Fetch 远程状态"
+          aria-label="获取远程状态"
           onClick={onFetch}
           disabled={loading}
         >
@@ -772,14 +780,14 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
               disabled={loading || remote.ahead <= 0}
               onClick={onPush}
             >
-              Push
+              推送
             </button>
             <button
               type="button"
               disabled={loading || remote.behind <= 0 || files.length > 0}
               onClick={onPull}
             >
-              Pull
+              拉取
             </button>
           </div>
         </>
@@ -820,7 +828,7 @@ function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total 
   );
 }
 
-function CommitRow({ commit, selected, compareRole, onSelect, onCompare }) {
+function CommitRow({ commit, selected, compareRole, onSelect, onCompare, busy = false }) {
   return (
     <div className={`history-row ${selected ? "selected" : ""}`}>
       <button
@@ -829,6 +837,7 @@ function CommitRow({ commit, selected, compareRole, onSelect, onCompare }) {
         aria-label={`查看提交 ${commit.subject}`}
         title={commit.subject}
         onClick={onSelect}
+        disabled={busy}
       >
         <span className="graph-line" aria-hidden="true">
           <i />
@@ -860,6 +869,7 @@ function CommitRow({ commit, selected, compareRole, onSelect, onCompare }) {
           aria-label={`将提交 ${commit.shortHash} 加入双提交比较`}
           title="加入双提交比较"
           onClick={onCompare}
+          disabled={busy}
         >
           比较
         </button>
@@ -957,6 +967,7 @@ function App() {
   // 一律通过创建新的 Set 进行不可变更新。
   const [stageSelection, setStageSelection] = useState(() => new Set());
   const [diff, setDiff] = useState("");
+  const [diffMessage, setDiffMessage] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -1080,7 +1091,10 @@ function App() {
     const nextFile = preference || next.files[0] || null;
     setSelected(nextFile);
     if (nextFile) await loadDiff(nextFile, cycle);
-    else setDiff("");
+    else {
+      setDiff("");
+      setDiffMessage("");
+    }
   }
   async function refreshLedger(cycle) {
     const next = await window.gitglass.getLedger();
@@ -1116,13 +1130,19 @@ function App() {
   }
   async function loadDiff(file, cycle) {
     setSelected(file);
-    setDiff("正在读取差异…");
+    setDiff("");
+    setDiffMessage("正在读取文件差异…");
     const result = await window.gitglass.getDiff(file);
-    setDiff(
-      result.ok
-        ? result.stdout || "此文件没有可显示的文本差异。"
-        : result.stderr || result.stdout || "无法读取差异。",
-    );
+    if (!result.ok) {
+      setDiffMessage("无法读取此文件的差异。请刷新工作区后重试；诊断信息已保留在命令账本。");
+    } else if (binaryDiffPattern.test(result.stdout || "")) {
+      setDiffMessage("这是二进制文件，Git 无法显示文本差异。请在命令账本查看诊断信息。");
+    } else if (!result.stdout) {
+      setDiffMessage("没有可显示的文本差异。文件状态可能已变化，请刷新工作区后重试。");
+    } else {
+      setDiff(result.stdout);
+      setDiffMessage("");
+    }
     await refreshLedger(cycle);
   }
   async function selectHistoryCommit(commit) {
@@ -1252,7 +1272,10 @@ function App() {
     const result = await window.gitglass.chooseRepository();
     if (result.canceled) return;
     if (!result.ok) {
-      setNotice({ type: "error", text: result.error });
+      setLedgerOpen(true);
+      setLedgerFilter("background");
+      setNotice({ type: "error", text: result.message || GENERIC_GIT_FAILURE });
+      await refreshLedger();
       return;
     }
     setRepo(result.path);
@@ -1269,37 +1292,6 @@ function App() {
     await refreshAll();
     setNotice({ type: "success", text: `已打开仓库：${result.path}` });
   }
-  // 操作结果的用户提示：批量暂存的失败提示不伪称原子完成；本地校验被拒时
-  // 直接展示中文原因（记录带 rejected 标记，说明未执行真实命令）。
-  function buildOperateNotice(action, result) {
-    const execution = result.execution;
-    if (execution?.ok) {
-      if (result.commit)
-        return { type: "success", text: `已创建提交 ${result.commit}` };
-      if (action === "stageSelected")
-        return {
-          type: "success",
-          text: `已暂存所选 ${Math.max(execution.argv.length - 3, 0)} 个文件。`,
-        };
-      return null;
-    }
-    if (execution?.rejected)
-      return {
-        type: "error",
-        text:
-          execution.stderr ||
-          "所选文件无效，本次未执行 Git 命令；请刷新后重试。",
-      };
-    if (action === "stageSelected")
-      return {
-        type: "error",
-        text: "暂存未全部完成，请查看命令账本与当前文件状态。",
-      };
-    return {
-      type: "error",
-      text: "Git 命令失败；原始 stderr 和退出代码已保留在命令账本。",
-    };
-  }
   async function operate(action, payload = {}) {
     if (!repo || loading) return;
     setLoading(true);
@@ -1308,12 +1300,13 @@ function App() {
     setFocusedOperationId(null);
     const result = await window.gitglass.operate(action, payload);
     setFocusedOperationId(result.execution?.operationId || null);
-    setNotice(buildOperateNotice(action, result));
+    setNotice(operationNotice(action, result));
     if (result.commit) setMessage("");
     await refreshAll();
     setLoading(false);
   }
   async function requestSwitch(branch, create = false) {
+    if (loading) return;
     const name = create ? branch.trim() : branchName(branch);
     if (!name || (!create && (name === state.branch || branch.current))) return;
     const prepared = await window.gitglass.prepareBranch(name, create);
@@ -1342,17 +1335,7 @@ function App() {
     setFocusedOperationId(
       result.execution?.operationId || branchPlan.operationId,
     );
-    setNotice(
-      result.execution?.ok
-        ? {
-            type: "success",
-            text: `已${branchPlan.create ? "创建并切换到" : "切换到"} ${branchPlan.name}`,
-          }
-        : {
-            type: "error",
-            text: result.reason || "分支操作失败；请在命令账本查看原始输出。",
-          },
-    );
+    setNotice(executionNotice(`已${branchPlan.create ? "创建并切换到" : "切换到"} ${branchPlan.name}。`, result.execution));
     if (result.execution?.ok) setBranchPlan(null);
     await refreshAll();
     setLoading(false);
@@ -1386,14 +1369,12 @@ function App() {
     setFocusedOperationId(
       result.execution?.operationId || remotePlan.operationId,
     );
-    setNotice(
-      result.execution?.ok
-        ? { type: "success", text: "远程操作已完成。" }
-        : {
-            type: "error",
-            text: result.reason || "远程命令失败；请在命令账本查看原始输出。",
-          },
-    );
+    const remoteSuccess = {
+      fetch: "已获取远程更新。",
+      push: "已将当前分支推送到远程仓库。",
+      pull: "已以快进方式拉取远程更新。",
+    };
+    setNotice(executionNotice(remoteSuccess[remotePlan.kind] || "远程操作已完成。", result.execution));
     if (result.execution?.ok) setRemotePlan(null);
     await refreshAll();
     setLoading(false);
@@ -1417,6 +1398,7 @@ function App() {
     setLoading(false);
   }
   async function requestDeleteMergedBranch(branch) {
+    if (loading) return;
     setLoading(true);
     const prepared = await window.gitglass.prepareDeleteMergedBranch(branch);
     await refreshLedger();
@@ -1496,23 +1478,12 @@ function App() {
     setFocusedOperationId(
       result.execution?.operationId || safetyPlan.operationId,
     );
-    setNotice(
-      result.execution?.ok
-        ? {
-            type: "success",
-            text:
-              safetyPlan.kind === "discard"
-                ? "已丢弃该文件的未暂存改动。"
-                : safetyPlan.kind === "delete-merged-branch"
-                  ? `已删除分支 ${safetyPlan.branch}。`
-                  : `已创建救援分支 ${safetyPlan.branch}。`,
-          }
-        : {
-            type: "error",
-            text:
-              result.reason || "Git 命令失败；请在命令账本查看原始 stderr。",
-          },
-    );
+    const safetySuccess = safetyPlan.kind === "discard"
+      ? "已丢弃该文件的未暂存改动。"
+      : safetyPlan.kind === "delete-merged-branch"
+        ? `已删除分支 ${safetyPlan.branch}。`
+        : `已创建救援分支 ${safetyPlan.branch}。`;
+    setNotice(executionNotice(safetySuccess, result.execution));
     if (result.execution?.ok) setSafetyPlan(null);
     await refreshAll();
     setLoading(false);
@@ -1780,6 +1751,7 @@ function App() {
                             commit={entry}
                             selected={false}
                             onSelect={() => openFileEntryDiff(entry)}
+                            busy={loading}
                           />
                         ))
                       ) : (
@@ -1814,6 +1786,7 @@ function App() {
                           }
                           onSelect={() => selectHistoryCommit(commit)}
                           onCompare={() => pinCompare(commit)}
+                          busy={loading}
                         />
                       ))
                     )}
@@ -1904,6 +1877,7 @@ function App() {
                           className="history-file"
                           title={`查看 ${file.path} 在此提交中的 Diff`}
                           onClick={() => openCommitFileDiff(file)}
+                          disabled={loading}
                         >
                           <span className={`file-kind-tag ${kind}`}>
                             {changeKindLetter[kind]} {titleFor[kind]}
@@ -1916,6 +1890,7 @@ function App() {
                           aria-label={`查看 ${file.path} 的文件历史`}
                           title={`查看 ${file.path} 的文件历史`}
                           onClick={() => openFileHistory(file.path)}
+                          disabled={loading}
                         >
                           <GitCommit size={14} aria-hidden="true" />
                         </button>
@@ -1954,6 +1929,7 @@ function App() {
               <FileSection
                 title="未暂存改动"
                 files={unstaged}
+                emptyText={state.files.length ? "没有未暂存的改动。" : "工作区干净，没有待暂存的改动。"}
                 selected={selected}
                 onSelect={loadDiff}
                 onStage={(file) => operate("stage", { path: file.path })}
@@ -1981,6 +1957,7 @@ function App() {
               <FileSection
                 title="已暂存改动"
                 files={staged}
+                emptyText="没有已暂存的改动。"
                 selected={selected}
                 onSelect={loadDiff}
                 onStage={(file) => operate("unstage", { path: file.path })}
@@ -1988,7 +1965,7 @@ function App() {
               {!state.files.length && (
                 <div className="clean-state">
                   <CheckCircle size={17} weight="fill" />
-                  没有待提交的改动
+                  工作区干净，没有待暂存的改动。
                 </div>
               )}
               <section className="branch-list">
@@ -2005,6 +1982,7 @@ function App() {
                         type="button"
                         className={`branch-row ${current ? "current" : ""}`}
                         onClick={() => requestSwitch(branch)}
+                        disabled={loading}
                       >
                         <GitBranch size={13} />
                         <code>{branchName(branch)}</code>
@@ -2019,6 +1997,7 @@ function App() {
                           onClick={() =>
                             requestDeleteMergedBranch(branchName(branch))
                           }
+                          disabled={loading}
                         >
                           <Trash size={13} />
                         </button>
@@ -2091,11 +2070,17 @@ function App() {
                 </span>
                 <code>{selected.path}</code>
               </div>
-              <div className="diff-content">
-                {diff.split("\n").map((line, index) => (
-                  <DiffLine key={index} line={line} />
-                ))}
-              </div>
+              {diffMessage ? (
+                <div className="diff-empty" role="status" aria-live="polite">
+                  <p>{diffMessage}</p>
+                </div>
+              ) : (
+                <div className="diff-content">
+                  {diff.split("\n").map((line, index) => (
+                    <DiffLine key={index} line={line} />
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <CommitGraph commits={commits} />
