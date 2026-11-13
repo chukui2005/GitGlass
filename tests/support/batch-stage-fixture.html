@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>GitGlass batch stage layout fixture</title>
+    <!-- V0.5.3 布局回归夹具：结构与 src/main.jsx 的 FileRow / BatchStageToolbar 一致，
+         直接加载正式 CSS，由 tests/batch-stage-layout.test.cjs 在真实 Chromium 中测量。 -->
+    <link rel="stylesheet" href="../../src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell ledger-closed">
+      <header class="topbar">
+        <div class="brand"><h1>GitGlass</h1><strong>demo-repo</strong></div>
+      </header>
+      <div class="workspace">
+        <aside class="status-panel">
+          <div class="panel-heading"><h2>工作区</h2></div>
+          <section class="file-section" data-section="unstaged">
+            <div class="section-label"><span>未暂存改动</span><b>3</b></div>
+            <div class="batch-toolbar">
+              <div class="batch-tools-row">
+                <button type="button" class="batch-tool">全选未暂存</button>
+                <button type="button" class="batch-tool" disabled>清除选择</button>
+              </div>
+              <div class="batch-stage-row">
+                <span class="batch-count" aria-live="polite">已选择 2 个</span>
+                <button type="button" class="batch-stage" title="将暂存所选 2 个文件">暂存所选 2 个</button>
+              </div>
+            </div>
+            <div class="file-row" data-row="long-path">
+              <input type="checkbox" class="stage-check" checked aria-label="选择暂存 src/very-long-nested-directory/component/AppLayout.jsx" />
+              <button type="button" class="file-select">
+                <span class="status modified">M</span>
+                <span class="file-path"><span>▣</span>src/very-long-nested-directory/component/AppLayout.jsx</span>
+              </button>
+              <button type="button" class="row-action">+</button>
+            </div>
+            <div class="file-row" data-row="zh-path">
+              <input type="checkbox" class="stage-check" checked aria-label="选择暂存 中文说明文档.txt" />
+              <button type="button" class="file-select">
+                <span class="status added">+</span>
+                <span class="file-path"><span>▣</span>中文说明文档.txt</span>
+              </button>
+              <button type="button" class="row-action">+</button>
+            </div>
+            <div class="file-row" data-row="unchecked">
+              <input type="checkbox" class="stage-check" aria-label="选择暂存 note.txt" />
+              <button type="button" class="file-select">
+                <span class="status modified">M</span>
+                <span class="file-path"><span>▣</span>note.txt</span>
+              </button>
+              <button type="button" class="row-action">+</button>
+            </div>
+          </section>
+          <section class="file-section" data-section="staged">
+            <div class="section-label"><span>已暂存改动</span><b>1</b></div>
+            <div class="file-row" data-row="staged-no-checkbox">
+              <button type="button" class="file-select">
+                <span class="status modified">M</span>
+                <span class="file-path"><span>▣</span>readme.md</span>
+              </button>
+              <button type="button" class="row-action">−</button>
+            </div>
+          </section>
+        </aside>
+        <section class="main-panel">
+          <div class="main-toolbar"><div><h2>文件差异</h2><span>src/very-long-nested-directory/component/AppLayout.jsx</span></div></div>
+        </section>
+        <aside class="context-panel">
+          <section class="inspector-flow"><div class="inspector-heading"><span>工作区操作</span><h2>创建提交</h2></div></section>
+        </aside>
+      </div>
+      <section class="command-ledger" aria-label="命令账本"></section>
+    </main>
+  </body>
+</html>

@@ -10,6 +10,25 @@ function rescueBranchName(timestamp, shortHash) {
   return `rescue/${safeTime}-${safeHash || 'unknown'}`
 }
 
+// 批量暂存的安全上限：超过时不执行命令，直接返回中文原因。
+const STAGE_SELECTED_MAX_PATHS = 200
+const STAGE_SELECTED_MAX_TOTAL_CHARS = 8192
+
+// 只接受非空、去重后的合法路径数组；任何一项非法都会拒绝整批操作。
+function normalizeStagePaths(paths) {
+  if (!Array.isArray(paths)) return { ok: false, reason: '暂存所选需要传入文件路径数组。', requested: [] }
+  const unique = []
+  for (const entry of paths) {
+    if (!isPath(entry)) return { ok: false, reason: '存在无效的文件路径；已取消本次暂存。', requested: paths }
+    if (!unique.includes(entry)) unique.push(entry)
+  }
+  if (!unique.length) return { ok: false, reason: '请先勾选至少一个未暂存文件。', requested: paths }
+  if (unique.length > STAGE_SELECTED_MAX_PATHS) return { ok: false, reason: `单次最多暂存 ${STAGE_SELECTED_MAX_PATHS} 个文件；请减少选择后重试。`, requested: paths }
+  const totalChars = unique.reduce((sum, entry) => sum + entry.length, 0)
+  if (totalChars > STAGE_SELECTED_MAX_TOTAL_CHARS) return { ok: false, reason: '所选文件路径总长度过长；请减少选择后重试。', requested: paths }
+  return { ok: true, paths: unique }
+}
+
 function redactRemoteUrl(value) {
   return String(value || '').split(/(\r?\n)/).map((line) => {
     if (!line || /^\r?$/.test(line)) return line
@@ -49,7 +68,9 @@ class RepositoryService {
   async state() {
     const [branchRecord, statusRecord] = await Promise.all([
       this.run(['branch', '--show-current'], 'Read current branch'),
-      this.run(['status', '--porcelain=v1', '-z'], 'Read working tree status'),
+      // -uall：未跟踪文件逐个列出，不折叠成目录条目；批量暂存的白名单
+      // 依赖“每个未暂存条目都是精确文件路径”。
+      this.run(['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'Read working tree status'),
     ])
     if (!statusRecord.ok) return { ok: false, error: statusRecord.stderr || statusRecord.stdout, path: this.cwd, branch: '', files: [], records: [branchRecord, statusRecord] }
     return { ok: true, path: this.cwd, branch: branchRecord.stdout.trim() || 'DETACHED HEAD', files: parseStatus(statusRecord.stdout), records: [branchRecord, statusRecord] }
@@ -62,6 +83,23 @@ class RepositoryService {
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
   unstage(path) { return isPath(path) ? this.run(['restore', '--staged', '--', path], 'Unstage file', 'user') : Promise.resolve(this.invalid('Unstage file', 'Invalid file path.')) }
   stageAll() { return this.run(['add', '-A'], 'Stage all changes', 'user') }
+  // 批量暂存：一次 git add -- 传入全部所选路径（-- 必须存在，以正确处理
+  // 以连字符开头的文件名）。执行前先读取一次工作区状态，做服务端白名单校验：
+  // 只允许精确匹配“当前 area === unstaged 的 path”，整批拒绝时不执行任何 Git 命令，
+  // 并在命令账本留下一条“本地校验拒绝，未执行 Git 命令”的用户操作记录。
+  async stageSelected(paths) {
+    const normalized = normalizeStagePaths(paths)
+    if (!normalized.ok) return this.rejectedStage(normalized.reason, normalized.requested)
+    const state = await this.state()
+    if (!state.ok) return this.rejectedStage('无法读取当前工作区状态，请刷新后重试。', paths)
+    const unstagedPaths = new Set(state.files.filter((file) => file.area === 'unstaged').map((file) => file.path))
+    const offenders = normalized.paths.filter((path) => !unstagedPaths.has(path))
+    if (offenders.length) return this.rejectedStage(`所选文件已不在未暂存区，请刷新后重试。（${offenders.join('、')}）`, paths)
+    return this.run(['add', '--', ...normalized.paths], 'Stage selected files', 'user')
+  }
+  rejectedStage(reason, paths) {
+    return this.commands.recordRejection({ argv: ['add', '--', ...(Array.isArray(paths) ? paths : [])], intent: 'Stage selected files', source: 'user', cwd: this.cwd, stderr: reason })
+  }
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }

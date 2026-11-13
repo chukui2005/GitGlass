@@ -10,6 +10,7 @@ const intentText = {
   'Stage file': '暂存文件',
   'Unstage file': '取消暂存文件',
   'Stage all changes': '暂存全部改动',
+  'Stage selected files': '暂存所选文件',
   'Unstage all changes': '取消全部暂存',
   'Create commit': '创建提交',
   'Read local branches': '读取本地分支',
@@ -75,6 +76,8 @@ export function recordTypeLabel(source) {
 
 export function recordStatusLabel(record) {
   if (!record) return '尚无记录'
+  // 本地校验拒绝不是一次执行失败的 Git 命令：明确区分，避免误读为已执行。
+  if (record.rejected) return '已拒绝'
   if (record.ok === false) return '失败'
   return record.stderr ? '警告' : '成功'
 }
