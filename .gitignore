@@ -7,3 +7,5 @@ output/
 !.env.example
 .DS_Store
 .vscode/
+.screenshots/
+.trae-html-share-packages/

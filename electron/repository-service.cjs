@@ -43,7 +43,7 @@ function parseAheadBehind(value) {
 class RepositoryService {
   constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
   get cwd() { return this.getRepoPath() }
-  run(argv, intent, source = 'background', operationId, redactOutput) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput }) }
+  run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes }) }
   plan(argv, intent, operationId) { return this.commands.plan({ argv, intent, cwd: this.cwd, operationId }) }
 
   async state() {
@@ -65,7 +65,54 @@ class RepositoryService {
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
-  commits() { return this.run(['log', '-30', '--pretty=format:%h%x1f%p%x1f%s%x1f%an%x1f%aI'], 'Read recent commits').then((record) => ({ record, commits: record.ok ? parseCommits(record.stdout) : [] })) }
+  commits() { return this.run(['log', '-80', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%aI%x1f%D'], 'Read recent commits').then((record) => ({ record, commits: record.ok ? parseCommits(record.stdout) : [], reason: record.ok ? '' : record.stderr || record.stdout || '无法读取提交历史。' })) }
+
+  async verifyHistoryCommit(hash) {
+    if (!isCommitHash(hash)) return { ok: false, reason: '提交 SHA 无效。', record: this.invalid('Verify history commit', 'Invalid commit SHA.') }
+    const record = await this.run(['rev-parse', '--verify', `${hash}^{commit}`], 'Verify history commit')
+    return record.ok ? { ok: true, hash: record.stdout.trim(), record } : { ok: false, reason: record.stderr || '提交不存在或不是 commit。', record }
+  }
+
+  async commitDetail(hash) {
+    const verified = await this.verifyHistoryCommit(hash)
+    if (!verified.ok) return { ok: false, reason: verified.reason, record: verified.record, files: [] }
+    const [detail, files] = await Promise.all([
+      this.run(['show', '--no-ext-diff', '--format=fuller', '--stat', '--find-renames', verified.hash], 'Read commit detail and statistics'),
+      this.run(['show', '--no-ext-diff', '--format=', '--name-status', '--find-renames', verified.hash], 'Read commit changed files'),
+    ])
+    const changedFiles = files.ok ? files.stdout.split(/\r?\n/).filter(Boolean).map((line) => { const [status, ...paths] = line.split('\t'); return { status, path: paths.at(-1) || '', oldPath: paths.length > 1 ? paths[0] : null } }).filter((file) => file.path) : []
+    return { ok: detail.ok, hash: verified.hash, detail, files, changedFiles, reason: detail.ok ? '' : detail.stderr || detail.stdout || '无法读取提交详情。' }
+  }
+
+  async commitDiff(hash) {
+    const verified = await this.verifyHistoryCommit(hash)
+    if (!verified.ok) return { ok: false, reason: verified.reason, record: verified.record }
+    const record = await this.run(['show', '--no-ext-diff', '--format=', '--find-renames', verified.hash], 'Read commit diff', 'background', undefined, undefined, 1024 * 1024)
+    return { ok: record.ok, hash: verified.hash, record, diff: record.stdout, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取提交 Diff。' }
+  }
+
+  async compareCommits(baseSha, targetSha) {
+    const [base, target] = await Promise.all([this.verifyHistoryCommit(baseSha), this.verifyHistoryCommit(targetSha)])
+    if (!base.ok || !target.ok) return { ok: false, reason: base.reason || target.reason || '比较提交无效。' }
+    const record = await this.run(['diff', '--no-ext-diff', '--find-renames', base.hash, target.hash], 'Compare commits', 'background', undefined, undefined, 1024 * 1024)
+    return { ok: record.ok, base: base.hash, target: target.hash, record, diff: record.stdout, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取提交比较。' }
+  }
+
+  async fileHistory(filePath) {
+    if (!isPath(filePath)) return { ok: false, reason: '文件路径无效。', entries: [] }
+    const tracked = await this.run(['ls-files', '--error-unmatch', '--', filePath], 'Verify tracked history file')
+    if (!tracked.ok) return { ok: false, reason: '只能查看已跟踪文件的历史。', entries: [], record: tracked }
+    const record = await this.run(['log', '-50', '--follow', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%aI%x1f%D', '--', filePath], 'Read file history')
+    return { ok: record.ok, path: filePath, record, entries: record.ok ? parseCommits(record.stdout) : [], reason: record.ok ? '' : record.stderr || '无法读取文件历史。' }
+  }
+
+  async fileCommitDiff(hash, filePath) {
+    if (!isPath(filePath)) return { ok: false, reason: '文件路径无效。' }
+    const [verified, tracked] = await Promise.all([this.verifyHistoryCommit(hash), this.run(['ls-files', '--error-unmatch', '--', filePath], 'Verify tracked history file')])
+    if (!verified.ok || !tracked.ok) return { ok: false, reason: verified.reason || '只能查看已跟踪文件的历史。' }
+    const record = await this.run(['show', '--no-ext-diff', '--format=', verified.hash, '--', filePath], 'Read historical file diff', 'background', undefined, undefined, 1024 * 1024)
+    return { ok: record.ok, hash: verified.hash, path: filePath, record, diff: record.stdout, truncated: record.outputTruncated, reason: record.ok ? '' : record.stderr || '无法读取文件历史 Diff。' }
+  }
 
   async remoteOverview() {
     const state = await this.state()
