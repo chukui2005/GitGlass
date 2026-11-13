@@ -31,6 +31,7 @@ import {
 import { BrandMark } from "./brand-mark.jsx";
 import "./styles.css";
 
+const isDarwin = /Macintosh/.test(navigator.userAgent);
 const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
 const titleFor = {
   added: "新增",
@@ -1086,7 +1087,7 @@ function App() {
   );
   return (
     <main
-      className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"}`}
+      className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"} ${isDarwin ? "platform-darwin" : ""}`}
     >
       <a className="skip-link" href="#workspace-main">
         跳至主工作区

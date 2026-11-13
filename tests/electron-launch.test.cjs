@@ -9,18 +9,23 @@ describe('Electron launch configuration', () => {
     expect(main).toContain("if (process.platform === 'win32') Menu.setApplicationMenu(null)")
   })
 
-  it('keeps the native window controls and the minimum window size', () => {
-    // Hiding the menu must not come from a frameless or CSS-covered window.
+  it('uses the Windows Window Controls Overlay with a 48px custom title bar', () => {
+    expect(main).toContain("titleBarStyle: 'hidden', titleBarOverlay: { color: '#F7F8FA', symbolColor: '#344054', height: 48 }")
+  })
+
+  it('keeps the native traffic lights on macOS and never goes frameless', () => {
+    expect(main).toContain("titleBarStyle: 'hiddenInset'")
+    // Native minimize/maximize/close stay owned by the system (Snap Layouts included).
     expect(main).not.toContain('frame: false')
+  })
+
+  it('keeps the minimum window size and brands the window with the platform icon', () => {
     expect(main).toMatch(/minWidth:\s*1024/)
     expect(main).toMatch(/minHeight:\s*680/)
+    expect(main).toContain("const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'")
   })
 
   it('classifies repository location as a read-only system record', () => {
     expect(main).toContain("argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background'")
-  })
-
-  it('brands the window with the GitGlass icon', () => {
-    expect(main).toMatch(/icon:\s*path\.join\(__dirname,\s*'\.\.',\s*'public',\s*'icon-256\.png'\)/)
   })
 })
