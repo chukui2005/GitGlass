@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>GitGlass history row layout fixture</title>
+    <!-- 布局回归用的静态夹具：结构与 src/main.jsx 的 CommitRow 一致，
+         直接加载正式 CSS，由 tests/history-row-layout.test.cjs 在真实 Chromium 中测量。 -->
+    <link rel="stylesheet" href="../../src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell ledger-closed">
+      <header class="topbar">
+        <div class="brand"><h1>GitGlass</h1><strong>demo-repo</strong></div>
+      </header>
+      <div class="workspace history-workspace">
+        <aside class="status-panel">
+          <div class="panel-heading"><h2>历史审查</h2></div>
+        </aside>
+        <section class="main-panel">
+          <div class="main-content">
+            <div class="history-notice">布局回归夹具</div>
+            <div class="history-view">
+              <div class="history-browser">
+                <div class="history-search"><input type="text" aria-label="搜索提交历史" /></div>
+                <div class="commit-list">
+                  <div class="history-row selected" data-row="selected">
+                    <button type="button" class="commit-select">
+                      <span class="graph-line"><i></i></span>
+                      <span class="commit-main">
+                        <strong class="commit-title">refactor: rename README to GUIDE and keep a clearly long two line hierarchy</strong>
+                        <span class="commit-meta">
+                          <span>Demo Author</span>
+                          <span>·</span>
+                          <span>2 分钟前</span>
+                          <span>·</span>
+                          <code>584566c</code>
+                          <b class="head-badge">HEAD</b>
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" class="compare-pin">比较</button>
+                  </div>
+                  <div class="history-row" data-row="plain">
+                    <button type="button" class="commit-select">
+                      <span class="graph-line"><i></i></span>
+                      <span class="commit-main">
+                        <strong class="commit-title">chore: remove temp module</strong>
+                        <span class="commit-meta">
+                          <span>Demo Author</span>
+                          <span>·</span>
+                          <span>3 天前</span>
+                          <span>·</span>
+                          <code>0b993ae</code>
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" class="compare-pin">比较</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <aside class="context-panel">
+          <div class="inspector-flow"><h2>选择一个提交</h2></div>
+        </aside>
+      </div>
+      <section class="command-ledger" aria-label="命令账本"></section>
+    </main>
+  </body>
+</html>

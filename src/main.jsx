@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
+  ArrowsLeftRight,
   CaretDown,
   CheckCircle,
   CircleNotch,
@@ -12,22 +13,35 @@ import {
   GitBranch,
   GitCommit,
   Lifebuoy,
+  MagnifyingGlass,
   Minus,
   Plus,
   TerminalWindow,
   Trash,
   UploadSimple,
   WarningCircle,
+  X,
 } from "@phosphor-icons/react";
 import {
   countBySource,
   filterLedgerRecords,
+  formatLedgerOutput,
   glanceSummary,
   groupBackgroundRecords,
   intentLabel,
   recordStatusLabel,
   recordTypeLabel,
 } from "./workbench-ledger.js";
+import {
+  binaryDiffPattern,
+  changeKindLetter,
+  changeOf,
+  filterCommits,
+  fullLocalTime,
+  isHeadCommit,
+  orderComparePair,
+  relativeTime,
+} from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
 import "./styles.css";
 
@@ -76,8 +90,10 @@ function DiffLine({ line }) {
 }
 function Output({ title, body, danger, warning }) {
   const [copied, setCopied] = useState(false);
+  // 展示层格式化：控制字符转成可读文本，复制的内容与看到的内容一致。
+  const text = formatLedgerOutput(body);
   async function copy() {
-    await navigator.clipboard?.writeText(body || "");
+    await navigator.clipboard?.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
@@ -91,7 +107,7 @@ function Output({ title, body, danger, warning }) {
           {copied ? "已复制" : "复制"}
         </button>
       </div>
-      <pre>{body}</pre>
+      <pre>{text}</pre>
     </div>
   );
 }
@@ -235,6 +251,13 @@ function LedgerEntry({ record }) {
               <b className={failure ? "bad" : "good"}>
                 {record.exitCode ?? "—"}
               </b>
+            </div>
+            <div className="tech-row">
+              <span>原始输出</span>
+              <code>
+                “命令结果”已把记录分隔符与控制字符转换为可读文本；命令记录中仍保留原始
+                stdout，用于审计和复制真实命令。
+              </code>
             </div>
           </details>
         </div>
@@ -676,6 +699,159 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
   );
 }
 
+function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total }) {
+  return (
+    <div className="history-search">
+      <MagnifyingGlass size={14} aria-hidden="true" />
+      <input
+        ref={inputRef}
+        type="text"
+        name="history-search"
+        autoComplete="off"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="搜索提交信息、作者名或短 SHA…（Ctrl+K 聚焦）"
+        aria-label="搜索提交历史"
+      />
+      {value && (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="清除搜索"
+          title="清除搜索（Esc）"
+          onClick={() => onChange("")}
+        >
+          <X size={14} />
+        </button>
+      )}
+      <span className="search-count" aria-live="polite">
+        {filtered ? `匹配 ${matchCount} / ${total}` : `共 ${total} 个提交`}
+      </span>
+    </div>
+  );
+}
+
+function CommitRow({ commit, selected, compareRole, onSelect, onCompare }) {
+  return (
+    <div className={`history-row ${selected ? "selected" : ""}`}>
+      <button
+        type="button"
+        className="commit-select"
+        aria-label={`查看提交 ${commit.subject}`}
+        title={commit.subject}
+        onClick={onSelect}
+      >
+        <span className="graph-line" aria-hidden="true">
+          <i />
+        </span>
+        <span className="commit-main">
+          <strong className="commit-title">{commit.subject}</strong>
+          <span className="commit-meta">
+            <span title={commit.author}>{commit.author || "—"}</span>
+            <span aria-hidden="true">·</span>
+            <span title={fullLocalTime(commit.authoredAt)}>
+              {relativeTime(commit.authoredAt)}
+            </span>
+            <span aria-hidden="true">·</span>
+            <code title={commit.hash}>{commit.shortHash}</code>
+            {isHeadCommit(commit) && (
+              <b className="head-badge" title="当前 HEAD 所在提交">
+                HEAD
+              </b>
+            )}
+            {compareRole === "base" && <b className="compare-badge base">基准</b>}
+            {compareRole === "target" && <b className="compare-badge target">对比</b>}
+          </span>
+        </span>
+      </button>
+      {onCompare && (
+        <button
+          type="button"
+          className="compare-pin"
+          aria-label={`将提交 ${commit.shortHash} 加入双提交比较`}
+          title="加入双提交比较"
+          onClick={onCompare}
+        >
+          比较
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HistoryDiff({ diff, emptyText }) {
+  if (!diff || !diff.trim())
+    return (
+      <div className="history-empty">
+        <p>{emptyText || "没有可显示的文本 Diff。"}</p>
+      </div>
+    );
+  return (
+    <div className="diff-content">
+      {diff.split("\n").map((line, index) =>
+        binaryDiffPattern.test(line.trim()) ? (
+          <div className="diff-binary" key={index}>
+            二进制文件差异：Git 无法生成文本内容；完整命令结果已记录在命令账本。
+          </div>
+        ) : (
+          <DiffLine key={index} line={line} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function HistoryResult({ result, onBack }) {
+  if (result.ok === false)
+    return (
+      <div className="history-failure" role="alert">
+        <WarningCircle size={22} weight="fill" aria-hidden="true" />
+        <strong>
+          {result.kind === "compare" ? "无法比较这两个提交" : "无法读取 Diff"}
+        </strong>
+        <p>{result.reason || "Git 命令执行失败。"}</p>
+        {result.suggestion && <p>{result.suggestion}</p>}
+        <p>失败详情已作为系统读取记录在命令账本中。</p>
+        {onBack && (
+          <button type="button" className="secondary-action" onClick={onBack}>
+            返回提交列表
+          </button>
+        )}
+      </div>
+    );
+  const emptyText =
+    result.kind === "compare"
+      ? "这两个提交之间没有可显示的文本差异。"
+      : result.kind === "file"
+        ? "此文件在该提交中没有可显示的文本 Diff。"
+        : "此提交没有可显示的文本 Diff。";
+  return <HistoryDiff diff={result.diff} emptyText={emptyText} />;
+}
+
+function CopyButton({ value, label }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard?.writeText(value || "");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+  return (
+    <button
+      type="button"
+      className="icon-button"
+      aria-label={label}
+      title={label}
+      onClick={copy}
+    >
+      {copied ? (
+        <CheckCircle size={14} weight="fill" aria-hidden="true" />
+      ) : (
+        <Copy size={14} aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
 function App() {
   const [historyMode, setHistoryMode] = useState(false);
   const [historySelected, setHistorySelected] = useState(null);
@@ -683,6 +859,8 @@ function App() {
   const [historyResult, setHistoryResult] = useState(null);
   const [historyCompare, setHistoryCompare] = useState({ base: null, target: null });
   const [historyFile, setHistoryFile] = useState(null);
+  const [historySearch, setHistorySearch] = useState("");
+  const [commitsReason, setCommitsReason] = useState("");
   const [repo, setRepo] = useState(null);
   const [state, setState] = useState({ branch: "", files: [], ok: true });
   const [selected, setSelected] = useState(null);
@@ -707,6 +885,8 @@ function App() {
   const [newBranch, setNewBranch] = useState("");
   const refreshSequence = useRef(0);
   const refreshCycles = useRef(new Map());
+  const historySearchRef = useRef(null);
+  const detailCache = useRef(new Map());
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
     [state.files],
@@ -739,6 +919,27 @@ function App() {
   useEffect(() => {
     refreshAll();
   }, []);
+  // 历史搜索为纯前端过滤：输入不会触发额外 Git 命令。
+  const historyFilter = useMemo(
+    () => filterCommits(commits, historySearch),
+    [commits, historySearch],
+  );
+  useEffect(() => {
+    if (!historyMode) return undefined;
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        historySearchRef.current?.focus();
+        historySearchRef.current?.select();
+      } else if (event.key === "Escape") {
+        // Esc 先清空历史搜索；搜索为空时返回工作区。
+        if (historySearch) setHistorySearch("");
+        else setHistoryMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [historyMode, historySearch]);
   async function applyState(next, preference, cycle) {
     setState(next);
     const nextFile = preference || next.files[0] || null;
@@ -774,6 +975,7 @@ function App() {
     ]);
     setBranches(branchResult.branches || []);
     setCommits(commitResult.commits || []);
+    setCommitsReason(commitResult.reason || "");
     setRemote(remoteResult);
     await refreshLedger(cycle);
   }
@@ -789,12 +991,128 @@ function App() {
     await refreshLedger(cycle);
   }
   async function selectHistoryCommit(commit) {
-    setHistorySelected(commit); setHistoryDetail(null); setHistoryResult(null); setLoading(true);
-    const result = await window.gitglass.getCommitDetail(commit.hash); setHistoryDetail(result); await refreshLedger(); setLoading(false);
+    // 选择同一提交时不重复请求：已选中且详情已显示则直接返回；
+    // 提交详情按 SHA 缓存，再次查看不再执行 Git 命令。
+    if (!commit) return;
+    if (historySelected?.hash === commit.hash && historyDetail) {
+      setHistoryFile(null);
+      setHistoryResult(null);
+      return;
+    }
+    setHistorySelected(commit);
+    setHistoryFile(null);
+    setHistoryResult(null);
+    const cached = detailCache.current.get(commit.hash);
+    if (cached) {
+      setHistoryDetail(cached);
+      return;
+    }
+    setLoading(true);
+    setHistoryDetail(null);
+    const result = await window.gitglass.getCommitDetail(commit.hash);
+    detailCache.current.set(commit.hash, result);
+    setHistoryDetail(result);
+    await refreshLedger();
+    setLoading(false);
   }
-  async function readHistoryDiff() { if (!historySelected) return; setLoading(true); setHistoryResult(await window.gitglass.getCommitDiff(historySelected.hash)); await refreshLedger(); setLoading(false); }
-  async function readCompare() { if (!historyCompare.base || !historyCompare.target) return; setLoading(true); setHistoryResult(await window.gitglass.compareCommits(historyCompare.base.hash, historyCompare.target.hash)); await refreshLedger(); setLoading(false); }
-  async function openFileHistory(path) { setLoading(true); setHistoryFile(await window.gitglass.getFileHistory(path)); setHistoryResult(null); await refreshLedger(); setLoading(false); }
+
+  function viewParentCommit(parentHash) {
+    if (!parentHash) return;
+    const known = commits.find((entry) => entry.hash === parentHash);
+    selectHistoryCommit(
+      known || {
+        hash: parentHash,
+        shortHash: parentHash.slice(0, 7),
+        subject: "正在读取父提交…",
+        parents: [],
+        author: "",
+        authoredAt: "",
+        refs: [],
+      },
+    );
+  }
+
+  async function readHistoryDiff() {
+    if (!historySelected) return;
+    setLoading(true);
+    const result = await window.gitglass.getCommitDiff(historySelected.hash);
+    setHistoryResult({ ...result, kind: "commit" });
+    await refreshLedger();
+    setLoading(false);
+  }
+
+  async function openCommitFileDiff(file) {
+    if (!historySelected || !file) return;
+    setLoading(true);
+    const result = await window.gitglass.getFileHistoryDiff(
+      historySelected.hash,
+      file.path,
+    );
+    setHistoryResult({
+      ...result,
+      kind: "file",
+      path: file.path,
+      shortHash: historySelected.shortHash,
+    });
+    await refreshLedger();
+    setLoading(false);
+  }
+
+  async function openFileEntryDiff(commit) {
+    if (!historyFile || !commit) return;
+    setLoading(true);
+    const result = await window.gitglass.getFileHistoryDiff(
+      commit.hash,
+      historyFile.path,
+    );
+    setHistoryResult({
+      ...result,
+      kind: "file",
+      path: historyFile.path,
+      shortHash: commit.shortHash,
+    });
+    await refreshLedger();
+    setLoading(false);
+  }
+
+  async function openFileHistory(path) {
+    setLoading(true);
+    const result = await window.gitglass.getFileHistory(path);
+    setHistoryFile(result);
+    setHistoryResult(null);
+    await refreshLedger();
+    setLoading(false);
+  }
+
+  function pinCompare(commit) {
+    setHistoryCompare((value) => {
+      if (!value.base) return { base: commit, target: null };
+      if (value.base.hash === commit.hash) return { base: null, target: null };
+      if (value.target?.hash === commit.hash) return { ...value, target: null };
+      if (value.target) return { base: commit, target: null };
+      // 默认基准为较早提交、对比为较晚提交；用户随后仍可交换。
+      return orderComparePair(value.base, commit);
+    });
+  }
+
+  function swapCompare() {
+    setHistoryCompare((value) => ({ base: value.target, target: value.base }));
+  }
+
+  async function readCompare() {
+    const { base, target } = historyCompare;
+    if (!base || !target) return;
+    setLoading(true);
+    const result = await window.gitglass.compareCommits(base.hash, target.hash);
+    setHistoryResult({
+      ...result,
+      kind: "compare",
+      baseShort: base.shortHash,
+      targetShort: target.shortHash,
+    });
+    await refreshLedger();
+    setLoading(false);
+  }
   async function chooseRepo() {
     const result = await window.gitglass.chooseRepository();
     if (result.canceled) return;
@@ -803,6 +1121,14 @@ function App() {
       return;
     }
     setRepo(result.path);
+    // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
+    detailCache.current.clear();
+    setHistorySelected(null);
+    setHistoryDetail(null);
+    setHistoryResult(null);
+    setHistoryFile(null);
+    setHistoryCompare({ base: null, target: null });
+    setHistorySearch("");
     await refreshAll();
     setNotice({ type: "success", text: `已打开仓库：${result.path}` });
   }
@@ -1085,6 +1411,37 @@ function App() {
       preview={preview}
     />
   );
+  const detailSubject = historyDetail?.subject || historySelected?.subject || "";
+  const detailAuthor = historyDetail?.authorName || historySelected?.author || "";
+  const detailEmail = historyDetail?.authorEmail || "";
+  const detailTime = historyDetail?.authoredAt || historySelected?.authoredAt || "";
+  const historyTitle = historyFile
+    ? "文件历史"
+    : historyResult?.kind === "compare"
+      ? "提交比较"
+      : historyResult?.kind === "file"
+        ? "文件 Diff"
+        : historyResult
+          ? "提交 Diff"
+          : "提交历史";
+  const historySubtitle = historyFile
+    ? historyFile.path
+    : historyResult?.kind === "compare"
+      ? `基准 ${historyResult.baseShort} → 对比 ${historyResult.targetShort}`
+      : historyResult?.kind === "file"
+        ? `${historyResult.path} @ ${historyResult.shortHash}`
+        : historyResult
+          ? historySelected?.subject || ""
+          : historySelected?.subject || "选择提交以查看审阅详情";
+  const historyNotice = loading
+    ? "正在读取历史…"
+    : historyResult?.truncated
+      ? "Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。"
+      : historyResult?.kind === "compare" && historyResult.ok
+        ? `比较方向「基准 → 对比」：${historyResult.baseShort} → ${historyResult.targetShort}`
+        : historyResult?.binary && historyResult.ok
+          ? "结果中包含二进制文件，Git 无法为它们生成文本 Diff。"
+          : "";
   return (
     <main
       className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"} ${isDarwin ? "platform-darwin" : ""}`}
@@ -1150,9 +1507,274 @@ function App() {
         </div>
       </header>
       {historyMode ? <div id="workspace-main" className="workspace history-workspace" tabIndex="-1">
-        <aside className="status-panel"><div className="panel-heading"><h2>历史审查</h2></div><p className="inspector-copy">最多读取 80 个提交；所有查询都在命令账本中可审计。</p><section className="branch-list"><div className="section-label">两提交比较</div><p className="selection-line">基准 {historyCompare.base ? <code>{historyCompare.base.shortHash}</code> : "未选择"}</p><p className="selection-line">目标 {historyCompare.target ? <code>{historyCompare.target.shortHash}</code> : "未选择"}</p>{historyCompare.base && historyCompare.target && <button className="secondary-action" onClick={readCompare}>读取比较</button>}</section></aside>
-        <section className="main-panel"><div className="main-toolbar"><div><h2>{historyFile ? "文件历史" : historyResult ? "提交 Diff" : "提交历史"}</h2><span>{historySelected?.subject || "选择提交以查看审查详情"}</span></div>{historyResult && <button className="icon-button" aria-label="复制真实 Git 命令" onClick={() => navigator.clipboard?.writeText(historyResult.record?.displayCommand || "")}><Copy size={15}/></button>}</div><div className="main-content"><div className="history-notice" role="status" aria-live="polite">{loading ? "正在读取历史…" : historyResult?.truncated ? "Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。" : ""}</div><div className="history-view">{historyResult ? <div className="diff-content">{historyResult.diff ? historyResult.diff.split("\n").map((line,index) => <DiffLine key={index} line={line}/>) : <div className="history-empty">此提交没有可显示的文本 Diff。</div>}</div> : <div className="commit-graph">{(historyFile?.entries || commits).map((commit) => <div className={`graph-row history-row ${historySelected?.hash === commit.hash ? "selected" : ""}`} key={commit.hash}><button className="commit-select" onClick={() => historyFile ? (async () => { setLoading(true); setHistoryResult(await window.gitglass.getFileHistoryDiff(commit.hash, historyFile.path)); await refreshLedger(); setLoading(false); })() : selectHistoryCommit(commit)}><span className="graph-line"><i/></span><code title={commit.hash}>{commit.shortHash}</code><strong title={commit.subject}>{commit.subject}</strong><span title={commit.author}>{commit.author}</span></button>{!historyFile && <button className="compare-pin" aria-label="选择比较提交" onClick={() => setHistoryCompare((value) => value.base ? { ...value, target: commit } : { base: commit, target: null })}>比较</button>}</div>)}</div>}</div></div></section>
-        <aside className="context-panel">{historyFile ? <div className="inspector-flow"><div className="inspector-heading"><span>文件历史</span><h2 title={historyFile.path}>{historyFile.path}</h2></div><button className="text-action" onClick={() => { setHistoryFile(null); setHistoryResult(null); }}>返回提交详情</button></div> : historySelected ? <div className="inspector-flow"><div className="inspector-heading"><span>提交详情</span><h2 title={historySelected.subject}>{historySelected.subject}</h2></div><dl className="file-facts"><div><dt>完整 SHA</dt><dd><code title={historySelected.hash}>{historySelected.hash}</code><button className="icon-button" aria-label="复制完整 SHA" onClick={() => navigator.clipboard?.writeText(historySelected.hash)}><Copy size={14}/></button></dd></div><div><dt>父提交</dt><dd>{historySelected.parents?.join(", ") || "根提交"}</dd></div><div><dt>作者</dt><dd title={historySelected.author}>{historySelected.author}</dd></div><div><dt>时间</dt><dd>{historySelected.authoredAt}</dd></div></dl><button className="primary-action" onClick={readHistoryDiff}>查看完整 Diff</button><section className="history-files"><h3>改动文件</h3>{historyDetail?.changedFiles?.map((file) => <button className="history-file" title={file.path} key={file.path} onClick={() => openFileHistory(file.path)}><span>{file.status}</span><code>{file.path}</code></button>)}</section></div> : <div className="inspector-flow"><h2>选择一个提交</h2><p className="inspector-copy">这是只读审查，不会切换分支或改写工作区。</p></div>}</aside>
+        <aside className="status-panel">
+          <div className="panel-heading"><h2>历史审查</h2></div>
+          <p className="inspector-copy">最多读取 80 个提交；所有查询都作为系统读取记录在命令账本中。</p>
+          <section className="branch-list compare-panel">
+            <div className="section-label"><span>双提交比较</span></div>
+            <p className="selection-line">
+              基准 {historyCompare.base ? (
+                <>
+                  <code>{historyCompare.base.shortHash}</code>
+                  <span className="selection-subject" title={historyCompare.base.subject}>{historyCompare.base.subject}</span>
+                </>
+              ) : "未选择"}
+            </p>
+            <p className="selection-line">
+              对比 {historyCompare.target ? (
+                <>
+                  <code>{historyCompare.target.shortHash}</code>
+                  <span className="selection-subject" title={historyCompare.target.subject}>{historyCompare.target.subject}</span>
+                </>
+              ) : "未选择"}
+            </p>
+            {historyCompare.base && historyCompare.target && (
+              <>
+                <p className="compare-direction">
+                  比较方向：<code>{historyCompare.base.shortHash}</code> → <code>{historyCompare.target.shortHash}</code>（基准 → 对比）
+                </p>
+                <div className="compare-actions">
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    aria-label="交换基准提交与对比提交"
+                    title="交换基准提交与对比提交"
+                    onClick={swapCompare}
+                  >
+                    <ArrowsLeftRight size={14} aria-hidden="true" />
+                    交换
+                  </button>
+                  <button type="button" className="secondary-action" onClick={readCompare} disabled={loading}>
+                    读取比较
+                  </button>
+                </div>
+              </>
+            )}
+            {(historyCompare.base || historyCompare.target) && (
+              <button
+                type="button"
+                className="text-action"
+                aria-label="清除比较选择"
+                title="清除比较选择"
+                onClick={() => setHistoryCompare({ base: null, target: null })}
+              >
+                清除比较选择
+              </button>
+            )}
+          </section>
+        </aside>
+        <section className="main-panel">
+          <div className="main-toolbar">
+            <div>
+              <h2>{historyTitle}</h2>
+              <span>{historySubtitle}</span>
+            </div>
+            {historyResult?.record && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="复制真实 Git 命令"
+                title="复制真实 Git 命令"
+                onClick={() => navigator.clipboard?.writeText(historyResult.record?.displayCommand || "")}
+              >
+                <Copy size={15} aria-hidden="true" />
+              </button>
+            )}
+            {historyResult && (
+              <button
+                type="button"
+                className="secondary-action"
+                aria-label="返回提交列表"
+                title="返回提交列表"
+                onClick={() => { setHistoryResult(null); setHistoryFile(null); }}
+              >
+                返回列表
+              </button>
+            )}
+          </div>
+          <div className="main-content"><div className="history-notice" role="status" aria-live="polite">{historyNotice}</div>
+            <div className="history-view">
+              {historyResult ? (
+                <HistoryResult result={historyResult} onBack={() => { setHistoryResult(null); setHistoryFile(null); }} />
+              ) : (
+                <div className="history-browser">
+                  {!historyFile && (
+                    <HistorySearch
+                      value={historySearch}
+                      onChange={setHistorySearch}
+                      inputRef={historySearchRef}
+                      filtered={historyFilter.filtered}
+                      matchCount={historyFilter.matches.length}
+                      total={commits.length}
+                    />
+                  )}
+                  <div className="commit-list">
+                    {!repo ? (
+                      <div className="history-empty"><p>打开仓库后可查看提交历史。</p></div>
+                    ) : loading && !commits.length && !historyFile ? (
+                      <div className="history-empty"><p>正在读取提交历史…</p></div>
+                    ) : historyFile ? (
+                      (historyFile.entries || []).length ? (
+                        historyFile.entries.map((entry) => (
+                          <CommitRow
+                            key={entry.hash}
+                            commit={entry}
+                            selected={false}
+                            onSelect={() => openFileEntryDiff(entry)}
+                          />
+                        ))
+                      ) : (
+                        <div className="history-empty">
+                          <p>此文件没有可读取的历史提交。</p>
+                          {historyFile.reason && <span>{historyFile.reason}</span>}
+                        </div>
+                      )
+                    ) : historyFilter.filtered && !historyFilter.matches.length ? (
+                      <div className="history-empty">
+                        <MagnifyingGlass size={22} aria-hidden="true" />
+                        <p>没有匹配的提交</p>
+                        <span>未找到与「{historySearch.trim()}」匹配的提交信息、作者名或短 SHA。</span>
+                        <button type="button" className="secondary-action" onClick={() => setHistorySearch("")}>
+                          清除搜索
+                        </button>
+                      </div>
+                    ) : commitsReason ? (
+                      <div className="history-empty"><p>{commitsReason}</p></div>
+                    ) : (
+                      historyFilter.matches.map((commit) => (
+                        <CommitRow
+                          key={commit.hash}
+                          commit={commit}
+                          selected={historySelected?.hash === commit.hash}
+                          compareRole={
+                            historyCompare.base?.hash === commit.hash
+                              ? "base"
+                              : historyCompare.target?.hash === commit.hash
+                                ? "target"
+                                : null
+                          }
+                          onSelect={() => selectHistoryCommit(commit)}
+                          onCompare={() => pinCompare(commit)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+        <aside className="context-panel">
+          {historyFile ? (
+            <div className="inspector-flow">
+              <div className="inspector-heading"><span>文件历史</span><h2 title={historyFile.path}>{historyFile.path}</h2></div>
+              <p className="inspector-copy">点击左侧列表中的提交，可查看该文件在对应提交中的真实 Diff。</p>
+              <button type="button" className="text-action" onClick={() => { setHistoryFile(null); setHistoryResult(null); }}>
+                返回提交详情
+              </button>
+            </div>
+          ) : historySelected ? (
+            <div className="inspector-flow">
+              <div className="inspector-heading"><span>提交详情</span><h2 title={detailSubject}>{detailSubject}</h2></div>
+              <dl className="file-facts">
+                <div>
+                  <dt>完整 SHA</dt>
+                  <dd>
+                    <code title={historySelected.hash}>{historySelected.hash}</code>
+                    <CopyButton value={historySelected.hash} label="复制完整 SHA" />
+                  </dd>
+                </div>
+                <div>
+                  <dt>父提交</dt>
+                  <dd className="parent-list">
+                    {historySelected.parents?.length ? (
+                      historySelected.parents.map((parent) => (
+                        <button
+                          type="button"
+                          className="parent-link"
+                          key={parent}
+                          title={`查看父提交 ${parent}`}
+                          aria-label={`查看父提交 ${parent}`}
+                          onClick={() => viewParentCommit(parent)}
+                        >
+                          <code>{parent.slice(0, 7)}</code>
+                        </button>
+                      ))
+                    ) : (
+                      <span className="initial-commit">初始提交（没有父提交）</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>作者</dt>
+                  <dd title={detailAuthor}>{detailAuthor || "—"}</dd>
+                </div>
+                <div>
+                  <dt>邮箱</dt>
+                  <dd title={detailEmail}>{detailEmail || "—"}</dd>
+                </div>
+                <div>
+                  <dt>时间</dt>
+                  <dd className="commit-time">
+                    <span>{relativeTime(detailTime)}</span>
+                    <span className="full-time" title={fullLocalTime(detailTime)}>{fullLocalTime(detailTime)}</span>
+                  </dd>
+                </div>
+              </dl>
+              <div className="commit-stats" aria-label="变更统计">
+                <span className="stat-chip">变更文件 {historyDetail?.filesChanged ?? 0}</span>
+                <span className="stat-chip added">新增 +{historyDetail?.insertions ?? 0}</span>
+                <span className="stat-chip deleted">删除 −{historyDetail?.deletions ?? 0}</span>
+              </div>
+              <div className="commit-message-block">
+                <span className="section-label">完整提交说明</span>
+                <pre className="commit-message">{historyDetail?.message || detailSubject}</pre>
+              </div>
+              <button type="button" className="primary-action" onClick={readHistoryDiff} disabled={loading}>
+                查看完整 Diff
+              </button>
+              <section className="history-files">
+                <h3>改动文件</h3>
+                {historyDetail?.changedFiles?.length ? (
+                  historyDetail.changedFiles.map((file) => {
+                    const kind = changeOf(file.status);
+                    return (
+                      <div className="history-file-row" key={`${file.status}-${file.path}`}>
+                        <button
+                          type="button"
+                          className="history-file"
+                          title={`查看 ${file.path} 在此提交中的 Diff`}
+                          onClick={() => openCommitFileDiff(file)}
+                        >
+                          <span className={`file-kind-tag ${kind}`}>
+                            {changeKindLetter[kind]} {titleFor[kind]}
+                          </span>
+                          <code>{file.path}</code>
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`查看 ${file.path} 的文件历史`}
+                          title={`查看 ${file.path} 的文件历史`}
+                          onClick={() => openFileHistory(file.path)}
+                        >
+                          <GitCommit size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="inspector-copy">{loading ? "正在读取改动文件…" : "没有读取到改动文件。"}</p>
+                )}
+              </section>
+            </div>
+          ) : (
+            <div className="inspector-flow">
+              <h2>选择一个提交</h2>
+              <p className="inspector-copy">这是只读审阅，不会切换分支或改写工作区。选中提交后可查看详情、文件 Diff，并可将两个提交加入比较。</p>
+            </div>
+          )}
+        </aside>
       </div> : <div id="workspace-main" className="workspace" tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading">

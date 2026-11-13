@@ -42,9 +42,41 @@ function parseCommits(raw) {
       const [hash, parents, subject, author, authoredAt] = values
       return { hash, parents: parents ? parents.split(' ') : [], subject, author, authoredAt }
     }
+    const refsOf = (refs) => (refs ? refs.split(',').map((ref) => ref.trim()).filter(Boolean) : [])
+    if (values.length >= 8) {
+      const [hash, shortHash, parents, subject, author, authorEmail, authoredAt, refs] = values
+      return { hash, shortHash: shortHash || hash?.slice(0, 7), parents: parents ? parents.split(' ') : [], subject, author, authorEmail, authoredAt, refs: refsOf(refs) }
+    }
     const [hash, shortHash, parents, subject, author, authoredAt, refs] = values
-    return { hash, shortHash: shortHash || hash?.slice(0, 7), parents: parents ? parents.split(' ') : [], subject, author, authoredAt, refs: refs ? refs.split(',').map((ref) => ref.trim()).filter(Boolean) : [] }
+    return { hash, shortHash: shortHash || hash?.slice(0, 7), parents: parents ? parents.split(' ') : [], subject, author, authoredAt, refs: refsOf(refs) }
   })
+}
+
+// 解析 `git show --format=%B%x1e%an%x1f%ae%x1f%aI --shortstat` 的结构化输出：
+// 正文（%B，含完整提交说明）与作者、邮箱、时间用记录分隔符 \x1e 隔开，
+// 元数据之间用 \x1f 隔开，统计行跟随在时间之后。
+function parseCommitDetail(raw) {
+  const text = String(raw || '')
+  const separator = text.indexOf('\x1e')
+  const messagePart = separator === -1 ? text : text.slice(0, separator)
+  const metaPart = separator === -1 ? '' : text.slice(separator + 1)
+  const [rawName, rawEmail, rawDateAndStat = ''] = metaPart.split('\x1f')
+  const [authoredAt, ...statLines] = rawDateAndStat.split(/\r?\n/)
+  const statText = statLines.join('\n')
+  const filesMatch = statText.match(/(\d+) files? changed/)
+  const plusMatch = statText.match(/(\d+) insertions?\(\+\)/)
+  const minusMatch = statText.match(/(\d+) deletions?\(-\)/)
+  const message = messagePart.replace(/\r?\n$/, '')
+  return {
+    message,
+    subject: message.split(/\r?\n/)[0] || '',
+    authorName: String(rawName || '').trim(),
+    authorEmail: String(rawEmail || '').trim(),
+    authoredAt: String(authoredAt || '').trim(),
+    filesChanged: filesMatch ? Number(filesMatch[1]) : 0,
+    insertions: plusMatch ? Number(plusMatch[1]) : 0,
+    deletions: minusMatch ? Number(minusMatch[1]) : 0,
+  }
 }
 
 function parseReflog(raw) {
@@ -55,4 +87,4 @@ function parseReflog(raw) {
   }).filter((entry) => /^[0-9a-f]{40}$/i.test(entry.hash))
 }
 
-module.exports = { parseStatus, parseBranches, parseCommits, parseReflog }
+module.exports = { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog }
