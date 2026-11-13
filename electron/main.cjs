@@ -68,7 +68,7 @@ app.whenReady().then(() => {
   // system keeps drawing native minimize/maximize/close through the Window
   // Controls Overlay (Snap Layouts included). macOS keeps its traffic lights.
   const titleBarOptions = process.platform === 'win32'
-    ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#F7F8FA', symbolColor: '#344054', height: 48 } }
+    ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#FFFFFF', symbolColor: '#344054', height: 48 } }
     : { titleBarStyle: 'hiddenInset' }
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'
   mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', iconFile), ...titleBarOptions, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })

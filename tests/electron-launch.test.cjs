@@ -10,7 +10,9 @@ describe('Electron launch configuration', () => {
   })
 
   it('uses the Windows Window Controls Overlay with a 48px custom title bar', () => {
-    expect(main).toContain("titleBarStyle: 'hidden', titleBarOverlay: { color: '#F7F8FA', symbolColor: '#344054', height: 48 }")
+    // The overlay strip matches the white top bar (var(--surface), #FFFFFF) so the
+    // native buttons blend into the title bar instead of showing a gray seam.
+    expect(main).toContain("titleBarStyle: 'hidden', titleBarOverlay: { color: '#FFFFFF', symbolColor: '#344054', height: 48 }")
   })
 
   it('keeps the native traffic lights on macOS and never goes frameless', () => {
