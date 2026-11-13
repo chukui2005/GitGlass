@@ -3,6 +3,7 @@ const path = require('node:path')
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.jsx'), 'utf8')
 const ledger = fs.readFileSync(path.join(__dirname, '..', 'src', 'workbench-ledger.js'), 'utf8')
 const service = fs.readFileSync(path.join(__dirname, '..', 'electron', 'repository-service.cjs'), 'utf8')
+const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8')
 
 describe('V0.5.2 history review polish UI structure', () => {
   it('keeps a local search input with match count, clear action, and Ctrl+K hint', () => {
@@ -71,5 +72,28 @@ describe('V0.5.2 history review polish UI structure', () => {
   it('explains an empty repository in Chinese from the service layer', () => {
     expect(service).toContain('此仓库还没有提交记录。')
     expect(service).toContain('仓库状态刷新后选中的提交可能已失效')
+  })
+  it('keeps the compare button inside the row instead of wrapping below it', () => {
+    // P1 回归点：只有 grid-template-columns 而没有 display:grid 时，
+    // “比较”按钮会掉到下一行左侧。
+    for (const match of styles.matchAll(/\.history-row\{([^}]*)\}/g)) {
+      expect(match[1]).toContain('display:grid')
+      expect(match[1]).toContain('grid-template-columns:minmax(0,1fr) auto')
+    }
+    expect(styles).toContain('.compare-pin{align-self:center;justify-self:end;white-space:nowrap')
+    // 选中态覆盖整条提交行，而不是只覆盖左侧按钮。
+    expect(styles).toContain('.history-row.selected{background:var(--blue-soft);box-shadow:inset 3px 0 var(--blue)}')
+  })
+  it('formats ledger stdout through a single reusable helper before rendering', () => {
+    // P1 回归点：结构化提交详情的 0x1e/0x1f 不能以方框出现在“命令结果”里。
+    expect(source).toContain('const text = formatLedgerOutput(body)')
+    expect(source).toContain('<pre>{text}</pre>')
+    expect(source).not.toContain('<pre>{body}</pre>')
+    expect(ledger).toContain('export function formatLedgerOutput(value)')
+    expect(ledger).toContain('.replace(/\\u001e/g, \'\\n\')')
+    expect(ledger).toContain('.replace(/\\u001f/g, \' · \')')
+    // 原始 stdout 仍保留在技术详情说明中，审计能力不丢。
+    expect(source).toContain('<span>原始输出</span>')
+    expect(source).toContain('仍保留原始')
   })
 })

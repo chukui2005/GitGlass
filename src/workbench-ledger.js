@@ -52,6 +52,23 @@ export function intentLabel(record) {
   return mapped || (record?.source === 'background' ? '系统读取' : '用户执行')
 }
 
+// 账本“命令结果”的展示层格式化。Git 的结构化格式（如 --pretty=format:%B%x1e%an%x1f%ae）
+// 用 0x1e 记录分隔符和 0x1f 单元分隔符分隔字段，直接渲染会变成不可读的方框。
+// 这里只在展示时转换；命令记录中的原始 stdout 仍原样保留，审计不受影响。
+export function formatLedgerOutput(value) {
+  if (typeof value !== 'string' || !value) return ''
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u001e/g, '\n') // 记录分隔符 → 换行
+    .replace(/\u0000/g, '\n') // -z 输出中的 NUL 分隔 → 换行
+    .replace(/\u001f/g, ' · ') // 单元分隔符 → 可读分隔符
+    .replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001d\u007f]/g, '') // 其余控制字符
+    .replace(/\ufffd/g, '') // 无效 UTF-8 解码出的替代方框
+    .replace(/\n{3,}/g, '\n\n')
+    // 只裁掉首尾空行；porcelain 状态码前导空格是有意义的数据，不能 trim 掉。
+    .replace(/^\n+|\n+$/g, '')
+}
+
 export function recordTypeLabel(source) {
   return source === 'background' ? '系统读取' : '用户执行'
 }

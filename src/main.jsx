@@ -25,6 +25,7 @@ import {
 import {
   countBySource,
   filterLedgerRecords,
+  formatLedgerOutput,
   glanceSummary,
   groupBackgroundRecords,
   intentLabel,
@@ -89,8 +90,10 @@ function DiffLine({ line }) {
 }
 function Output({ title, body, danger, warning }) {
   const [copied, setCopied] = useState(false);
+  // 展示层格式化：控制字符转成可读文本，复制的内容与看到的内容一致。
+  const text = formatLedgerOutput(body);
   async function copy() {
-    await navigator.clipboard?.writeText(body || "");
+    await navigator.clipboard?.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
@@ -104,7 +107,7 @@ function Output({ title, body, danger, warning }) {
           {copied ? "已复制" : "复制"}
         </button>
       </div>
-      <pre>{body}</pre>
+      <pre>{text}</pre>
     </div>
   );
 }
@@ -248,6 +251,13 @@ function LedgerEntry({ record }) {
               <b className={failure ? "bad" : "good"}>
                 {record.exitCode ?? "—"}
               </b>
+            </div>
+            <div className="tech-row">
+              <span>原始输出</span>
+              <code>
+                “命令结果”已把记录分隔符与控制字符转换为可读文本；命令记录中仍保留原始
+                stdout，用于审计和复制真实命令。
+              </code>
             </div>
           </details>
         </div>
