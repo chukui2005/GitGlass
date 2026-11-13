@@ -76,6 +76,8 @@ export function recordTypeLabel(source) {
 
 export function recordStatusLabel(record) {
   if (!record) return '尚无记录'
+  // 本地校验拒绝不是一次执行失败的 Git 命令：明确区分，避免误读为已执行。
+  if (record.rejected) return '已拒绝'
   if (record.ok === false) return '失败'
   return record.stderr ? '警告' : '成功'
 }

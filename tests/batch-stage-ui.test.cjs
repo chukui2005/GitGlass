@@ -4,6 +4,7 @@ const path = require('node:path')
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.jsx'), 'utf8')
 const ledger = fs.readFileSync(path.join(__dirname, '..', 'src', 'workbench-ledger.js'), 'utf8')
 const service = fs.readFileSync(path.join(__dirname, '..', 'electron', 'repository-service.cjs'), 'utf8')
+const commandService = fs.readFileSync(path.join(__dirname, '..', 'electron', 'git-command-service.cjs'), 'utf8')
 const mainProcess = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8')
 
@@ -14,6 +15,11 @@ function fileSectionBlocks() {
   expect(parts.length).toBe(3)
   const stagedEnd = parts[2].indexOf('/>')
   return [parts[1], parts[2].slice(0, stagedEnd + 2)]
+}
+
+// 提取 FileRow 组件源码：加载期间单文件操作必须禁用。
+function fileRowBlock() {
+  return source.split('function FileRow')[1].split('function FileSection')[0]
 }
 
 describe('V0.5.3 batch stage UI structure', () => {
@@ -29,19 +35,37 @@ describe('V0.5.3 batch stage UI structure', () => {
     expect(stagedBlock).not.toContain('onToggleCheck')
     // 复选框 aria-label 必须包含文件路径。
     expect(source).toContain('aria-label={`选择暂存 ${file.path}`}')
-    // 复选框加载期间禁用，防止并发执行改变暂存区。
-    expect(source).toContain('disabled={busy}')
   })
 
-  it('provides a compact toolbar: select all, clear, live count, and a disabled-with-tooltip primary action', () => {
+  it('disables every control that mutates the staging area while loading (P2)', () => {
+    const row = fileRowBlock()
+    // 复选框与单文件“暂存/取消暂存”按钮在加载期间都必须禁用。
+    expect(row).toContain('disabled={busy}')
+    expect((row.match(/disabled=\{busy\}/g) || []).length).toBe(2)
+    // 单文件操作按钮保留 aria-label 与 title。
+    expect(row).toContain('aria-label={stageLabel}')
+    expect(row).toContain('title={stageLabel}')
+    // 工具栏三个按钮也都在加载期间禁用。
+    expect(source).toContain('disabled={!total || loading}')
+    expect(source).toContain('disabled={!count || loading}')
+  })
+
+  it('explains the disabled primary action with visible text, not only the unhoverable title (P2)', () => {
+    expect(source).toContain('先在上方勾选要暂存的文件。')
+    expect(source).toContain('batch-hint')
+    // 可见提示与按钮 title 并存，但提示不依赖 disabled 按钮的 title。
+    expect(source).toContain('{!count && !loading && (')
+    expect(styles).toContain('.batch-hint{margin:0;color:var(--muted);font-size:10px;line-height:1.4}')
+  })
+
+  it('provides a compact toolbar: select all, clear, live count, and a disabled-with-reason primary action', () => {
     expect(source).toContain('全选未暂存')
     expect(source).toContain('清除选择')
     expect(source).toContain('已选择 {count} 个')
     expect(source).toContain('暂存所选 {count} 个')
     expect(source).toContain('aria-live="polite"')
-    // 未选择时主按钮禁用，并用 title 说明原因，不制造可点击假象。
     expect(source).toContain('disabled={!count || loading}')
-    expect(source).toContain('先在上方勾选要暂存的文件')
+    expect(source).toContain('title={stageTitle}')
     // “暂存所选”通过真实 argv 操作执行，绝不使用 git add . 或 git add -A 实现批量暂存。
     expect(source).toContain('operate("stageSelected", {')
     expect(source).toContain('paths: checkedForStaging.map((file) => file.path)')
@@ -76,15 +100,35 @@ describe('V0.5.3 batch stage UI structure', () => {
 
   it('shows honest Chinese feedback for failures without pretending atomic completion', () => {
     expect(source).toContain('暂存未全部完成，请查看命令账本与当前文件状态。')
-    // 校验被拒（argv 只有 ['git']）时直接展示中文原因。
-    expect(source).toContain('所选文件无效，本次未执行暂存命令。')
+    // 本地校验被拒（记录带 rejected 标记）时直接展示中文原因。
+    expect(source).toContain('execution?.rejected')
+    expect(source).toContain('所选文件无效，本次未执行 Git 命令；请刷新后重试。')
     // 成功提示按实际 argv 数量计数。
     expect(source).toContain('已暂存所选')
   })
 
+  it('enforces the server-side unstaged whitelist before running git add (P1)', () => {
+    // 执行前先读一次工作区状态，只接受精确匹配 area === unstaged 的路径。
+    expect(service).toContain('const state = await this.state()')
+    expect(service).toContain("state.files.filter((file) => file.area === 'unstaged')")
+    expect(service).toContain('所选文件已不在未暂存区，请刷新后重试。')
+    // 校验拒绝进入账本：明确标注“本地校验拒绝，未执行 Git 命令”，带 rejected 标记与空退出码。
+    expect(service).toContain('this.rejectedStage(')
+    expect(commandService).toContain("recordRejection({ argv = [], intent, source, cwd, stderr = '' })")
+    expect(commandService).toContain("'本地校验拒绝，未执行 Git 命令'")
+    expect(commandService).toContain('exitCode: null, ok: false, outputTruncated: false, rejected: true')
+    // 白名单依赖每个未暂存条目都是精确文件路径：未跟踪文件不折叠成目录。
+    expect(service).toContain("'--untracked-files=all'")
+    // 成功路径仍是一条真实命令。
+    expect(service).toContain("this.run(['add', '--', ...normalized.paths], 'Stage selected files', 'user')")
+  })
+
+  it('labels a locally rejected record as 已拒绝 instead of a failed command', () => {
+    expect(ledger).toContain('if (record.rejected) return \'已拒绝\'')
+  })
+
   it('maps the new intent to a Chinese ledger label and routes it through git:operate', () => {
     expect(ledger).toContain("'Stage selected files': '暂存所选文件'")
-    expect(service).toContain("this.run(['add', '--', ...normalized.paths], 'Stage selected files', 'user')")
     expect(mainProcess).toContain("repository.stageSelected(payload.paths)")
     // 成功与失败都返回刷新后的 state：main.cjs 的返回结构对所有操作一致。
     expect(mainProcess).toContain('return { execution, state: await repository.state(), commit }')

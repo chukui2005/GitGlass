@@ -33,6 +33,25 @@ class GitCommandService {
 
   history() { return [...this.records] }
 
+  /**
+   * Records a locally rejected user operation WITHOUT executing anything.
+   * The entry keeps the requested argv for audit but is clearly marked as
+   * never having run: no exit code, and the visible command line states
+   * the rejection so it can never be mistaken for an executed Git command.
+   */
+  recordRejection({ argv = [], intent, source, cwd, stderr = '' }) {
+    const note = '本地校验拒绝，未执行 Git 命令'
+    const record = {
+      id: this.idFactory(), operationId: this.createOperationId(), intent, source,
+      argv: ['git', ...argv], displayCommand: note, command: note,
+      cwd: cwd || '', startedAt: this.now(), endedAt: this.now(),
+      stdout: '', stderr, exitCode: null, ok: false, outputTruncated: false, rejected: true,
+    }
+    this.records.unshift(Object.freeze({ ...record }))
+    if (this.records.length > this.maxRecords) this.records.length = this.maxRecords
+    return this.records[0]
+  }
+
   async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null }) {
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,

@@ -155,6 +155,7 @@ function FileRow({
         className="row-action"
         aria-label={stageLabel}
         title={stageLabel}
+        disabled={busy}
         onClick={() => onStage(file)}
       >
         {file.area === "staged" ? <Minus size={14} /> : <Plus size={14} />}
@@ -242,6 +243,10 @@ function BatchStageToolbar({ total, count, loading, onSelectAll, onClear, onStag
           暂存所选 {count} 个
         </button>
       </div>
+      {/* 禁用原因以可见文字呈现，不依赖 disabled 按钮自身无法触发的 title。 */}
+      {!count && !loading && (
+        <p className="batch-hint">先在上方勾选要暂存的文件。</p>
+      )}
     </div>
   );
 }
@@ -1002,7 +1007,7 @@ function App() {
   );
   const latestRecord = records[0];
   const preview = !repo
-    ? "git status --porcelain=v1 -z"
+    ? "git status --porcelain=v1 -z --untracked-files=all"
     : staged.length && message.trim()
       ? `git commit -m ${JSON.stringify(message.trim())}`
       : selected
@@ -1011,7 +1016,7 @@ function App() {
           : `git add -- ${selected.path}`
         : unstaged.length
           ? "git add -A"
-          : "git status --porcelain=v1 -z";
+          : "git status --porcelain=v1 -z --untracked-files=all";
   useEffect(() => {
     refreshAll();
   }, []);
@@ -1264,8 +1269,8 @@ function App() {
     await refreshAll();
     setNotice({ type: "success", text: `已打开仓库：${result.path}` });
   }
-  // 操作结果的用户提示：批量暂存的失败提示不伪称原子完成；校验被拒时
-  // 直接展示中文原因（此时 argv 只有 ['git']，说明未执行真实命令）。
+  // 操作结果的用户提示：批量暂存的失败提示不伪称原子完成；本地校验被拒时
+  // 直接展示中文原因（记录带 rejected 标记，说明未执行真实命令）。
   function buildOperateNotice(action, result) {
     const execution = result.execution;
     if (execution?.ok) {
@@ -1278,18 +1283,18 @@ function App() {
         };
       return null;
     }
-    if (action === "stageSelected") {
-      if ((execution?.argv?.length || 0) <= 1)
-        return {
-          type: "error",
-          text:
-            execution?.stderr || "所选文件无效，本次未执行暂存命令。",
-        };
+    if (execution?.rejected)
+      return {
+        type: "error",
+        text:
+          execution.stderr ||
+          "所选文件无效，本次未执行 Git 命令；请刷新后重试。",
+      };
+    if (action === "stageSelected")
       return {
         type: "error",
         text: "暂存未全部完成，请查看命令账本与当前文件状态。",
       };
-    }
     return {
       type: "error",
       text: "Git 命令失败；原始 stderr 和退出代码已保留在命令账本。",

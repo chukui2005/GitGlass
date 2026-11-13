@@ -63,6 +63,6 @@ describe('real Git workflow integration', () => {
     expect(ledger.some((record) => record.operationId === createPlan.plan.operationId && record.argv.join(' ') === 'git switch -c feature/ledger')).toBe(true)
     expect(ledger.some((record) => record.operationId === switchPlan.plan.operationId && record.argv.join(' ') === 'git switch main')).toBe(true)
     expect(ledger.some((record) => record.argv.join(' ') === 'git diff -- note.txt')).toBe(true)
-    expect(ledger.some((record) => record.argv.join(' ') === 'git status --porcelain=v1 -z')).toBe(true)
+    expect(ledger.some((record) => record.argv.join(' ') === 'git status --porcelain=v1 -z --untracked-files=all')).toBe(true)
   })
 })
