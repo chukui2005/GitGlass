@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { GitCommandService } = require('./git-command-service.cjs')
@@ -13,7 +13,7 @@ async function chooseRepository() {
   const choice = await dialog.showOpenDialog(mainWindow, { title: 'Open local Git repository', properties: ['openDirectory'] })
   if (choice.canceled || !choice.filePaths[0]) return { canceled: true }
   const candidate = path.resolve(choice.filePaths[0])
-  const root = await commandService.run({ argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'user', cwd: candidate })
+  const root = await commandService.run({ argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background', cwd: candidate })
   if (!root.ok) return { ok: false, error: root.stderr || 'This folder is not a Git repository.', execution: root }
   repoPath = root.stdout.trim()
   return { ok: true, path: repoPath, state: await repository.state(), execution: root }
@@ -54,8 +54,12 @@ ipcMain.handle('git:operate', async (_event, action, payload = {}) => {
 })
 
 app.whenReady().then(() => {
+  // Windows gives every window a native menu bar (File/Edit/View/Window) by
+  // default. GitGlass ships its own UI, so remove it only there and keep the
+  // native window controls intact.
+  if (process.platform === 'win32') Menu.setApplicationMenu(null)
   if (process.env.GITGLASS_REPOSITORY && fs.existsSync(process.env.GITGLASS_REPOSITORY)) repoPath = path.resolve(process.env.GITGLASS_REPOSITORY)
-  mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', titleBarStyle: 'hiddenInset', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', 'icon-256.png'), titleBarStyle: 'hiddenInset', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) mainWindow.loadURL(devUrl)
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
