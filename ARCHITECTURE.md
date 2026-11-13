@@ -1,5 +1,9 @@
 # GitGlass V0.3 architecture
 
+## V0.5 History & Review Lens
+
+`RepositoryService` 是历史审查的唯一入口：它先验证 40 位 commit SHA 或已跟踪路径，再经 `GitCommandService.run()` 读取 `log`、`show`、`diff`。这些记录均标记为 `source: background`，并保留 argv、cwd、stdout、stderr、exit code。Diff 收集上限为 1 MiB，`outputTruncated` 会传到 UI；服务不会暴露任何历史改写命令。
+
 ## CommandRecord is the audit boundary
 
 `GitCommandService` is the only module that imports `node:child_process` and invokes the user's local `git` executable. It always calls `spawn('git', argv, { shell: false })`. A shell command string is never constructed for execution; `displayCommand` exists only for presentation.

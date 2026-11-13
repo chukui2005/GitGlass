@@ -33,11 +33,11 @@ class GitCommandService {
 
   history() { return [...this.records] }
 
-  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null }) {
+  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null }) {
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
-      cwd: cwd || '', startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
+      cwd: cwd || '', startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false, outputTruncated: false,
     }
     const finish = (exitCode, error = '') => {
       if (error) record.stderr += error
@@ -63,8 +63,18 @@ class GitCommandService {
         // Never pass a command string or enable a shell: argv is the source of truth.
         child = this.spawnImpl('git', argv, { cwd, shell: false, windowsHide: true })
       } catch (error) { settle(-1, error.message); return }
-      child.stdout?.on('data', (data) => { record.stdout += data.toString() })
-      child.stderr?.on('data', (data) => { record.stderr += data.toString() })
+      const collect = (field, data) => {
+        const text = data.toString()
+        if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) { record[field] += text; return }
+        const used = Buffer.byteLength(record.stdout) + Buffer.byteLength(record.stderr)
+        const remaining = maxOutputBytes - used
+        if (remaining <= 0) { record.outputTruncated = true; return }
+        const slice = Buffer.from(text).subarray(0, remaining).toString()
+        record[field] += slice
+        if (Buffer.byteLength(text) > remaining) record.outputTruncated = true
+      }
+      child.stdout?.on('data', (data) => collect('stdout', data))
+      child.stderr?.on('data', (data) => collect('stderr', data))
       child.on('error', (error) => settle(-1, error.message))
       child.on('close', (code) => settle(code ?? -1))
     })

@@ -1,4 +1,8 @@
-# GitGlass V0.4
+# GitGlass V0.5
+
+## History & Review Lens
+
+GitGlass 可只读审查最近 80 个提交、提交统计与完整 Diff，比较两个历史提交，并跟随重命名查看已跟踪文件的最近 50 条历史。所有查询都会进入 Command Ledger，使用本机 `git` 的 argv 调用；超过 1 MiB 的 Diff 会截断显示，同时保留可复制的真实命令。此功能不会 checkout、reset、revert、cherry-pick、merge、rebase、push 或改写工作区。
 
 GitGlass 是一款透明执行的桌面 Git 工作台：它直接调用用户本机的 `git`，并把计划、实际命令与 Git 状态变化放在同一个界面中。
 

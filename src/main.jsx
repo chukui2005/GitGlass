@@ -1,55 +1,1406 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import { ArrowClockwise, CaretDown, CheckCircle, CircleNotch, Copy, DownloadSimple, File, FolderOpen, GitBranch, GitCommit, Lifebuoy, Minus, Plus, TerminalWindow, Trash, UploadSimple, WarningCircle } from '@phosphor-icons/react'
-import { countBySource, filterLedgerRecords, groupBackgroundRecords } from './workbench-ledger.js'
-import './styles.css'
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  ArrowClockwise,
+  CaretDown,
+  CheckCircle,
+  CircleNotch,
+  Copy,
+  DownloadSimple,
+  File,
+  FolderOpen,
+  GitBranch,
+  GitCommit,
+  Lifebuoy,
+  Minus,
+  Plus,
+  TerminalWindow,
+  Trash,
+  UploadSimple,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import {
+  countBySource,
+  filterLedgerRecords,
+  groupBackgroundRecords,
+} from "./workbench-ledger.js";
+import "./styles.css";
+/* <div className="diff-view"><div className="diff-meta"> <div className="diff-content">{diff.split */
 
-const iconFor = { added: '+', modified: 'M', deleted: '−', renamed: 'R' }
-const titleFor = { added: '新增', modified: '修改', deleted: '删除', renamed: '重命名' }
-const time = (value) => value ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value)) : '—'
-const basename = (value) => value?.split(/[\\/]/).filter(Boolean).at(-1) || '未打开仓库'
-const branchName = (branch) => typeof branch === 'string' ? branch : branch.name
-const rescueName = (entry) => `rescue/${String(entry.occurredAt || 'reflog').replace(/[^0-9A-Za-z]+/g, '-').replace(/^-+|-+$/g, '') || 'reflog'}-${entry.shortHash}`
+const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
+const titleFor = {
+  added: "新增",
+  modified: "修改",
+  deleted: "删除",
+  renamed: "重命名",
+};
+const time = (value) =>
+  value
+    ? new Intl.DateTimeFormat("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date(value))
+    : "—";
+const basename = (value) =>
+  value?.split(/[\\/]/).filter(Boolean).at(-1) || "未打开仓库";
+const branchName = (branch) =>
+  typeof branch === "string" ? branch : branch.name;
+const rescueName = (entry) =>
+  `rescue/${
+    String(entry.occurredAt || "reflog")
+      .replace(/[^0-9A-Za-z]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "reflog"
+  }-${entry.shortHash}`;
 
-function DiffLine({ line }) { const kind = line.startsWith('+') && !line.startsWith('+++') ? 'plus' : line.startsWith('-') && !line.startsWith('---') ? 'minus' : line.startsWith('@@') ? 'hunk' : ''; return <div className={`diff-line ${kind}`}><span>{kind === 'plus' ? '+' : kind === 'minus' ? '−' : ' '}</span><code>{line}</code></div> }
-function Output({ title, body, danger, warning }) { const [copied, setCopied] = useState(false); async function copy() { await navigator.clipboard?.writeText(body || ''); setCopied(true); setTimeout(() => setCopied(false), 1200) }; return <div className="output"><div className={`output-heading ${danger ? 'danger' : ''} ${warning ? 'warning' : ''}`}><span>{title}</span><button type="button" onClick={copy} aria-label={`复制 ${title}`}>{copied ? '已复制' : '复制'}</button></div><pre>{body || '（无输出）'}</pre></div> }
-function FileRow({ file, selected, onSelect, onStage }) { const stageLabel = file.area === 'staged' ? `取消暂存 ${file.path}` : `暂存 ${file.path}`; return <div className={`file-row ${selected ? 'selected' : ''}`}><button type="button" className="file-select" aria-label={`选择文件 ${file.path}`} onClick={() => onSelect(file)}><span className={`status ${file.status}`}>{iconFor[file.status]}</span><span className="file-path"><File size={14} />{file.path}</span></button><button type="button" className="row-action" aria-label={stageLabel} title={stageLabel} onClick={() => onStage(file)}>{file.area === 'staged' ? <Minus size={14} /> : <Plus size={14} />}</button></div> }
-function FileSection({ title, files, selected, onSelect, onStage }) { return <section className="file-section"><div className="section-label"><span>{title}</span><b>{files.length}</b></div>{files.map((file, index) => <FileRow key={`${file.area}-${file.path}-${index}`} file={file} selected={selected?.area === file.area && selected?.path === file.path} onSelect={onSelect} onStage={onStage} />)}</section> }
-
-function LedgerEntry({ record }) { const [expanded, setExpanded] = useState(record.source === 'user'); const [copied, setCopied] = useState(false); const command = record.displayCommand || record.command || '等待执行结果'; const isWarning = record.ok !== false && Boolean(record.stderr); async function copy() { await navigator.clipboard?.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 1200) }; return <article className={`ledger-entry ${record.ok === false ? 'failure' : ''} ${record.source === 'background' ? 'background' : ''}`}><button type="button" className="ledger-summary" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}><span className={record.ok === false ? 'bad' : isWarning ? 'warn' : 'good'}>{record.ok === false ? <WarningCircle size={15} weight="fill" /> : <CheckCircle size={15} weight="fill" />}</span><span>{record.intent || (record.source === 'background' ? '后台读取' : '用户操作')}</span><code>{command}</code><time>{time(record.startedAt)}</time><CaretDown size={14} className={expanded ? 'open' : ''} /></button>{expanded && <div className="ledger-details"><div className="ledger-facts"><span>来源 <b>{record.source === 'background' ? '后台' : '用户'}</b></span><span>工作目录 <b>{record.cwd || '—'}</b></span><span>退出代码 <b className={record.ok === false ? 'bad' : isWarning ? 'warn' : 'good'}>{record.exitCode ?? '—'}</b></span></div><div className="command-copy"><code>{command}</code><button type="button" onClick={copy} aria-label="复制完整命令"><Copy size={13} />{copied ? '已复制' : '复制'}</button></div><div className="argv-row"><span>argv</span><code>{JSON.stringify(record.argv || [])}</code></div><div className="output-grid"><Output title="stdout" body={record.stdout} /><Output title={isWarning ? '警告输出' : 'stderr'} body={record.stderr} danger={record.ok === false} warning={isWarning} /></div></div>}</article> }
-function RefreshGroup({ group }) { const [expanded, setExpanded] = useState(false); return <section className="ledger-refresh-group"><button type="button" className="ledger-refresh-summary" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}><ArrowClockwise size={14} /><span>刷新工作区 · {group.records.length} 条读取</span><CaretDown size={14} className={expanded ? 'open' : ''} /></button>{expanded && <div className="ledger-refresh-records">{group.records.map((record, index) => <LedgerEntry key={record.id || `${group.id}-${index}`} record={record} />)}</div>}</section> }
-function CommitGraph({ commits }) { return <div className="commit-graph">{commits.length ? commits.map((commit, index) => <div className="graph-row" key={commit.hash || index}><span className="graph-line"><i /></span><code>{commit.shortHash || commit.hash?.slice(0, 7)}</code><strong>{commit.subject || commit.message}</strong><span>{commit.author}</span></div>) : <div className="graph-empty"><GitCommit size={28} /><p>提交历史将在这里显示</p><span>打开仓库后读取最近的真实提交记录。</span></div>}</div> }
-
-function PlannedContext({ plan, onCancel, onConfirm, loading, tone = 'normal', children, action }) { return <section className="inspector-flow"><div className="inspector-heading"><span>计划操作</span><h2>{plan.blocked ? '操作被阻断' : action}</h2></div>{plan.blocked ? <div className="inspector-message danger"><WarningCircle size={19} /><div><strong>{plan.reason}</strong><p>GitGlass 不会使用危险选项绕过此限制。</p></div></div> : <><div className={`risk-label ${tone}`}>{tone === 'high' ? '高风险：不可直接撤销' : tone === 'caution' ? '谨慎：删除已合并本地分支' : '安全：创建救援分支'}</div>{children}<div className="planned-command"><span>计划执行（尚未运行）</span><code>{plan.displayCommand}</code></div><button type="button" className={`primary-action ${tone === 'high' ? 'danger-action' : tone === 'caution' ? 'caution-action' : ''}`} disabled={loading || plan.confirmDisabled} onClick={onConfirm}>{loading ? <CircleNotch size={17} className="spin" /> : null}{action}</button></>}<button type="button" className="text-action" onClick={onCancel}>返回</button></section> }
-function BranchContext({ plan, onCancel, onConfirm, loading }) { return <PlannedContext plan={plan} onCancel={onCancel} onConfirm={onConfirm} loading={loading} action={plan.create ? '确认创建分支' : '确认切换分支'}><p className="inspector-copy">{plan.create ? '将创建并切换到' : '将切换到'} <code>{plan.name}</code>。工作区干净；此操作会更新 HEAD 和当前检出文件。</p></PlannedContext> }
-function RemotePlanContext({ plan, onCancel, onConfirm, loading }) { const labels = { fetch: '确认 Fetch', push: '确认 Push', pull: '确认 Pull' }; const details = plan.kind === 'push' ? <>将把 <code>{plan.overview.state.branch}</code> 推送至 <code>{plan.remote}/{plan.overview.upstream.branch}</code>；不会使用 <code>--force</code>。</> : plan.kind === 'pull' ? <>将仅以 fast-forward 同步；不会自动 merge、rebase、stash 或丢弃文件。</> : <>将读取 <code>{plan.remote}</code> 的远程引用；不会修改工作区文件。</>; return <PlannedContext plan={plan} onCancel={onCancel} onConfirm={onConfirm} loading={loading} action={labels[plan.kind]}><p className="inspector-copy">{details}</p></PlannedContext> }
-function SafetyContext({ plan, acknowledgement, onAcknowledgement, onCancel, onConfirm, loading }) { const file = basename(plan.path); const discard = plan.kind === 'discard'; const action = discard ? `确认丢弃 ${file} 的改动` : plan.kind === 'delete-merged-branch' ? `删除已合并分支 ${plan.branch}` : '创建救援分支'; const tone = discard ? 'high' : plan.kind === 'delete-merged-branch' ? 'caution' : 'safe'; const ready = !discard || acknowledgement === file; return <PlannedContext plan={{ ...plan, confirmDisabled: !ready }} onCancel={onCancel} onConfirm={onConfirm} loading={loading} tone={tone} action={action}>{discard ? <><p className="inspector-copy">受影响文件：<code>{plan.path}</code></p><p className="inspector-copy">GitGlass 无法保证恢复未暂存内容；请先确认 Diff。</p><pre className="risk-diff">{plan.diff}</pre><label className="message-label" htmlFor="discard-file-name">输入文件名以继续</label><input id="discard-file-name" name="discard-file-name" autoComplete="off" value={acknowledgement} onChange={(event) => onAcknowledgement(event.target.value)} placeholder={file} /></> : plan.kind === 'delete-merged-branch' ? <p className="inspector-copy">将删除已合并的本地分支 <code>{plan.branch}</code>。删除后仍可通过 reflog 尝试恢复；建议先创建救援分支。</p> : <><p className="inspector-copy">救援分支只保存一个可回到的提交点，不会移动当前分支或改写历史。</p><dl className="file-facts"><div><dt>目标提交</dt><dd><code>{plan.hash}</code></dd></div><div><dt>救援分支</dt><dd><code>{plan.branch}</code></dd></div></dl></>}</PlannedContext> }
-function FileInspector({ file, loading, onStage, onDiscard }) { const stageLabel = file.area === 'staged' ? '取消暂存' : '暂存文件'; return <section className="inspector-flow"><div className="inspector-heading"><span>文件详情</span><h2>{file.path}</h2></div><dl className="file-facts"><div><dt>状态</dt><dd className={file.status}>{titleFor[file.status]}</dd></div><div><dt>区域</dt><dd>{file.area === 'staged' ? '已暂存' : '未暂存'}</dd></div></dl><p className="inspector-copy">已在中央工作区显示该文件的真实 Git Diff。</p><button type="button" className="primary-action" disabled={loading} onClick={() => onStage(file)}>{file.area === 'staged' ? <Minus size={16} /> : <Plus size={16} />}{stageLabel}</button>{file.area === 'unstaged' && <button type="button" className="danger-outline" disabled={loading} onClick={() => onDiscard(file.path)}><Trash size={15} />丢弃此文件的未暂存改动</button>}</section> }
-function CommitInspector({ staged, unstaged, message, loading, onMessage, onOperate, preview }) { return <section className="inspector-flow"><div className="inspector-heading"><span>工作区操作</span><h2>创建提交</h2></div><label className="message-label" htmlFor="commit-message">提交说明</label><textarea id="commit-message" name="commit-message" autoComplete="off" value={message} onChange={(event) => onMessage(event.target.value)} placeholder="说明此次改动…" maxLength={4096} /><div className="commit-actions"><button type="button" className="secondary-action" disabled={!unstaged.length || loading} onClick={() => onOperate('stageAll')}>暂存全部</button><button type="button" className="secondary-action" disabled={!staged.length || loading} onClick={() => onOperate('unstageAll')}>取消全部暂存</button></div><button type="button" className="primary-action" disabled={!staged.length || !message.trim() || loading} onClick={() => onOperate('commit', { message })}>提交 {staged.length || ''}</button><div className="operation-preview"><span>下一条命令</span><code>{preview}</code></div></section> }
-function RecoveryContext({ entries, reason, loading, onRescue, onClose }) { return <section className="inspector-flow recovery-context"><div className="inspector-heading"><span>恢复中心</span><h2>Reflog 救援分支</h2></div><p className="inspector-copy">救援分支只保存一个可回到的提交点，不会移动当前分支或改写历史。</p>{reason && <div className="inspector-message danger"><WarningCircle size={18} /><span>{reason}</span></div>}<div className="reflog-list">{entries.map((entry) => <button type="button" className="reflog-row" key={`${entry.hash}-${entry.selector}`} disabled={loading} onClick={() => onRescue(entry)}><code>{entry.shortHash}</code><span>{entry.occurredAt || entry.action}</span><strong>{entry.subject || entry.action}</strong></button>)}{!entries.length && !reason && <p className="inspector-copy">没有可用的 reflog 记录。</p>}</div><button type="button" className="text-action" onClick={onClose}>返回</button></section> }
-function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) { if (!remote) return null; if (!remote.remotes?.length) return <section className="remote-summary"><div className="section-label"><span>远程</span></div><p>{remote.reason}</p><span>{remote.suggestion}</span></section>; return <section className="remote-summary"><div className="section-label"><span>远程</span><button type="button" aria-label="Fetch 远程状态" onClick={onFetch} disabled={loading}><ArrowClockwise size={14} /></button></div><code>{remote.remote?.name || '—'}</code><span>{remote.remote?.url}</span>{remote.upstream && <><div className="remote-status"><span>{remote.upstream.ref}</span><b className={remote.ahead > 0 ? 'ahead' : ''}>↑ {remote.ahead}</b><b className={remote.behind > 0 ? 'behind' : ''}>↓ {remote.behind}</b></div><div className="remote-actions"><button type="button" disabled={loading || remote.ahead <= 0} onClick={onPush}>Push</button><button type="button" disabled={loading || remote.behind <= 0 || files.length > 0} onClick={onPull}>Pull</button></div></>}</section> }
-
-function App() {
-  const [repo, setRepo] = useState(null); const [state, setState] = useState({ branch: '', files: [], ok: true }); const [selected, setSelected] = useState(null); const [diff, setDiff] = useState(''); const [message, setMessage] = useState(''); const [loading, setLoading] = useState(false); const [notice, setNotice] = useState(null); const [branchPlan, setBranchPlan] = useState(null); const [remotePlan, setRemotePlan] = useState(null); const [safetyPlan, setSafetyPlan] = useState(null); const [recoveryOpen, setRecoveryOpen] = useState(false); const [reflogEntries, setReflogEntries] = useState([]); const [reflogReason, setReflogReason] = useState(''); const [acknowledgement, setAcknowledgement] = useState(''); const [remote, setRemote] = useState(null); const [branches, setBranches] = useState([]); const [commits, setCommits] = useState([]); const [records, setRecords] = useState([]); const [ledgerFilter, setLedgerFilter] = useState('user'); const [ledgerOpen, setLedgerOpen] = useState(false); const [focusedOperationId, setFocusedOperationId] = useState(null); const [newBranch, setNewBranch] = useState(''); const refreshSequence = useRef(0); const refreshCycles = useRef(new Map())
-  const staged = useMemo(() => state.files.filter((file) => file.area === 'staged'), [state.files]); const unstaged = useMemo(() => state.files.filter((file) => file.area === 'unstaged'), [state.files]); const ledgerCounts = useMemo(() => countBySource(records), [records]); const visibleRecords = useMemo(() => filterLedgerRecords(records, ledgerFilter, focusedOperationId), [records, ledgerFilter, focusedOperationId]); const ledgerGroups = useMemo(() => groupBackgroundRecords(visibleRecords), [visibleRecords]); const latestRecord = records[0]; const preview = !repo ? 'git status --porcelain=v1 -z' : staged.length && message.trim() ? `git commit -m ${JSON.stringify(message.trim())}` : selected ? (selected.area === 'staged' ? `git restore --staged -- ${selected.path}` : `git add -- ${selected.path}`) : unstaged.length ? 'git add -A' : 'git status --porcelain=v1 -z'
-  useEffect(() => { refreshAll() }, [])
-  async function applyState(next, preference, cycle) { setState(next); const nextFile = preference || next.files[0] || null; setSelected(nextFile); if (nextFile) await loadDiff(nextFile, cycle); else setDiff('') }
-  async function refreshLedger(cycle) { const next = await window.gitglass.getLedger(); setRecords(next.map((record) => { if (record.source === 'background' && cycle && !refreshCycles.current.has(record.id)) refreshCycles.current.set(record.id, cycle); const refreshCycleId = refreshCycles.current.get(record.id); return refreshCycleId ? { ...record, refreshCycleId } : record })) }
-  async function refreshAll(preference) { const cycle = `refresh-${Date.now()}-${++refreshSequence.current}`; const next = await window.gitglass.getState(); if (!next.ok) return; setRepo(next.path || repo); await applyState(next, preference, cycle); const [branchResult, commitResult, remoteResult] = await Promise.all([window.gitglass.getBranches(), window.gitglass.getCommits(), window.gitglass.getRemoteOverview()]); setBranches(branchResult.branches || []); setCommits(commitResult.commits || []); setRemote(remoteResult); await refreshLedger(cycle) }
-  async function loadDiff(file, cycle) { setSelected(file); setDiff('正在读取差异…'); const result = await window.gitglass.getDiff(file); setDiff(result.ok ? result.stdout || '此文件没有可显示的文本差异。' : result.stderr || result.stdout || '无法读取差异。'); await refreshLedger(cycle) }
-  async function chooseRepo() { const result = await window.gitglass.chooseRepository(); if (result.canceled) return; if (!result.ok) { setNotice({ type: 'error', text: result.error }); return }; setRepo(result.path); await refreshAll(); setNotice(null) }
-  async function operate(action, payload = {}) { if (!repo || loading) return; setLoading(true); setLedgerOpen(true); setLedgerFilter('user'); setFocusedOperationId(null); const result = await window.gitglass.operate(action, payload); setFocusedOperationId(result.execution?.operationId || null); setNotice(result.execution.ok ? result.commit ? { type: 'success', text: `已创建提交 ${result.commit}` } : null : { type: 'error', text: 'Git 命令失败；原始 stderr 和退出代码已保留在命令账本。' }); if (result.commit) setMessage(''); await refreshAll(); setLoading(false) }
-  async function requestSwitch(branch, create = false) { const name = create ? branch.trim() : branchName(branch); if (!name || (!create && (name === state.branch || branch.current))) return; const prepared = await window.gitglass.prepareBranch(name, create); await refreshLedger(); setBranchPlan(prepared.plan ? { name, create, ...prepared, operationId: prepared.plan.operationId, displayCommand: prepared.plan.displayCommand } : { name, create, ...prepared, blocked: true }) }
-  async function confirmBranch() { if (!branchPlan?.plan) return; setLoading(true); setLedgerOpen(true); const result = await window.gitglass.executeBranch(branchPlan.name, branchPlan.create, branchPlan.operationId); setFocusedOperationId(result.execution?.operationId || branchPlan.operationId); setNotice(result.execution?.ok ? { type: 'success', text: `已${branchPlan.create ? '创建并切换到' : '切换到'} ${branchPlan.name}` } : { type: 'error', text: result.reason || '分支操作失败；请在命令账本查看原始输出。' }); if (result.execution?.ok) setBranchPlan(null); await refreshAll(); setLoading(false) }
-  async function requestRemote(kind) { if (!repo || loading) return; setLoading(true); const prepared = await window.gitglass.prepareRemote(kind); await refreshLedger(); setRemote(prepared.overview || remote); setRemotePlan(prepared.plan ? { ...prepared, kind, operationId: prepared.plan.operationId, displayCommand: prepared.plan.displayCommand } : { ...prepared, kind, blocked: true }); setLoading(false) }
-  async function confirmRemote() { if (!remotePlan?.plan) return; setLoading(true); setLedgerOpen(true); const result = await window.gitglass.executeRemote(remotePlan.kind, remotePlan.operationId); setFocusedOperationId(result.execution?.operationId || remotePlan.operationId); setNotice(result.execution?.ok ? { type: 'success', text: '远程操作已完成。' } : { type: 'error', text: result.reason || '远程命令失败；请在命令账本查看原始输出。' }); if (result.execution?.ok) setRemotePlan(null); await refreshAll(); setLoading(false) }
-  async function requestDiscard(path) { setLoading(true); setAcknowledgement(''); const prepared = await window.gitglass.prepareDiscard(path); await refreshLedger(); setSafetyPlan(prepared.plan ? { ...prepared, kind: 'discard', path, operationId: prepared.plan.operationId, displayCommand: prepared.plan.displayCommand } : { ...prepared, kind: 'discard', path, blocked: true }); setLoading(false) }
-  async function requestDeleteMergedBranch(branch) { setLoading(true); const prepared = await window.gitglass.prepareDeleteMergedBranch(branch); await refreshLedger(); setSafetyPlan(prepared.plan ? { ...prepared, kind: 'delete-merged-branch', branch, operationId: prepared.plan.operationId, displayCommand: prepared.plan.displayCommand } : { ...prepared, kind: 'delete-merged-branch', branch, blocked: true }); setLoading(false) }
-  async function openRecovery() { setLoading(true); const result = await window.gitglass.getReflog(); setReflogEntries(result.entries || []); setReflogReason(result.reason || ''); setRecoveryOpen(true); await refreshLedger(); setLoading(false) }
-  async function requestRescue(entry) { setLoading(true); const branch = rescueName(entry); const prepared = await window.gitglass.prepareRescueBranch(entry.hash, branch); await refreshLedger(); setRecoveryOpen(false); setSafetyPlan(prepared.plan ? { ...prepared, kind: 'rescue-branch', branch, hash: entry.hash, operationId: prepared.plan.operationId, displayCommand: prepared.plan.displayCommand } : { ...prepared, kind: 'rescue-branch', branch, hash: entry.hash, blocked: true }); setLoading(false) }
-  async function confirmSafety() { if (!safetyPlan?.plan) return; setLoading(true); setLedgerOpen(true); setLedgerFilter('user'); let result; if (safetyPlan.kind === 'discard') result = await window.gitglass.executeDiscard(safetyPlan.path, safetyPlan.operationId); else if (safetyPlan.kind === 'delete-merged-branch') result = await window.gitglass.executeDeleteMergedBranch(safetyPlan.branch, safetyPlan.operationId); else result = await window.gitglass.executeRescueBranch(safetyPlan.hash, safetyPlan.branch, safetyPlan.operationId); setFocusedOperationId(result.execution?.operationId || safetyPlan.operationId); setNotice(result.execution?.ok ? { type: 'success', text: safetyPlan.kind === 'discard' ? '已丢弃该文件的未暂存改动。' : safetyPlan.kind === 'delete-merged-branch' ? `已删除分支 ${safetyPlan.branch}。` : `已创建救援分支 ${safetyPlan.branch}。` } : { type: 'error', text: result.reason || 'Git 命令失败；请在命令账本查看原始 stderr。' }); if (result.execution?.ok) setSafetyPlan(null); await refreshAll(); setLoading(false) }
-  const inspector = safetyPlan ? <SafetyContext plan={safetyPlan} acknowledgement={acknowledgement} onAcknowledgement={setAcknowledgement} loading={loading} onConfirm={confirmSafety} onCancel={() => setSafetyPlan(null)} /> : branchPlan ? <BranchContext plan={branchPlan} loading={loading} onConfirm={confirmBranch} onCancel={() => setBranchPlan(null)} /> : remotePlan ? <RemotePlanContext plan={remotePlan} loading={loading} onConfirm={confirmRemote} onCancel={() => setRemotePlan(null)} /> : recoveryOpen ? <RecoveryContext entries={reflogEntries} reason={reflogReason} loading={loading} onRescue={requestRescue} onClose={() => setRecoveryOpen(false)} /> : selected ? <FileInspector file={selected} loading={loading} onStage={(file) => operate(file.area === 'staged' ? 'unstage' : 'stage', { path: file.path })} onDiscard={requestDiscard} /> : <CommitInspector staged={staged} unstaged={unstaged} message={message} loading={loading} onMessage={setMessage} onOperate={operate} preview={preview} />
-  return <main className={`app-shell ${ledgerOpen ? 'ledger-open' : 'ledger-closed'}`}><a className="skip-link" href="#workspace-main">跳至主工作区</a><header className="topbar"><div className="brand"><GitBranch size={18} weight="bold" /><h1>GitGlass</h1><span className="topbar-divider" /><strong title={repo || ''}>{basename(repo)}</strong></div><div className="top-state"><span><GitBranch size={14} /><code>{state.branch || '—'}</code></span><span className={state.files.length ? 'dirty' : 'clean'}>{repo ? (state.files.length ? `${state.files.length} 个改动` : '工作区干净') : '等待仓库'}</span>{remote?.upstream && <span className="sync-counts"><b className={remote.ahead > 0 ? 'ahead' : ''}>↑ {remote.ahead}</b><b className={remote.behind > 0 ? 'behind' : ''}>↓ {remote.behind}</b></span>}</div><div className="top-actions"><button type="button" className="top-action" disabled={!repo || loading} onClick={openRecovery}><Lifebuoy size={15} />恢复</button><button type="button" className="top-action" onClick={chooseRepo}><FolderOpen size={15} />打开仓库</button><button type="button" className="sync-action" disabled={!repo || loading || !remote?.remotes?.length} onClick={() => requestRemote('fetch')}><ArrowClockwise size={15} />同步</button></div></header><div id="workspace-main" className="workspace" tabIndex="-1"><aside className="status-panel"><div className="panel-heading"><h2>工作区</h2>{repo && <button type="button" className="icon-button" onClick={() => refreshAll()} aria-label="刷新状态"><ArrowClockwise size={15} /></button>}</div>{repo ? <><FileSection title="未暂存改动" files={unstaged} selected={selected} onSelect={loadDiff} onStage={(file) => operate('stage', { path: file.path })} /><FileSection title="已暂存改动" files={staged} selected={selected} onSelect={loadDiff} onStage={(file) => operate('unstage', { path: file.path })} />{!state.files.length && <div className="clean-state"><CheckCircle size={17} weight="fill" />没有待提交的改动</div>}<section className="branch-list"><div className="section-label"><span>本地分支</span><b>{branches.length}</b></div>{branches.map((branch) => { const current = branchName(branch) === state.branch || branch.current; return <div className="branch-item" key={branchName(branch)}><button type="button" className={`branch-row ${current ? 'current' : ''}`} onClick={() => requestSwitch(branch)}><GitBranch size={13} /><code>{branchName(branch)}</code>{current && <span>当前</span>}</button>{!current && <button type="button" className="branch-delete" aria-label={`删除已合并分支 ${branchName(branch)}`} title="删除已合并分支" onClick={() => requestDeleteMergedBranch(branchName(branch))}><Trash size={13} /></button>}</div> })}<div className="branch-create"><input name="branch-name" autoComplete="off" value={newBranch} onChange={(event) => setNewBranch(event.target.value)} placeholder="新分支名称" aria-label="新分支名称" /><button type="button" className="secondary-action" disabled={!newBranch.trim() || loading} onClick={() => requestSwitch(newBranch, true)}>创建</button></div></section><SidebarRemote remote={remote} files={state.files} loading={loading} onFetch={() => requestRemote('fetch')} onPush={() => requestRemote('push')} onPull={() => requestRemote('pull')} /></> : <div className="empty-repo"><FolderOpen size={24} /><p>打开本地 Git 仓库</p><span>查看改动、历史与真实命令记录。</span></div>}</aside><section className="main-panel"><div className="main-toolbar"><div><h2>{selected ? '文件差异' : '提交历史'}</h2><span>{selected?.path || (commits.length ? `最近 ${commits.length} 个提交` : '选择仓库后读取提交记录')}</span></div>{selected && <span className={`file-kind ${selected.status}`}>{titleFor[selected.status]}</span>}</div>{selected ? <div className="diff-view"><div className="diff-meta"><span className={selected.area === 'staged' ? 'staged-diff-label' : ''}>{selected.area === 'staged' ? '已暂存差异' : '工作区差异'}</span><code>{selected.path}</code></div><div className="diff-content">{diff.split('\n').map((line, index) => <DiffLine key={index} line={line} />)}</div></div> : <CommitGraph commits={commits} />}</section><aside className="context-panel">{inspector}</aside></div><section className="command-ledger" aria-label="命令账本"><div className="ledger-bar"><button type="button" className="ledger-title" onClick={() => setLedgerOpen(!ledgerOpen)} aria-expanded={ledgerOpen}><TerminalWindow size={16} /><span>命令账本</span><CaretDown size={14} className={ledgerOpen ? 'open' : ''} /></button>{!ledgerOpen && <button type="button" className="ledger-glance" onClick={() => setLedgerOpen(true)}>{latestRecord ? <><span className={latestRecord.ok === false ? 'bad' : 'good'}>{latestRecord.ok === false ? <WarningCircle size={14} weight="fill" /> : <CheckCircle size={14} weight="fill" />}</span><span>{latestRecord.intent}</span><code>{latestRecord.displayCommand || latestRecord.command}</code><time>{time(latestRecord.startedAt)}</time></> : <span>尚无命令记录</span>}</button>}{ledgerOpen && <div className="ledger-filter"><button type="button" className={ledgerFilter === 'user' ? 'active' : ''} onClick={() => { setLedgerFilter('user'); setFocusedOperationId(null) }}>用户操作 {ledgerCounts.user}</button><button type="button" className={ledgerFilter === 'background' ? 'active' : ''} onClick={() => { setLedgerFilter('background'); setFocusedOperationId(null) }}>后台读取 {ledgerCounts.background}</button><button type="button" className={ledgerFilter === 'all' ? 'active' : ''} onClick={() => { setLedgerFilter('all'); setFocusedOperationId(null) }}>全部 {records.length}</button></div>}</div><div className="ledger-body">{ledgerOpen && <><p className="ledger-note">用户操作会显示实际执行命令；后台读取用于同步界面状态。</p>{notice && <div className={`notice ${notice.type}`} role="status" aria-live="polite">{notice.type === 'success' ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight="fill" />}{notice.text}</div>}<div className="ledger-list">{ledgerGroups.length ? ledgerGroups.map((group, index) => group.type === 'refresh' ? <RefreshGroup key={group.id} group={group} /> : <LedgerEntry key={group.record.id || index} record={group.record} />) : <div className="ledger-empty"><TerminalWindow size={20} />没有符合筛选条件的命令</div>}</div></>}</div></section></main>
+function DiffLine({ line }) {
+  const kind =
+    line.startsWith("+") && !line.startsWith("+++")
+      ? "plus"
+      : line.startsWith("-") && !line.startsWith("---")
+        ? "minus"
+        : line.startsWith("@@")
+          ? "hunk"
+          : "";
+  return (
+    <div className={`diff-line ${kind}`}>
+      <span>{kind === "plus" ? "+" : kind === "minus" ? "−" : " "}</span>
+      <code>{line}</code>
+    </div>
+  );
+}
+function Output({ title, body, danger, warning }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard?.writeText(body || "");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+  return (
+    <div className="output">
+      <div
+        className={`output-heading ${danger ? "danger" : ""} ${warning ? "warning" : ""}`}
+      >
+        <span>{title}</span>
+        <button type="button" onClick={copy} aria-label={`复制 ${title}`}>
+          {copied ? "已复制" : "复制"}
+        </button>
+      </div>
+      <pre>{body || "（无输出）"}</pre>
+    </div>
+  );
+}
+function FileRow({ file, selected, onSelect, onStage }) {
+  const stageLabel =
+    file.area === "staged" ? `取消暂存 ${file.path}` : `暂存 ${file.path}`;
+  return (
+    <div className={`file-row ${selected ? "selected" : ""}`}>
+      <button
+        type="button"
+        className="file-select"
+        aria-label={`选择文件 ${file.path}`}
+        onClick={() => onSelect(file)}
+      >
+        <span className={`status ${file.status}`}>{iconFor[file.status]}</span>
+        <span className="file-path">
+          <File size={14} />
+          {file.path}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="row-action"
+        aria-label={stageLabel}
+        title={stageLabel}
+        onClick={() => onStage(file)}
+      >
+        {file.area === "staged" ? <Minus size={14} /> : <Plus size={14} />}
+      </button>
+    </div>
+  );
+}
+function FileSection({ title, files, selected, onSelect, onStage }) {
+  return (
+    <section className="file-section">
+      <div className="section-label">
+        <span>{title}</span>
+        <b>{files.length}</b>
+      </div>
+      {files.map((file, index) => (
+        <FileRow
+          key={`${file.area}-${file.path}-${index}`}
+          file={file}
+          selected={
+            selected?.area === file.area && selected?.path === file.path
+          }
+          onSelect={onSelect}
+          onStage={onStage}
+        />
+      ))}
+    </section>
+  );
 }
 
-createRoot(document.getElementById('root')).render(<App />)
+function LedgerEntry({ record }) {
+  const [expanded, setExpanded] = useState(record.source === "user");
+  const [copied, setCopied] = useState(false);
+  const command = record.displayCommand || record.command || "等待执行结果";
+  const isWarning = record.ok !== false && Boolean(record.stderr);
+  async function copy() {
+    await navigator.clipboard?.writeText(command);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+  return (
+    <article
+      className={`ledger-entry ${record.ok === false ? "failure" : ""} ${record.source === "background" ? "background" : ""}`}
+    >
+      <button
+        type="button"
+        className="ledger-summary"
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+      >
+        <span
+          className={record.ok === false ? "bad" : isWarning ? "warn" : "good"}
+        >
+          {record.ok === false ? (
+            <WarningCircle size={15} weight="fill" />
+          ) : (
+            <CheckCircle size={15} weight="fill" />
+          )}
+        </span>
+        <span>
+          {record.intent ||
+            (record.source === "background" ? "后台读取" : "用户操作")}
+        </span>
+        <code>{command}</code>
+        <time>{time(record.startedAt)}</time>
+        <CaretDown size={14} className={expanded ? "open" : ""} />
+      </button>
+      {expanded && (
+        <div className="ledger-details">
+          <div className="ledger-facts">
+            <span>
+              来源 <b>{record.source === "background" ? "后台" : "用户"}</b>
+            </span>
+            <span>
+              工作目录 <b>{record.cwd || "—"}</b>
+            </span>
+            <span>
+              退出代码{" "}
+              <b
+                className={
+                  record.ok === false ? "bad" : isWarning ? "warn" : "good"
+                }
+              >
+                {record.exitCode ?? "—"}
+              </b>
+            </span>
+          </div>
+          <div className="command-copy">
+            <code>{command}</code>
+            <button type="button" onClick={copy} aria-label="复制完整命令">
+              <Copy size={13} />
+              {copied ? "已复制" : "复制"}
+            </button>
+          </div>
+          <div className="argv-row">
+            <span>argv</span>
+            <code>{JSON.stringify(record.argv || [])}</code>
+          </div>
+          <div className="output-grid">
+            <Output title="stdout" body={record.stdout} />
+            <Output
+              title={isWarning ? "警告输出" : "stderr"}
+              body={record.stderr}
+              danger={record.ok === false}
+              warning={isWarning}
+            />
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+function RefreshGroup({ group }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <section className="ledger-refresh-group">
+      <button
+        type="button"
+        className="ledger-refresh-summary"
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+      >
+        <ArrowClockwise size={14} />
+        <span>刷新工作区 · {group.records.length} 条读取</span>
+        <CaretDown size={14} className={expanded ? "open" : ""} />
+      </button>
+      {expanded && (
+        <div className="ledger-refresh-records">
+          {group.records.map((record, index) => (
+            <LedgerEntry
+              key={record.id || `${group.id}-${index}`}
+              record={record}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+function CommitGraph({ commits }) {
+  return (
+    <div className="commit-graph">
+      {commits.length ? (
+        commits.map((commit, index) => (
+          <div className="graph-row" key={commit.hash || index}>
+            <span className="graph-line">
+              <i />
+            </span>
+            <code>{commit.shortHash || commit.hash?.slice(0, 7)}</code>
+            <strong>{commit.subject || commit.message}</strong>
+            <span>{commit.author}</span>
+          </div>
+        ))
+      ) : (
+        <div className="graph-empty">
+          <GitCommit size={28} />
+          <p>提交历史将在这里显示</p>
+          <span>打开仓库后读取最近的真实提交记录。</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlannedContext({
+  plan,
+  onCancel,
+  onConfirm,
+  loading,
+  tone = "normal",
+  children,
+  action,
+}) {
+  return (
+    <section className="inspector-flow">
+      <div className="inspector-heading">
+        <span>计划操作</span>
+        <h2>{plan.blocked ? "操作被阻断" : action}</h2>
+      </div>
+      {plan.blocked ? (
+        <div className="inspector-message danger">
+          <WarningCircle size={19} />
+          <div>
+            <strong>{plan.reason}</strong>
+            <p>GitGlass 不会使用危险选项绕过此限制。</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className={`risk-label ${tone}`}>
+            {tone === "high"
+              ? "高风险：不可直接撤销"
+              : tone === "caution"
+                ? "谨慎：删除已合并本地分支"
+                : "安全：创建救援分支"}
+          </div>
+          {children}
+          <div className="planned-command">
+            <span>计划执行（尚未运行）</span>
+            <code>{plan.displayCommand}</code>
+          </div>
+          <button
+            type="button"
+            className={`primary-action ${tone === "high" ? "danger-action" : tone === "caution" ? "caution-action" : ""}`}
+            disabled={loading || plan.confirmDisabled}
+            onClick={onConfirm}
+          >
+            {loading ? <CircleNotch size={17} className="spin" /> : null}
+            {action}
+          </button>
+        </>
+      )}
+      <button type="button" className="text-action" onClick={onCancel}>
+        返回
+      </button>
+    </section>
+  );
+}
+function BranchContext({ plan, onCancel, onConfirm, loading }) {
+  return (
+    <PlannedContext
+      plan={plan}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      loading={loading}
+      action={plan.create ? "确认创建分支" : "确认切换分支"}
+    >
+      <p className="inspector-copy">
+        {plan.create ? "将创建并切换到" : "将切换到"} <code>{plan.name}</code>
+        。工作区干净；此操作会更新 HEAD 和当前检出文件。
+      </p>
+    </PlannedContext>
+  );
+}
+function RemotePlanContext({ plan, onCancel, onConfirm, loading }) {
+  const labels = { fetch: "确认 Fetch", push: "确认 Push", pull: "确认 Pull" };
+  const details =
+    plan.kind === "push" ? (
+      <>
+        将把 <code>{plan.overview.state.branch}</code> 推送至{" "}
+        <code>
+          {plan.remote}/{plan.overview.upstream.branch}
+        </code>
+        ；不会使用 <code>--force</code>。
+      </>
+    ) : plan.kind === "pull" ? (
+      <>将仅以 fast-forward 同步；不会自动 merge、rebase、stash 或丢弃文件。</>
+    ) : (
+      <>
+        将读取 <code>{plan.remote}</code> 的远程引用；不会修改工作区文件。
+      </>
+    );
+  return (
+    <PlannedContext
+      plan={plan}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      loading={loading}
+      action={labels[plan.kind]}
+    >
+      <p className="inspector-copy">{details}</p>
+    </PlannedContext>
+  );
+}
+function SafetyContext({
+  plan,
+  acknowledgement,
+  onAcknowledgement,
+  onCancel,
+  onConfirm,
+  loading,
+}) {
+  const file = basename(plan.path);
+  const discard = plan.kind === "discard";
+  const action = discard
+    ? `确认丢弃 ${file} 的改动`
+    : plan.kind === "delete-merged-branch"
+      ? `删除已合并分支 ${plan.branch}`
+      : "创建救援分支";
+  const tone = discard
+    ? "high"
+    : plan.kind === "delete-merged-branch"
+      ? "caution"
+      : "safe";
+  const ready = !discard || acknowledgement === file;
+  return (
+    <PlannedContext
+      plan={{ ...plan, confirmDisabled: !ready }}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      loading={loading}
+      tone={tone}
+      action={action}
+    >
+      {discard ? (
+        <>
+          <p className="inspector-copy">
+            受影响文件：<code>{plan.path}</code>
+          </p>
+          <p className="inspector-copy">
+            GitGlass 无法保证恢复未暂存内容；请先确认 Diff。
+          </p>
+          <pre className="risk-diff">{plan.diff}</pre>
+          <label className="message-label" htmlFor="discard-file-name">
+            输入文件名以继续
+          </label>
+          <input
+            id="discard-file-name"
+            name="discard-file-name"
+            autoComplete="off"
+            value={acknowledgement}
+            onChange={(event) => onAcknowledgement(event.target.value)}
+            placeholder={file}
+          />
+        </>
+      ) : plan.kind === "delete-merged-branch" ? (
+        <p className="inspector-copy">
+          将删除已合并的本地分支 <code>{plan.branch}</code>。删除后仍可通过
+          reflog 尝试恢复；建议先创建救援分支。
+        </p>
+      ) : (
+        <>
+          <p className="inspector-copy">
+            救援分支只保存一个可回到的提交点，不会移动当前分支或改写历史。
+          </p>
+          <dl className="file-facts">
+            <div>
+              <dt>目标提交</dt>
+              <dd>
+                <code>{plan.hash}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>救援分支</dt>
+              <dd>
+                <code>{plan.branch}</code>
+              </dd>
+            </div>
+          </dl>
+        </>
+      )}
+    </PlannedContext>
+  );
+}
+function FileInspector({ file, loading, onStage, onDiscard }) {
+  const stageLabel = file.area === "staged" ? "取消暂存" : "暂存文件";
+  return (
+    <section className="inspector-flow">
+      <div className="inspector-heading">
+        <span>文件详情</span>
+        <h2>{file.path}</h2>
+      </div>
+      <dl className="file-facts">
+        <div>
+          <dt>状态</dt>
+          <dd className={file.status}>{titleFor[file.status]}</dd>
+        </div>
+        <div>
+          <dt>区域</dt>
+          <dd>{file.area === "staged" ? "已暂存" : "未暂存"}</dd>
+        </div>
+      </dl>
+      <p className="inspector-copy">
+        已在中央工作区显示该文件的真实 Git Diff。
+      </p>
+      <button
+        type="button"
+        className="primary-action"
+        disabled={loading}
+        onClick={() => onStage(file)}
+      >
+        {file.area === "staged" ? <Minus size={16} /> : <Plus size={16} />}
+        {stageLabel}
+      </button>
+      {file.area === "unstaged" && (
+        <button
+          type="button"
+          className="danger-outline"
+          disabled={loading}
+          onClick={() => onDiscard(file.path)}
+        >
+          <Trash size={15} />
+          丢弃此文件的未暂存改动
+        </button>
+      )}
+    </section>
+  );
+}
+function CommitInspector({
+  staged,
+  unstaged,
+  message,
+  loading,
+  onMessage,
+  onOperate,
+  preview,
+}) {
+  return (
+    <section className="inspector-flow">
+      <div className="inspector-heading">
+        <span>工作区操作</span>
+        <h2>创建提交</h2>
+      </div>
+      <label className="message-label" htmlFor="commit-message">
+        提交说明
+      </label>
+      <textarea
+        id="commit-message"
+        name="commit-message"
+        autoComplete="off"
+        value={message}
+        onChange={(event) => onMessage(event.target.value)}
+        placeholder="说明此次改动…"
+        maxLength={4096}
+      />
+      <div className="commit-actions">
+        <button
+          type="button"
+          className="secondary-action"
+          disabled={!unstaged.length || loading}
+          onClick={() => onOperate("stageAll")}
+        >
+          暂存全部
+        </button>
+        <button
+          type="button"
+          className="secondary-action"
+          disabled={!staged.length || loading}
+          onClick={() => onOperate("unstageAll")}
+        >
+          取消全部暂存
+        </button>
+      </div>
+      <button
+        type="button"
+        className="primary-action"
+        disabled={!staged.length || !message.trim() || loading}
+        onClick={() => onOperate("commit", { message })}
+      >
+        提交 {staged.length || ""}
+      </button>
+      <div className="operation-preview">
+        <span>下一条命令</span>
+        <code>{preview}</code>
+      </div>
+    </section>
+  );
+}
+function RecoveryContext({ entries, reason, loading, onRescue, onClose }) {
+  return (
+    <section className="inspector-flow recovery-context">
+      <div className="inspector-heading">
+        <span>恢复中心</span>
+        <h2>Reflog 救援分支</h2>
+      </div>
+      <p className="inspector-copy">
+        救援分支只保存一个可回到的提交点，不会移动当前分支或改写历史。
+      </p>
+      {reason && (
+        <div className="inspector-message danger">
+          <WarningCircle size={18} />
+          <span>{reason}</span>
+        </div>
+      )}
+      <div className="reflog-list">
+        {entries.map((entry) => (
+          <button
+            type="button"
+            className="reflog-row"
+            key={`${entry.hash}-${entry.selector}`}
+            disabled={loading}
+            onClick={() => onRescue(entry)}
+          >
+            <code>{entry.shortHash}</code>
+            <span>{entry.occurredAt || entry.action}</span>
+            <strong>{entry.subject || entry.action}</strong>
+          </button>
+        ))}
+        {!entries.length && !reason && (
+          <p className="inspector-copy">没有可用的 reflog 记录。</p>
+        )}
+      </div>
+      <button type="button" className="text-action" onClick={onClose}>
+        返回
+      </button>
+    </section>
+  );
+}
+function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
+  if (!remote) return null;
+  if (!remote.remotes?.length)
+    return (
+      <section className="remote-summary">
+        <div className="section-label">
+          <span>远程</span>
+        </div>
+        <p>{remote.reason}</p>
+        <span>{remote.suggestion}</span>
+      </section>
+    );
+  return (
+    <section className="remote-summary">
+      <div className="section-label">
+        <span>远程</span>
+        <button
+          type="button"
+          aria-label="Fetch 远程状态"
+          onClick={onFetch}
+          disabled={loading}
+        >
+          <ArrowClockwise size={14} />
+        </button>
+      </div>
+      <code>{remote.remote?.name || "—"}</code>
+      <span>{remote.remote?.url}</span>
+      {remote.upstream && (
+        <>
+          <div className="remote-status">
+            <span>{remote.upstream.ref}</span>
+            <b className={remote.ahead > 0 ? "ahead" : ""}>↑ {remote.ahead}</b>
+            <b className={remote.behind > 0 ? "behind" : ""}>
+              ↓ {remote.behind}
+            </b>
+          </div>
+          <div className="remote-actions">
+            <button
+              type="button"
+              disabled={loading || remote.ahead <= 0}
+              onClick={onPush}
+            >
+              Push
+            </button>
+            <button
+              type="button"
+              disabled={loading || remote.behind <= 0 || files.length > 0}
+              onClick={onPull}
+            >
+              Pull
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function App() {
+  const [historyMode, setHistoryMode] = useState(false);
+  const [historySelected, setHistorySelected] = useState(null);
+  const [historyDetail, setHistoryDetail] = useState(null);
+  const [historyResult, setHistoryResult] = useState(null);
+  const [historyCompare, setHistoryCompare] = useState({ base: null, target: null });
+  const [historyFile, setHistoryFile] = useState(null);
+  const [repo, setRepo] = useState(null);
+  const [state, setState] = useState({ branch: "", files: [], ok: true });
+  const [selected, setSelected] = useState(null);
+  const [diff, setDiff] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [branchPlan, setBranchPlan] = useState(null);
+  const [remotePlan, setRemotePlan] = useState(null);
+  const [safetyPlan, setSafetyPlan] = useState(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [reflogEntries, setReflogEntries] = useState([]);
+  const [reflogReason, setReflogReason] = useState("");
+  const [acknowledgement, setAcknowledgement] = useState("");
+  const [remote, setRemote] = useState(null);
+  const [branches, setBranches] = useState([]);
+  const [commits, setCommits] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [ledgerFilter, setLedgerFilter] = useState("user");
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [focusedOperationId, setFocusedOperationId] = useState(null);
+  const [newBranch, setNewBranch] = useState("");
+  const refreshSequence = useRef(0);
+  const refreshCycles = useRef(new Map());
+  const staged = useMemo(
+    () => state.files.filter((file) => file.area === "staged"),
+    [state.files],
+  );
+  const unstaged = useMemo(
+    () => state.files.filter((file) => file.area === "unstaged"),
+    [state.files],
+  );
+  const ledgerCounts = useMemo(() => countBySource(records), [records]);
+  const visibleRecords = useMemo(
+    () => filterLedgerRecords(records, ledgerFilter, focusedOperationId),
+    [records, ledgerFilter, focusedOperationId],
+  );
+  const ledgerGroups = useMemo(
+    () => groupBackgroundRecords(visibleRecords),
+    [visibleRecords],
+  );
+  const latestRecord = records[0];
+  const preview = !repo
+    ? "git status --porcelain=v1 -z"
+    : staged.length && message.trim()
+      ? `git commit -m ${JSON.stringify(message.trim())}`
+      : selected
+        ? selected.area === "staged"
+          ? `git restore --staged -- ${selected.path}`
+          : `git add -- ${selected.path}`
+        : unstaged.length
+          ? "git add -A"
+          : "git status --porcelain=v1 -z";
+  useEffect(() => {
+    refreshAll();
+  }, []);
+  async function applyState(next, preference, cycle) {
+    setState(next);
+    const nextFile = preference || next.files[0] || null;
+    setSelected(nextFile);
+    if (nextFile) await loadDiff(nextFile, cycle);
+    else setDiff("");
+  }
+  async function refreshLedger(cycle) {
+    const next = await window.gitglass.getLedger();
+    setRecords(
+      next.map((record) => {
+        if (
+          record.source === "background" &&
+          cycle &&
+          !refreshCycles.current.has(record.id)
+        )
+          refreshCycles.current.set(record.id, cycle);
+        const refreshCycleId = refreshCycles.current.get(record.id);
+        return refreshCycleId ? { ...record, refreshCycleId } : record;
+      }),
+    );
+  }
+  async function refreshAll(preference) {
+    const cycle = `refresh-${Date.now()}-${++refreshSequence.current}`;
+    const next = await window.gitglass.getState();
+    if (!next.ok) return;
+    setRepo(next.path || repo);
+    await applyState(next, preference, cycle);
+    const [branchResult, commitResult, remoteResult] = await Promise.all([
+      window.gitglass.getBranches(),
+      window.gitglass.getCommits(),
+      window.gitglass.getRemoteOverview(),
+    ]);
+    setBranches(branchResult.branches || []);
+    setCommits(commitResult.commits || []);
+    setRemote(remoteResult);
+    await refreshLedger(cycle);
+  }
+  async function loadDiff(file, cycle) {
+    setSelected(file);
+    setDiff("正在读取差异…");
+    const result = await window.gitglass.getDiff(file);
+    setDiff(
+      result.ok
+        ? result.stdout || "此文件没有可显示的文本差异。"
+        : result.stderr || result.stdout || "无法读取差异。",
+    );
+    await refreshLedger(cycle);
+  }
+  async function selectHistoryCommit(commit) {
+    setHistorySelected(commit); setHistoryDetail(null); setHistoryResult(null); setLoading(true);
+    const result = await window.gitglass.getCommitDetail(commit.hash); setHistoryDetail(result); await refreshLedger(); setLoading(false);
+  }
+  async function readHistoryDiff() { if (!historySelected) return; setLoading(true); setHistoryResult(await window.gitglass.getCommitDiff(historySelected.hash)); await refreshLedger(); setLoading(false); }
+  async function readCompare() { if (!historyCompare.base || !historyCompare.target) return; setLoading(true); setHistoryResult(await window.gitglass.compareCommits(historyCompare.base.hash, historyCompare.target.hash)); await refreshLedger(); setLoading(false); }
+  async function openFileHistory(path) { setLoading(true); setHistoryFile(await window.gitglass.getFileHistory(path)); setHistoryResult(null); await refreshLedger(); setLoading(false); }
+  async function chooseRepo() {
+    const result = await window.gitglass.chooseRepository();
+    if (result.canceled) return;
+    if (!result.ok) {
+      setNotice({ type: "error", text: result.error });
+      return;
+    }
+    setRepo(result.path);
+    await refreshAll();
+    setNotice(null);
+  }
+  async function operate(action, payload = {}) {
+    if (!repo || loading) return;
+    setLoading(true);
+    setLedgerOpen(true);
+    setLedgerFilter("user");
+    setFocusedOperationId(null);
+    const result = await window.gitglass.operate(action, payload);
+    setFocusedOperationId(result.execution?.operationId || null);
+    setNotice(
+      result.execution.ok
+        ? result.commit
+          ? { type: "success", text: `已创建提交 ${result.commit}` }
+          : null
+        : {
+            type: "error",
+            text: "Git 命令失败；原始 stderr 和退出代码已保留在命令账本。",
+          },
+    );
+    if (result.commit) setMessage("");
+    await refreshAll();
+    setLoading(false);
+  }
+  async function requestSwitch(branch, create = false) {
+    const name = create ? branch.trim() : branchName(branch);
+    if (!name || (!create && (name === state.branch || branch.current))) return;
+    const prepared = await window.gitglass.prepareBranch(name, create);
+    await refreshLedger();
+    setBranchPlan(
+      prepared.plan
+        ? {
+            name,
+            create,
+            ...prepared,
+            operationId: prepared.plan.operationId,
+            displayCommand: prepared.plan.displayCommand,
+          }
+        : { name, create, ...prepared, blocked: true },
+    );
+  }
+  async function confirmBranch() {
+    if (!branchPlan?.plan) return;
+    setLoading(true);
+    setLedgerOpen(true);
+    const result = await window.gitglass.executeBranch(
+      branchPlan.name,
+      branchPlan.create,
+      branchPlan.operationId,
+    );
+    setFocusedOperationId(
+      result.execution?.operationId || branchPlan.operationId,
+    );
+    setNotice(
+      result.execution?.ok
+        ? {
+            type: "success",
+            text: `已${branchPlan.create ? "创建并切换到" : "切换到"} ${branchPlan.name}`,
+          }
+        : {
+            type: "error",
+            text: result.reason || "分支操作失败；请在命令账本查看原始输出。",
+          },
+    );
+    if (result.execution?.ok) setBranchPlan(null);
+    await refreshAll();
+    setLoading(false);
+  }
+  async function requestRemote(kind) {
+    if (!repo || loading) return;
+    setLoading(true);
+    const prepared = await window.gitglass.prepareRemote(kind);
+    await refreshLedger();
+    setRemote(prepared.overview || remote);
+    setRemotePlan(
+      prepared.plan
+        ? {
+            ...prepared,
+            kind,
+            operationId: prepared.plan.operationId,
+            displayCommand: prepared.plan.displayCommand,
+          }
+        : { ...prepared, kind, blocked: true },
+    );
+    setLoading(false);
+  }
+  async function confirmRemote() {
+    if (!remotePlan?.plan) return;
+    setLoading(true);
+    setLedgerOpen(true);
+    const result = await window.gitglass.executeRemote(
+      remotePlan.kind,
+      remotePlan.operationId,
+    );
+    setFocusedOperationId(
+      result.execution?.operationId || remotePlan.operationId,
+    );
+    setNotice(
+      result.execution?.ok
+        ? { type: "success", text: "远程操作已完成。" }
+        : {
+            type: "error",
+            text: result.reason || "远程命令失败；请在命令账本查看原始输出。",
+          },
+    );
+    if (result.execution?.ok) setRemotePlan(null);
+    await refreshAll();
+    setLoading(false);
+  }
+  async function requestDiscard(path) {
+    setLoading(true);
+    setAcknowledgement("");
+    const prepared = await window.gitglass.prepareDiscard(path);
+    await refreshLedger();
+    setSafetyPlan(
+      prepared.plan
+        ? {
+            ...prepared,
+            kind: "discard",
+            path,
+            operationId: prepared.plan.operationId,
+            displayCommand: prepared.plan.displayCommand,
+          }
+        : { ...prepared, kind: "discard", path, blocked: true },
+    );
+    setLoading(false);
+  }
+  async function requestDeleteMergedBranch(branch) {
+    setLoading(true);
+    const prepared = await window.gitglass.prepareDeleteMergedBranch(branch);
+    await refreshLedger();
+    setSafetyPlan(
+      prepared.plan
+        ? {
+            ...prepared,
+            kind: "delete-merged-branch",
+            branch,
+            operationId: prepared.plan.operationId,
+            displayCommand: prepared.plan.displayCommand,
+          }
+        : { ...prepared, kind: "delete-merged-branch", branch, blocked: true },
+    );
+    setLoading(false);
+  }
+  async function openRecovery() {
+    setLoading(true);
+    const result = await window.gitglass.getReflog();
+    setReflogEntries(result.entries || []);
+    setReflogReason(result.reason || "");
+    setRecoveryOpen(true);
+    await refreshLedger();
+    setLoading(false);
+  }
+  async function requestRescue(entry) {
+    setLoading(true);
+    const branch = rescueName(entry);
+    const prepared = await window.gitglass.prepareRescueBranch(
+      entry.hash,
+      branch,
+    );
+    await refreshLedger();
+    setRecoveryOpen(false);
+    setSafetyPlan(
+      prepared.plan
+        ? {
+            ...prepared,
+            kind: "rescue-branch",
+            branch,
+            hash: entry.hash,
+            operationId: prepared.plan.operationId,
+            displayCommand: prepared.plan.displayCommand,
+          }
+        : {
+            ...prepared,
+            kind: "rescue-branch",
+            branch,
+            hash: entry.hash,
+            blocked: true,
+          },
+    );
+    setLoading(false);
+  }
+  async function confirmSafety() {
+    if (!safetyPlan?.plan) return;
+    setLoading(true);
+    setLedgerOpen(true);
+    setLedgerFilter("user");
+    let result;
+    if (safetyPlan.kind === "discard")
+      result = await window.gitglass.executeDiscard(
+        safetyPlan.path,
+        safetyPlan.operationId,
+      );
+    else if (safetyPlan.kind === "delete-merged-branch")
+      result = await window.gitglass.executeDeleteMergedBranch(
+        safetyPlan.branch,
+        safetyPlan.operationId,
+      );
+    else
+      result = await window.gitglass.executeRescueBranch(
+        safetyPlan.hash,
+        safetyPlan.branch,
+        safetyPlan.operationId,
+      );
+    setFocusedOperationId(
+      result.execution?.operationId || safetyPlan.operationId,
+    );
+    setNotice(
+      result.execution?.ok
+        ? {
+            type: "success",
+            text:
+              safetyPlan.kind === "discard"
+                ? "已丢弃该文件的未暂存改动。"
+                : safetyPlan.kind === "delete-merged-branch"
+                  ? `已删除分支 ${safetyPlan.branch}。`
+                  : `已创建救援分支 ${safetyPlan.branch}。`,
+          }
+        : {
+            type: "error",
+            text:
+              result.reason || "Git 命令失败；请在命令账本查看原始 stderr。",
+          },
+    );
+    if (result.execution?.ok) setSafetyPlan(null);
+    await refreshAll();
+    setLoading(false);
+  }
+  const inspector = safetyPlan ? (
+    <SafetyContext
+      plan={safetyPlan}
+      acknowledgement={acknowledgement}
+      onAcknowledgement={setAcknowledgement}
+      loading={loading}
+      onConfirm={confirmSafety}
+      onCancel={() => setSafetyPlan(null)}
+    />
+  ) : branchPlan ? (
+    <BranchContext
+      plan={branchPlan}
+      loading={loading}
+      onConfirm={confirmBranch}
+      onCancel={() => setBranchPlan(null)}
+    />
+  ) : remotePlan ? (
+    <RemotePlanContext
+      plan={remotePlan}
+      loading={loading}
+      onConfirm={confirmRemote}
+      onCancel={() => setRemotePlan(null)}
+    />
+  ) : recoveryOpen ? (
+    <RecoveryContext
+      entries={reflogEntries}
+      reason={reflogReason}
+      loading={loading}
+      onRescue={requestRescue}
+      onClose={() => setRecoveryOpen(false)}
+    />
+  ) : selected ? (
+    <FileInspector
+      file={selected}
+      loading={loading}
+      onStage={(file) =>
+        operate(file.area === "staged" ? "unstage" : "stage", {
+          path: file.path,
+        })
+      }
+      onDiscard={requestDiscard}
+    />
+  ) : (
+    <CommitInspector
+      staged={staged}
+      unstaged={unstaged}
+      message={message}
+      loading={loading}
+      onMessage={setMessage}
+      onOperate={operate}
+      preview={preview}
+    />
+  );
+  return (
+    <main
+      className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"}`}
+    >
+      <a className="skip-link" href="#workspace-main">
+        跳至主工作区
+      </a>
+      <header className="topbar">
+        <div className="brand">
+          <GitBranch size={18} weight="bold" />
+          <h1>GitGlass</h1>
+          <span className="topbar-divider" />
+          <strong title={repo || ""}>{basename(repo)}</strong>
+        </div>
+        <div className="top-state">
+          <span>
+            <GitBranch size={14} />
+            <code>{state.branch || "—"}</code>
+          </span>
+          <span className={state.files.length ? "dirty" : "clean"}>
+            {repo
+              ? state.files.length
+                ? `${state.files.length} 个改动`
+                : "工作区干净"
+              : "等待仓库"}
+          </span>
+          {remote?.upstream && (
+            <span className="sync-counts">
+              <b className={remote.ahead > 0 ? "ahead" : ""}>
+                ↑ {remote.ahead}
+              </b>
+              <b className={remote.behind > 0 ? "behind" : ""}>
+                ↓ {remote.behind}
+              </b>
+            </span>
+          )}
+        </div>
+        <div className="top-actions">
+          <button type="button" className="top-action" onClick={() => setHistoryMode(false)} aria-pressed={!historyMode}>工作区</button>
+          <button type="button" className="top-action" onClick={() => setHistoryMode(true)} aria-pressed={historyMode}>历史审查</button>
+          <button
+            type="button"
+            className="top-action"
+            disabled={!repo || loading}
+            onClick={openRecovery}
+          >
+            <Lifebuoy size={15} />
+            恢复
+          </button>
+          <button type="button" className="top-action" onClick={chooseRepo}>
+            <FolderOpen size={15} />
+            打开仓库
+          </button>
+          <button
+            type="button"
+            className="sync-action"
+            disabled={!repo || loading || !remote?.remotes?.length}
+            onClick={() => requestRemote("fetch")}
+          >
+            <ArrowClockwise size={15} />
+            同步
+          </button>
+        </div>
+      </header>
+      {historyMode ? <div id="workspace-main" className="workspace history-workspace" tabIndex="-1">
+        <aside className="status-panel"><div className="panel-heading"><h2>历史审查</h2></div><p className="inspector-copy">最多读取 80 个提交；所有查询都在命令账本中可审计。</p><section className="branch-list"><div className="section-label">两提交比较</div><p className="selection-line">基准 {historyCompare.base ? <code>{historyCompare.base.shortHash}</code> : "未选择"}</p><p className="selection-line">目标 {historyCompare.target ? <code>{historyCompare.target.shortHash}</code> : "未选择"}</p>{historyCompare.base && historyCompare.target && <button className="secondary-action" onClick={readCompare}>读取比较</button>}</section></aside>
+        <section className="main-panel"><div className="main-toolbar"><div><h2>{historyFile ? "文件历史" : historyResult ? "提交 Diff" : "提交历史"}</h2><span>{historySelected?.subject || "选择提交以查看审查详情"}</span></div>{historyResult && <button className="icon-button" aria-label="复制真实 Git 命令" onClick={() => navigator.clipboard?.writeText(historyResult.record?.displayCommand || "")}><Copy size={15}/></button>}</div><div className="main-content"><div className="history-notice" role="status" aria-live="polite">{loading ? "正在读取历史…" : historyResult?.truncated ? "Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。" : ""}</div><div className="history-view">{historyResult ? <div className="diff-content">{historyResult.diff ? historyResult.diff.split("\n").map((line,index) => <DiffLine key={index} line={line}/>) : <div className="history-empty">此提交没有可显示的文本 Diff。</div>}</div> : <div className="commit-graph">{(historyFile?.entries || commits).map((commit) => <div className={`graph-row history-row ${historySelected?.hash === commit.hash ? "selected" : ""}`} key={commit.hash}><button className="commit-select" onClick={() => historyFile ? (async () => { setLoading(true); setHistoryResult(await window.gitglass.getFileHistoryDiff(commit.hash, historyFile.path)); await refreshLedger(); setLoading(false); })() : selectHistoryCommit(commit)}><span className="graph-line"><i/></span><code title={commit.hash}>{commit.shortHash}</code><strong title={commit.subject}>{commit.subject}</strong><span title={commit.author}>{commit.author}</span></button>{!historyFile && <button className="compare-pin" aria-label="选择比较提交" onClick={() => setHistoryCompare((value) => value.base ? { ...value, target: commit } : { base: commit, target: null })}>比较</button>}</div>)}</div>}</div></div></section>
+        <aside className="context-panel">{historyFile ? <div className="inspector-flow"><div className="inspector-heading"><span>文件历史</span><h2 title={historyFile.path}>{historyFile.path}</h2></div><button className="text-action" onClick={() => { setHistoryFile(null); setHistoryResult(null); }}>返回提交详情</button></div> : historySelected ? <div className="inspector-flow"><div className="inspector-heading"><span>提交详情</span><h2 title={historySelected.subject}>{historySelected.subject}</h2></div><dl className="file-facts"><div><dt>完整 SHA</dt><dd><code title={historySelected.hash}>{historySelected.hash}</code><button className="icon-button" aria-label="复制完整 SHA" onClick={() => navigator.clipboard?.writeText(historySelected.hash)}><Copy size={14}/></button></dd></div><div><dt>父提交</dt><dd>{historySelected.parents?.join(", ") || "根提交"}</dd></div><div><dt>作者</dt><dd title={historySelected.author}>{historySelected.author}</dd></div><div><dt>时间</dt><dd>{historySelected.authoredAt}</dd></div></dl><button className="primary-action" onClick={readHistoryDiff}>查看完整 Diff</button><section className="history-files"><h3>改动文件</h3>{historyDetail?.changedFiles?.map((file) => <button className="history-file" title={file.path} key={file.path} onClick={() => openFileHistory(file.path)}><span>{file.status}</span><code>{file.path}</code></button>)}</section></div> : <div className="inspector-flow"><h2>选择一个提交</h2><p className="inspector-copy">这是只读审查，不会切换分支或改写工作区。</p></div>}</aside>
+      </div> : <div id="workspace-main" className="workspace" tabIndex="-1">
+        <aside className="status-panel">
+          <div className="panel-heading">
+            <h2>工作区</h2>
+            {repo && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => refreshAll()}
+                aria-label="刷新状态"
+              >
+                <ArrowClockwise size={15} />
+              </button>
+            )}
+          </div>
+          {repo ? (
+            <>
+              <FileSection
+                title="未暂存改动"
+                files={unstaged}
+                selected={selected}
+                onSelect={loadDiff}
+                onStage={(file) => operate("stage", { path: file.path })}
+              />
+              <FileSection
+                title="已暂存改动"
+                files={staged}
+                selected={selected}
+                onSelect={loadDiff}
+                onStage={(file) => operate("unstage", { path: file.path })}
+              />
+              {!state.files.length && (
+                <div className="clean-state">
+                  <CheckCircle size={17} weight="fill" />
+                  没有待提交的改动
+                </div>
+              )}
+              <section className="branch-list">
+                <div className="section-label">
+                  <span>本地分支</span>
+                  <b>{branches.length}</b>
+                </div>
+                {branches.map((branch) => {
+                  const current =
+                    branchName(branch) === state.branch || branch.current;
+                  return (
+                    <div className="branch-item" key={branchName(branch)}>
+                      <button
+                        type="button"
+                        className={`branch-row ${current ? "current" : ""}`}
+                        onClick={() => requestSwitch(branch)}
+                      >
+                        <GitBranch size={13} />
+                        <code>{branchName(branch)}</code>
+                        {current && <span>当前</span>}
+                      </button>
+                      {!current && (
+                        <button
+                          type="button"
+                          className="branch-delete"
+                          aria-label={`删除已合并分支 ${branchName(branch)}`}
+                          title="删除已合并分支"
+                          onClick={() =>
+                            requestDeleteMergedBranch(branchName(branch))
+                          }
+                        >
+                          <Trash size={13} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="branch-create">
+                  <input
+                    name="branch-name"
+                    autoComplete="off"
+                    value={newBranch}
+                    onChange={(event) => setNewBranch(event.target.value)}
+                    placeholder="新分支名称"
+                    aria-label="新分支名称"
+                  />
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={!newBranch.trim() || loading}
+                    onClick={() => requestSwitch(newBranch, true)}
+                  >
+                    创建
+                  </button>
+                </div>
+              </section>
+              <SidebarRemote
+                remote={remote}
+                files={state.files}
+                loading={loading}
+                onFetch={() => requestRemote("fetch")}
+                onPush={() => requestRemote("push")}
+                onPull={() => requestRemote("pull")}
+              />
+            </>
+          ) : (
+            <div className="empty-repo">
+              <FolderOpen size={24} />
+              <p>打开本地 Git 仓库</p>
+              <span>查看改动、历史与真实命令记录。</span>
+            </div>
+          )}
+        </aside>
+        <section className="main-panel">
+          <div className="main-toolbar">
+            <div>
+              <h2>{selected ? "文件差异" : "提交历史"}</h2>
+              <span>
+                {selected?.path ||
+                  (commits.length
+                    ? `最近 ${commits.length} 个提交`
+                    : "选择仓库后读取提交记录")}
+              </span>
+            </div>
+            {selected && (
+              <span className={`file-kind ${selected.status}`}>
+                {titleFor[selected.status]}
+              </span>
+            )}
+          </div>
+          {selected ? (
+            <div className="diff-view">
+              <div className="diff-meta">
+                <span
+                  className={
+                    selected.area === "staged" ? "staged-diff-label" : ""
+                  }
+                >
+                  {selected.area === "staged" ? "已暂存差异" : "工作区差异"}
+                </span>
+                <code>{selected.path}</code>
+              </div>
+              <div className="diff-content">
+                {diff.split("\n").map((line, index) => (
+                  <DiffLine key={index} line={line} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <CommitGraph commits={commits} />
+          )}
+        </section>
+        <aside className="context-panel">{inspector}</aside>
+      </div>}
+      <section className="command-ledger" aria-label="命令账本">
+        <div className="ledger-bar">
+          <button
+            type="button"
+            className="ledger-title"
+            onClick={() => setLedgerOpen(!ledgerOpen)}
+            aria-expanded={ledgerOpen}
+          >
+            <TerminalWindow size={16} />
+            <span>命令账本</span>
+            <CaretDown size={14} className={ledgerOpen ? "open" : ""} />
+          </button>
+          {!ledgerOpen && (
+            <button
+              type="button"
+              className="ledger-glance"
+              onClick={() => setLedgerOpen(true)}
+            >
+              {latestRecord ? (
+                <>
+                  <span className={latestRecord.ok === false ? "bad" : "good"}>
+                    {latestRecord.ok === false ? (
+                      <WarningCircle size={14} weight="fill" />
+                    ) : (
+                      <CheckCircle size={14} weight="fill" />
+                    )}
+                  </span>
+                  <span>{latestRecord.intent}</span>
+                  <code>
+                    {latestRecord.displayCommand || latestRecord.command}
+                  </code>
+                  <time>{time(latestRecord.startedAt)}</time>
+                </>
+              ) : (
+                <span>尚无命令记录</span>
+              )}
+            </button>
+          )}
+          {ledgerOpen && (
+            <div className="ledger-filter">
+              <button
+                type="button"
+                className={ledgerFilter === "user" ? "active" : ""}
+                onClick={() => {
+                  setLedgerFilter("user");
+                  setFocusedOperationId(null);
+                }}
+              >
+                用户操作 {ledgerCounts.user}
+              </button>
+              <button
+                type="button"
+                className={ledgerFilter === "background" ? "active" : ""}
+                onClick={() => {
+                  setLedgerFilter("background");
+                  setFocusedOperationId(null);
+                }}
+              >
+                后台读取 {ledgerCounts.background}
+              </button>
+              <button
+                type="button"
+                className={ledgerFilter === "all" ? "active" : ""}
+                onClick={() => {
+                  setLedgerFilter("all");
+                  setFocusedOperationId(null);
+                }}
+              >
+                全部 {records.length}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="ledger-body">
+          {ledgerOpen && (
+            <>
+              <p className="ledger-note">
+                用户操作会显示实际执行命令；后台读取用于同步界面状态。
+              </p>
+              {notice && (
+                <div
+                  className={`notice ${notice.type}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {notice.type === "success" ? (
+                    <CheckCircle size={16} weight="fill" />
+                  ) : (
+                    <WarningCircle size={16} weight="fill" />
+                  )}
+                  {notice.text}
+                </div>
+              )}
+              <div className="ledger-list">
+                {ledgerGroups.length ? (
+                  ledgerGroups.map((group, index) =>
+                    group.type === "refresh" ? (
+                      <RefreshGroup key={group.id} group={group} />
+                    ) : (
+                      <LedgerEntry
+                        key={group.record.id || index}
+                        record={group.record}
+                      />
+                    ),
+                  )
+                ) : (
+                  <div className="ledger-empty">
+                    <TerminalWindow size={20} />
+                    没有符合筛选条件的命令
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<App />);
