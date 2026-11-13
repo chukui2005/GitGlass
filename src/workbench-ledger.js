@@ -10,6 +10,7 @@ const intentText = {
   'Stage file': '暂存文件',
   'Unstage file': '取消暂存文件',
   'Stage all changes': '暂存全部改动',
+  'Stage selected files': '暂存所选文件',
   'Unstage all changes': '取消全部暂存',
   'Create commit': '创建提交',
   'Read local branches': '读取本地分支',

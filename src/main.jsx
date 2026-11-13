@@ -71,6 +71,8 @@ const rescueName = (entry) =>
       .replace(/[^0-9A-Za-z]+/g, "-")
       .replace(/^-+|-+$/g, "") || "reflog"
   }-${entry.shortHash}`;
+// 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
+const stageSelectionKey = (path) => `unstaged:${path}`;
 
 function DiffLine({ line }) {
   const kind =
@@ -111,11 +113,31 @@ function Output({ title, body, danger, warning }) {
     </div>
   );
 }
-function FileRow({ file, selected, onSelect, onStage }) {
+function FileRow({
+  file,
+  selected,
+  onSelect,
+  onStage,
+  checkable,
+  checked,
+  onToggleCheck,
+  busy,
+}) {
   const stageLabel =
     file.area === "staged" ? `取消暂存 ${file.path}` : `暂存 ${file.path}`;
   return (
     <div className={`file-row ${selected ? "selected" : ""}`}>
+      {checkable && (
+        <input
+          type="checkbox"
+          className="stage-check"
+          checked={checked}
+          onChange={() => onToggleCheck(file)}
+          aria-label={`选择暂存 ${file.path}`}
+          title={`选择暂存 ${file.path}`}
+          disabled={busy}
+        />
+      )}
       <button
         type="button"
         className="file-select"
@@ -140,13 +162,25 @@ function FileRow({ file, selected, onSelect, onStage }) {
     </div>
   );
 }
-function FileSection({ title, files, selected, onSelect, onStage }) {
+function FileSection({
+  title,
+  files,
+  selected,
+  onSelect,
+  onStage,
+  toolbar,
+  checkable,
+  isChecked,
+  onToggleCheck,
+  busy,
+}) {
   return (
     <section className="file-section">
       <div className="section-label">
         <span>{title}</span>
         <b>{files.length}</b>
       </div>
+      {toolbar}
       {files.map((file, index) => (
         <FileRow
           key={`${file.area}-${file.path}-${index}`}
@@ -156,9 +190,59 @@ function FileSection({ title, files, selected, onSelect, onStage }) {
           }
           onSelect={onSelect}
           onStage={onStage}
+          checkable={checkable}
+          checked={checkable && isChecked(file)}
+          onToggleCheck={onToggleCheck}
+          busy={busy}
         />
       ))}
     </section>
+  );
+}
+
+// 未暂存区的批量选择工具栏：全选 / 清除 / 已选计数 / “暂存所选 N 个”主按钮。
+// 未选择时主按钮禁用并用 title 说明原因，不制造可点击假象。
+function BatchStageToolbar({ total, count, loading, onSelectAll, onClear, onStageSelected }) {
+  const stageTitle = loading
+    ? "正在执行其他操作…"
+    : count
+      ? `将暂存所选 ${count} 个文件`
+      : "先在上方勾选要暂存的文件";
+  return (
+    <div className="batch-toolbar">
+      <div className="batch-tools-row">
+        <button
+          type="button"
+          className="batch-tool"
+          onClick={onSelectAll}
+          disabled={!total || loading}
+        >
+          全选未暂存
+        </button>
+        <button
+          type="button"
+          className="batch-tool"
+          onClick={onClear}
+          disabled={!count || loading}
+        >
+          清除选择
+        </button>
+      </div>
+      <div className="batch-stage-row">
+        <span className="batch-count" aria-live="polite">
+          已选择 {count} 个
+        </span>
+        <button
+          type="button"
+          className="batch-stage"
+          onClick={onStageSelected}
+          disabled={!count || loading}
+          title={stageTitle}
+        >
+          暂存所选 {count} 个
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -864,6 +948,9 @@ function App() {
   const [repo, setRepo] = useState(null);
   const [state, setState] = useState({ branch: "", files: [], ok: true });
   const [selected, setSelected] = useState(null);
+  // 批量暂存勾选集合：Set<stageSelectionKey>，独立于右侧 Diff 选中状态；
+  // 一律通过创建新的 Set 进行不可变更新。
+  const [stageSelection, setStageSelection] = useState(() => new Set());
   const [diff, setDiff] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -895,6 +982,15 @@ function App() {
     () => state.files.filter((file) => file.area === "unstaged"),
     [state.files],
   );
+  // 勾选集合只包含仍存在于未暂存区的文件（刷新 / 暂存成功 / 切换仓库后自动对齐）。
+  const checkedForStaging = useMemo(
+    () =>
+      unstaged.filter((file) =>
+        stageSelection.has(stageSelectionKey(file.path)),
+      ),
+    [unstaged, stageSelection],
+  );
+  const checkedCount = checkedForStaging.length;
   const ledgerCounts = useMemo(() => countBySource(records), [records]);
   const visibleRecords = useMemo(
     () => filterLedgerRecords(records, ledgerFilter, focusedOperationId),
@@ -940,6 +1036,40 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [historyMode, historySearch]);
+  // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
+  // 移除已不存在于未暂存区的幽灵选择。
+  useEffect(() => {
+    setStageSelection((previous) => {
+      if (!previous.size) return previous;
+      const valid = new Set(
+        unstaged.map((file) => stageSelectionKey(file.path)),
+      );
+      let changed = false;
+      const next = new Set();
+      for (const key of previous) {
+        if (valid.has(key)) next.add(key);
+        else changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [unstaged]);
+  function toggleStageSelection(file) {
+    setStageSelection((previous) => {
+      const key = stageSelectionKey(file.path);
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function selectAllUnstaged() {
+    setStageSelection(
+      new Set(unstaged.map((file) => stageSelectionKey(file.path))),
+    );
+  }
+  function clearStageSelection() {
+    setStageSelection(new Set());
+  }
   async function applyState(next, preference, cycle) {
     setState(next);
     const nextFile = preference || next.files[0] || null;
@@ -1129,8 +1259,41 @@ function App() {
     setHistoryFile(null);
     setHistoryCompare({ base: null, target: null });
     setHistorySearch("");
+    // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
+    setStageSelection(new Set());
     await refreshAll();
     setNotice({ type: "success", text: `已打开仓库：${result.path}` });
+  }
+  // 操作结果的用户提示：批量暂存的失败提示不伪称原子完成；校验被拒时
+  // 直接展示中文原因（此时 argv 只有 ['git']，说明未执行真实命令）。
+  function buildOperateNotice(action, result) {
+    const execution = result.execution;
+    if (execution?.ok) {
+      if (result.commit)
+        return { type: "success", text: `已创建提交 ${result.commit}` };
+      if (action === "stageSelected")
+        return {
+          type: "success",
+          text: `已暂存所选 ${Math.max(execution.argv.length - 3, 0)} 个文件。`,
+        };
+      return null;
+    }
+    if (action === "stageSelected") {
+      if ((execution?.argv?.length || 0) <= 1)
+        return {
+          type: "error",
+          text:
+            execution?.stderr || "所选文件无效，本次未执行暂存命令。",
+        };
+      return {
+        type: "error",
+        text: "暂存未全部完成，请查看命令账本与当前文件状态。",
+      };
+    }
+    return {
+      type: "error",
+      text: "Git 命令失败；原始 stderr 和退出代码已保留在命令账本。",
+    };
   }
   async function operate(action, payload = {}) {
     if (!repo || loading) return;
@@ -1140,16 +1303,7 @@ function App() {
     setFocusedOperationId(null);
     const result = await window.gitglass.operate(action, payload);
     setFocusedOperationId(result.execution?.operationId || null);
-    setNotice(
-      result.execution.ok
-        ? result.commit
-          ? { type: "success", text: `已创建提交 ${result.commit}` }
-          : null
-        : {
-            type: "error",
-            text: "Git 命令失败；原始 stderr 和退出代码已保留在命令账本。",
-          },
-    );
+    setNotice(buildOperateNotice(action, result));
     if (result.commit) setMessage("");
     await refreshAll();
     setLoading(false);
@@ -1798,6 +1952,26 @@ function App() {
                 selected={selected}
                 onSelect={loadDiff}
                 onStage={(file) => operate("stage", { path: file.path })}
+                toolbar={
+                  <BatchStageToolbar
+                    total={unstaged.length}
+                    count={checkedCount}
+                    loading={loading}
+                    onSelectAll={selectAllUnstaged}
+                    onClear={clearStageSelection}
+                    onStageSelected={() =>
+                      operate("stageSelected", {
+                        paths: checkedForStaging.map((file) => file.path),
+                      })
+                    }
+                  />
+                }
+                checkable
+                isChecked={(file) =>
+                  stageSelection.has(stageSelectionKey(file.path))
+                }
+                onToggleCheck={toggleStageSelection}
+                busy={loading}
               />
               <FileSection
                 title="已暂存改动"

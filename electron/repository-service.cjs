@@ -10,6 +10,25 @@ function rescueBranchName(timestamp, shortHash) {
   return `rescue/${safeTime}-${safeHash || 'unknown'}`
 }
 
+// 批量暂存的安全上限：超过时不执行命令，直接返回中文原因。
+const STAGE_SELECTED_MAX_PATHS = 200
+const STAGE_SELECTED_MAX_TOTAL_CHARS = 8192
+
+// 只接受非空、去重后的合法路径数组；任何一项非法都会拒绝整批操作。
+function normalizeStagePaths(paths) {
+  if (!Array.isArray(paths)) return { ok: false, reason: '暂存所选需要传入文件路径数组。' }
+  const unique = []
+  for (const entry of paths) {
+    if (!isPath(entry)) return { ok: false, reason: '存在无效的文件路径；已取消本次暂存。' }
+    if (!unique.includes(entry)) unique.push(entry)
+  }
+  if (!unique.length) return { ok: false, reason: '请先勾选至少一个未暂存文件。' }
+  if (unique.length > STAGE_SELECTED_MAX_PATHS) return { ok: false, reason: `单次最多暂存 ${STAGE_SELECTED_MAX_PATHS} 个文件；请减少选择后重试。` }
+  const totalChars = unique.reduce((sum, entry) => sum + entry.length, 0)
+  if (totalChars > STAGE_SELECTED_MAX_TOTAL_CHARS) return { ok: false, reason: '所选文件路径总长度过长；请减少选择后重试。' }
+  return { ok: true, paths: unique }
+}
+
 function redactRemoteUrl(value) {
   return String(value || '').split(/(\r?\n)/).map((line) => {
     if (!line || /^\r?$/.test(line)) return line
@@ -62,6 +81,13 @@ class RepositoryService {
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
   unstage(path) { return isPath(path) ? this.run(['restore', '--staged', '--', path], 'Unstage file', 'user') : Promise.resolve(this.invalid('Unstage file', 'Invalid file path.')) }
   stageAll() { return this.run(['add', '-A'], 'Stage all changes', 'user') }
+  // 批量暂存：一次 git add -- 传入全部所选路径（-- 必须存在，以正确处理
+  // 以连字符开头的文件名）。校验失败也会生成一条用户操作记录，但不会执行任何 Git 命令。
+  stageSelected(paths) {
+    const normalized = normalizeStagePaths(paths)
+    if (!normalized.ok) return Promise.resolve(this.invalid('Stage selected files', normalized.reason))
+    return this.run(['add', '--', ...normalized.paths], 'Stage selected files', 'user')
+  }
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }

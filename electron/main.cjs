@@ -47,6 +47,7 @@ ipcMain.handle('git:operate', async (_event, action, payload = {}) => {
   if (action === 'stage') execution = await repository.stage(payload.path)
   else if (action === 'unstage') execution = await repository.unstage(payload.path)
   else if (action === 'stageAll') execution = await repository.stageAll()
+  else if (action === 'stageSelected') execution = await repository.stageSelected(payload.paths)
   else if (action === 'unstageAll') execution = await repository.unstageAll()
   else if (action === 'commit') execution = await repository.commit(payload.message)
   else execution = repository.invalid('Unknown operation', 'Invalid Git operation or input.')
