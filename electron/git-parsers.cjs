@@ -37,8 +37,13 @@ function parseBranches(raw) {
 
 function parseCommits(raw) {
   return raw.split('\n').filter(Boolean).map((line) => {
-    const [hash, parents, subject, author, authoredAt] = line.split('\x1f')
-    return { hash, parents: parents ? parents.split(' ') : [], subject, author, authoredAt }
+    const values = line.split('\x1f')
+    if (values.length === 5) {
+      const [hash, parents, subject, author, authoredAt] = values
+      return { hash, parents: parents ? parents.split(' ') : [], subject, author, authoredAt }
+    }
+    const [hash, shortHash, parents, subject, author, authoredAt, refs] = values
+    return { hash, shortHash: shortHash || hash?.slice(0, 7), parents: parents ? parents.split(' ') : [], subject, author, authoredAt, refs: refs ? refs.split(',').map((ref) => ref.trim()).filter(Boolean) : [] }
   })
 }
 

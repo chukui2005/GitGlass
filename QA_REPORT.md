@@ -1,5 +1,11 @@
 # GitGlass V0.4 发布验收报告
 
+## V0.5 History & Review Lens
+
+真实 Git 集成测试构造三次提交和一次重命名，验证提交详情、两提交 argv 顺序、`--follow` 文件历史、非法 SHA/路径阻断、1 MiB Diff 截断和所有 V0.5 记录均为 background。Electron 截图使用独立的 `D:\GitGlass-v05-sandbox`：其中含三次提交、`before.txt` 到长文件名的重命名、长主题和未暂存改动。
+
+截图路径：`output/history-v05-1440.png`（提交 Diff）、`output/history-v05-1280.png`（两提交比较）、`output/history-v05-1024.png`（文件历史）和 `output/workspace-v05-1440.png`（V0.4 工作区入口）。
+
 **结论：通过**
 **验收范围：** Command Ledger、Branch Workspace 和 Remote Sync Workspace。
 

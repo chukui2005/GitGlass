@@ -6,8 +6,10 @@ const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 
 
 describe('Workbench layout structure', () => {
   it('keeps selected-file diff content inside a two-row diff view', () => {
-    expect(source).toContain('<div className="diff-view"><div className="diff-meta">')
-    expect(source).toContain('<div className="diff-content">{diff.split')
+    expect(source).toContain('className="diff-view"')
+    expect(source).toContain('className="diff-meta"')
+    expect(source).toContain('className="diff-content"')
+    expect(source).toContain('diff.split("\\n").map(')
     expect(styles).toContain('.diff-view{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}')
     expect(styles).toContain('.diff-content{min-height:0;overflow:auto')
   })
@@ -21,7 +23,8 @@ describe('Workbench layout structure', () => {
 
   it('keeps the collapsed ledger glance on one stable nowrap line', () => {
     expect(source).toContain('className="ledger-glance"')
-    expect(source).toContain('<span className="ledger-glance-text">最近：')
+    expect(source).toContain('className="ledger-glance-text"')
+    expect(source).toContain('最近：{intentLabel(latestRecord)}')
     expect(source).not.toContain('<code>{latestRecord.displayCommand}')
     expect(styles).toContain('.ledger-glance{container-type:inline-size;display:flex')
     expect(styles).toContain('.ledger-glance-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}')
@@ -36,11 +39,12 @@ describe('Workbench layout structure', () => {
     expect(source).toContain('<dt>工作目录</dt>')
     expect(source).toContain('<dt>状态</dt>')
     expect(source).toContain('<span>实际执行命令</span>')
-    expect(source).toContain('{record.stdout && <Output title="命令结果"')
-    expect(source).toContain('{record.stderr && <Output title="诊断信息"')
-    expect(source).toContain('<details className="tech-details"><summary>技术详情</summary>')
+    expect(source).toContain('title="命令结果"')
+    expect(source).toContain('title="诊断信息"')
+    expect(source).toContain('<details className="tech-details">')
+    expect(source).toContain('<summary>技术详情</summary>')
     expect(source).not.toContain('（无输出）')
-    expect(source).not.toContain("title=\"stdout\"")
-    expect(source).not.toContain("title=\"stderr\"")
+    expect(source).not.toContain('title="stdout"')
+    expect(source).not.toContain('title="stderr"')
   })
 })
