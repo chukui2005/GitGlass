@@ -14,6 +14,8 @@ const intentText = {
   'Create commit': '创建提交',
   'Read local branches': '读取本地分支',
   'Read recent commits': '读取提交历史',
+  'Verify history commit': '校验提交存在',
+  'Verify tracked history file': '校验文件是否被跟踪',
   'Read commit detail and statistics': '读取提交详情',
   'Read commit changed files': '读取提交改动文件',
   'Read commit diff': '读取提交差异',
