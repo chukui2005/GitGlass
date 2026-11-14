@@ -45,6 +45,8 @@ import {
 import { BrandMark } from "./brand-mark.jsx";
 import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
+import { resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
+import { commandAvailability } from "./command-palette-model.js";
 import "./styles.css";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
@@ -641,6 +643,7 @@ function CommitInspector({
   onMessage,
   onOperate,
   preview,
+  platform,
 }) {
   const commitHint = !staged.length
     ? "先暂存至少一个文件，才能创建提交。"
@@ -688,10 +691,12 @@ function CommitInspector({
         className="primary-action"
         disabled={!staged.length || !message.trim() || loading}
         onClick={() => onOperate("commit", { message })}
+        title={`${shortcutLabel("Enter", platform)} 提交`}
+        aria-keyshortcuts={isDarwin ? "Meta+Enter" : "Control+Enter"}
       >
         提交 {staged.length || ""}
       </button>
-      {commitHint && <p className="inspector-hint">{commitHint}</p>}
+      <p className="inspector-hint">{commitHint || `${shortcutLabel("Enter", platform)} 提交`}</p>
       <div className="operation-preview">
         <span>下一条命令</span>
         <code>{preview}</code>
@@ -797,7 +802,7 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
   );
 }
 
-function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total }) {
+function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total, shortcut }) {
   return (
     <div className="history-search">
       <MagnifyingGlass size={14} aria-hidden="true" />
@@ -808,8 +813,9 @@ function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total 
         autoComplete="off"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="搜索提交信息、作者名或短 SHA…（Ctrl+K 聚焦）"
+        placeholder={`搜索提交信息、作者名或短 SHA…（${shortcut} 聚焦）`}
         aria-label="搜索提交历史"
+        aria-keyshortcuts={isDarwin ? "Meta+F" : "Control+F"}
       />
       {value && (
         <button
@@ -952,6 +958,113 @@ function CopyButton({ value, label }) {
   );
 }
 
+function CommandPalette({ commands, platform, onClose, onExecute }) {
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef(null);
+  const dialogRef = useRef(null);
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return commands;
+    return commands.filter((command) =>
+      `${command.label} ${command.keywords || ""}`.toLowerCase().includes(normalized),
+    );
+  }, [commands, query]);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    setActiveIndex((index) => Math.min(index, Math.max(filtered.length - 1, 0)));
+  }, [filtered.length]);
+  function execute(command) {
+    if (!command?.available) return;
+    onExecute(command);
+  }
+  function onKeyDown(event) {
+    // The modal owns every key while open; no page-level shortcut may leak through.
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!filtered.length) return;
+      setActiveIndex((index) => (event.key === "ArrowDown" ? (index + 1) % filtered.length : (index - 1 + filtered.length) % filtered.length));
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      execute(filtered[activeIndex]);
+      return;
+    }
+    if (event.key === "Tab") {
+      const focusable = [...(dialogRef.current?.querySelectorAll('input, button:not(:disabled)') || [])];
+      if (!focusable.length) return;
+      const current = focusable.indexOf(document.activeElement);
+      const next = event.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : (current === focusable.length - 1 ? 0 : current + 1);
+      event.preventDefault();
+      focusable[next].focus();
+    }
+  }
+  return (
+    <div className="palette-backdrop" role="presentation">
+      <section
+        className="command-palette"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="command-palette-title"
+        onKeyDown={onKeyDown}
+      >
+        <div className="palette-heading">
+          <div>
+            <span>快捷操作</span>
+            <h2 id="command-palette-title">命令面板</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭命令面板" title="关闭（Esc）">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="palette-search">
+          <MagnifyingGlass size={17} aria-hidden="true" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
+            placeholder="搜索操作…"
+            aria-label="搜索命令"
+            autoComplete="off"
+          />
+          <kbd>{shortcutLabel("K", platform)}</kbd>
+        </div>
+        <div className="palette-list" role="listbox" aria-label="可用命令">
+          {filtered.length ? filtered.map((command, index) => (
+            <button
+              type="button"
+              role="option"
+              key={command.id}
+              className={`palette-command ${index === activeIndex ? "active" : ""}`}
+              aria-selected={index === activeIndex}
+              disabled={!command.available}
+              onMouseMove={() => setActiveIndex(index)}
+              onClick={() => execute(command)}
+            >
+              <span className="palette-command-main">
+                <strong>{command.label}</strong>
+                {!command.available && <small>{command.reason}</small>}
+              </span>
+              {command.shortcut && <kbd>{command.shortcut}</kbd>}
+            </button>
+          )) : <p className="palette-empty">没有匹配的操作。</p>}
+        </div>
+        <p className="palette-hint">↑↓ 选择　Enter 执行　Esc 关闭</p>
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [historyMode, setHistoryMode] = useState(false);
   const [historySelected, setHistorySelected] = useState(null);
@@ -985,11 +1098,14 @@ function App() {
   const [records, setRecords] = useState([]);
   const [ledgerFilter, setLedgerFilter] = useState("user");
   const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusedOperationId, setFocusedOperationId] = useState(null);
   const [newBranch, setNewBranch] = useState("");
   const refreshSequence = useRef(0);
   const refreshCycles = useRef(new Map());
   const historySearchRef = useRef(null);
+  const paletteTriggerRef = useRef(null);
+  const paletteReturnFocusRef = useRef(null);
   const detailCache = useRef(new Map());
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
@@ -1037,22 +1153,6 @@ function App() {
     () => filterCommits(commits, historySearch),
     [commits, historySearch],
   );
-  useEffect(() => {
-    if (!historyMode) return undefined;
-    const onKeyDown = (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        historySearchRef.current?.focus();
-        historySearchRef.current?.select();
-      } else if (event.key === "Escape") {
-        // Esc 先清空历史搜索；搜索为空时返回工作区。
-        if (historySearch) setHistorySearch("");
-        else setHistoryMode(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [historyMode, historySearch]);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
   useEffect(() => {
@@ -1548,6 +1648,74 @@ function App() {
     await refreshAll();
     setLoading(false);
   }
+  const shortcutPlatform = navigator.userAgent;
+  const commandShortcut = shortcutLabel("K", shortcutPlatform);
+  const historySearchShortcut = shortcutLabel("F", shortcutPlatform);
+  const ledgerShortcut = shortcutLabel("J", shortcutPlatform);
+  function openCommandPalette(trigger = document.activeElement) {
+    paletteReturnFocusRef.current = trigger instanceof HTMLElement ? trigger : paletteTriggerRef.current;
+    setPaletteOpen(true);
+  }
+  function closeCommandPalette() {
+    setPaletteOpen(false);
+    requestAnimationFrame(() => paletteReturnFocusRef.current?.focus?.());
+  }
+  function escapeCurrentContext() {
+    if (safetyPlan) { setSafetyPlan(null); return; }
+    if (branchPlan) { setBranchPlan(null); return; }
+    if (remotePlan) { setRemotePlan(null); return; }
+    if (recoveryOpen) { setRecoveryOpen(false); return; }
+    if (historyResult || historyFile) { setHistoryResult(null); setHistoryFile(null); return; }
+    if (historyMode) {
+      if (historySearch) setHistorySearch("");
+      else setHistoryMode(false);
+    }
+  }
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const action = resolveShortcut(event, {
+        paletteOpen,
+        historyMode,
+        loading,
+        hasStaged: staged.length > 0,
+        hasMessage: Boolean(message.trim()),
+      });
+      if (!action) return;
+      event.preventDefault();
+      if (action === "open-palette") openCommandPalette(document.activeElement);
+      else if (action === "close-palette") closeCommandPalette();
+      else if (action === "focus-history-search") {
+        historySearchRef.current?.focus();
+        historySearchRef.current?.select();
+      } else if (action === "toggle-ledger") setLedgerOpen((value) => !value);
+      else if (action === "commit") operate("commit", { message });
+      else if (action === "escape") escapeCurrentContext();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [paletteOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historySearch]);
+  const paletteCommands = useMemo(() => {
+    const availability = commandAvailability({
+      hasRepository: Boolean(repo),
+      loading,
+      historyMode,
+      selectedArea: selected?.area,
+    });
+    return [
+      { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: chooseRepo },
+      { id: "refresh", label: "刷新工作区", keywords: "刷新 状态", ...availability.refresh, run: refreshFromUser },
+      { id: "workspace", label: "前往工作区", keywords: "工作区 文件", ...availability.workspace, run: () => setHistoryMode(false) },
+      { id: "history", label: "前往历史审查", keywords: "历史 提交", ...availability.history, run: () => setHistoryMode(true) },
+      { id: "ledger", label: ledgerOpen ? "收起命令账本" : "展开命令账本", shortcut: ledgerShortcut, keywords: "账本 命令", ...availability.ledger, run: () => setLedgerOpen((value) => !value) },
+      { id: "history-search", label: "聚焦历史搜索", shortcut: historySearchShortcut, keywords: "历史 搜索", ...availability.historySearch, run: () => { historySearchRef.current?.focus(); historySearchRef.current?.select(); } },
+      { id: "stage-selected", label: "暂存当前选中文件", keywords: "暂存 文件", ...availability.stageSelected, run: () => selected?.area === "unstaged" && operate("stage", { path: selected.path }) },
+    ];
+  }, [repo, loading, historyMode, ledgerOpen, selected, commandShortcut, ledgerShortcut, historySearchShortcut]);
+  function executePaletteCommand(command) {
+    if (!command.available) return;
+    closeCommandPalette();
+    command.run();
+  }
   const inspector = safetyPlan ? (
     <SafetyContext
       plan={safetyPlan}
@@ -1599,6 +1767,7 @@ function App() {
       onMessage={setMessage}
       onOperate={operate}
       preview={preview}
+      platform={shortcutPlatform}
     />
   );
   const detailSubject = historyDetail?.subject || historySelected?.subject || "";
@@ -1670,6 +1839,18 @@ function App() {
           )}
         </div>
         <div className="top-actions">
+          <button
+            type="button"
+            className="top-action"
+            ref={paletteTriggerRef}
+            onClick={(event) => openCommandPalette(event.currentTarget)}
+            title={`命令面板（${commandShortcut}）`}
+            aria-haspopup="dialog"
+            aria-keyshortcuts={isDarwin ? "Meta+K" : "Control+K"}
+          >
+            <MagnifyingGlass size={15} />
+            命令
+          </button>
           <button type="button" className="top-action" onClick={() => setHistoryMode(false)} aria-pressed={!historyMode}>工作区</button>
           <button type="button" className="top-action" onClick={() => setHistoryMode(true)} aria-pressed={historyMode}>历史审查</button>
           <button
@@ -1796,6 +1977,7 @@ function App() {
                       filtered={historyFilter.filtered}
                       matchCount={historyFilter.matches.length}
                       total={commits.length}
+                      shortcut={historySearchShortcut}
                     />
                   )}
                   <div className="commit-list">
@@ -2156,6 +2338,8 @@ function App() {
             className="ledger-title"
             onClick={() => setLedgerOpen(!ledgerOpen)}
             aria-expanded={ledgerOpen}
+            aria-keyshortcuts={isDarwin ? "Meta+J" : "Control+J"}
+            title={`${ledgerShortcut} 展开或收起命令账本`}
           >
             <TerminalWindow size={16} />
             <span>命令账本</span>
@@ -2276,6 +2460,14 @@ function App() {
           )}
         </div>
       </section>
+      {paletteOpen && (
+        <CommandPalette
+          commands={paletteCommands}
+          platform={shortcutPlatform}
+          onClose={closeCommandPalette}
+          onExecute={executePaletteCommand}
+        />
+      )}
     </main>
   );
 }
