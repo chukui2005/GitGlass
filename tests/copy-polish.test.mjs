@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from '../src/user-notices.js'
+import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from '../src/repository-refresh.js'
 
 const require = createRequire(import.meta.url)
 const { GitCommandService } = require('../electron/git-command-service.cjs')
@@ -64,11 +65,30 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(remote.suggestion).toContain('添加远程仓库')
   })
 
+  it('状态读取失败会使旧工作区失效：首次启动静默，已有仓库或显式打开时提示中文原因', () => {
+    const failed = { ok: false, path: 'D:/old-repo', error: '无法读取工作区状态。请确认仓库仍可访问后刷新。' }
+    const initial = resolveRepositoryRefresh(null, failed)
+    expect(initial).toMatchObject({ ok: false, clearRepository: true, notify: false, state: { branch: '', files: [] } })
+
+    const existing = resolveRepositoryRefresh('D:/old-repo', failed)
+    expect(existing).toMatchObject({ ok: false, clearRepository: true, notify: true, message: failed.error, state: { branch: '', files: [] } })
+
+    const opened = resolveRepositoryRefresh(null, failed, { notifyOnFailure: true })
+    expect(opened).toMatchObject({ ok: false, notify: true, message: failed.error })
+  })
+
+  it('loading 期间不会启动打开仓库或手动刷新，从而不改变仓库上下文', () => {
+    expect(canStartRepositoryContextOperation(true)).toBe(false)
+    expect(canStartRepositoryContextOperation(false)).toBe(true)
+  })
+
   it('目录选择、空状态与加载中的危险操作都有可见中文反馈和禁用保护', () => {
     expect(mainProcess).toContain('此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。')
     expect(renderer).toContain('工作区干净，没有待暂存的改动。')
     expect(renderer).toContain('没有已暂存的改动。')
     expect(renderer).toContain('disabled={loading}')
+    expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
+    expect(renderer).toContain('onClick={refreshFromUser}')
     expect(styles).toContain('button:disabled{cursor:not-allowed;pointer-events:none}')
     expect(styles).toContain('.row-action:disabled{color:#b6c0ca;opacity:.55}')
   })

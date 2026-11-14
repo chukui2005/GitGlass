@@ -44,6 +44,7 @@ import {
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
 import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
+import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import "./styles.css";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
@@ -1111,10 +1112,39 @@ function App() {
       }),
     );
   }
-  async function refreshAll(preference) {
+  function clearStaleRepositoryState(failure) {
+    setRepo(null);
+    setState(failure.state);
+    setSelected(null);
+    setDiff("");
+    setDiffMessage("");
+    setStageSelection(new Set());
+    setBranches([]);
+    setCommits([]);
+    setCommitsReason("");
+    setRemote(null);
+    setHistoryMode(false);
+    setHistorySelected(null);
+    setHistoryDetail(null);
+    setHistoryResult(null);
+    setHistoryFile(null);
+    setHistoryCompare({ base: null, target: null });
+    detailCache.current.clear();
+  }
+  async function refreshAll(preference, options) {
     const cycle = `refresh-${Date.now()}-${++refreshSequence.current}`;
     const next = await window.gitglass.getState();
-    if (!next.ok) return;
+    const resolved = resolveRepositoryRefresh(repo, next, options);
+    if (!resolved.ok) {
+      clearStaleRepositoryState(resolved);
+      if (resolved.notify) {
+        setLedgerOpen(true);
+        setLedgerFilter("background");
+        setNotice({ type: "error", text: resolved.message });
+      }
+      await refreshLedger(cycle);
+      return resolved;
+    }
     setRepo(next.path || repo);
     await applyState(next, preference, cycle);
     const [branchResult, commitResult, remoteResult] = await Promise.all([
@@ -1127,6 +1157,16 @@ function App() {
     setCommitsReason(commitResult.reason || "");
     setRemote(remoteResult);
     await refreshLedger(cycle);
+    return resolved;
+  }
+  async function refreshFromUser() {
+    if (!canStartRepositoryContextOperation(loading)) return;
+    setLoading(true);
+    try {
+      await refreshAll();
+    } finally {
+      setLoading(false);
+    }
   }
   async function loadDiff(file, cycle) {
     setSelected(file);
@@ -1269,28 +1309,48 @@ function App() {
     setLoading(false);
   }
   async function chooseRepo() {
-    const result = await window.gitglass.chooseRepository();
-    if (result.canceled) return;
-    if (!result.ok) {
+    if (!canStartRepositoryContextOperation(loading)) return;
+    setLoading(true);
+    try {
+      const result = await window.gitglass.chooseRepository();
+      if (result.canceled) return;
+      if (!result.ok) {
+        setLedgerOpen(true);
+        setLedgerFilter("background");
+        setNotice({ type: "error", text: result.message || GENERIC_GIT_FAILURE });
+        await refreshLedger();
+        return;
+      }
+      const opened = resolveRepositoryRefresh(repo, result.state, { notifyOnFailure: true });
+      if (!opened.ok) {
+        clearStaleRepositoryState(opened);
+        setLedgerOpen(true);
+        setLedgerFilter("background");
+        setNotice({ type: "error", text: opened.message });
+        await refreshLedger();
+        return;
+      }
+      setRepo(result.path);
+      // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
+      detailCache.current.clear();
+      setHistorySelected(null);
+      setHistoryDetail(null);
+      setHistoryResult(null);
+      setHistoryFile(null);
+      setHistoryCompare({ base: null, target: null });
+      setHistorySearch("");
+      // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
+      setStageSelection(new Set());
+      const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
+      if (refreshed.ok) setNotice({ type: "success", text: `已打开仓库：${result.path}` });
+    } catch {
       setLedgerOpen(true);
       setLedgerFilter("background");
-      setNotice({ type: "error", text: result.message || GENERIC_GIT_FAILURE });
+      setNotice({ type: "error", text: GENERIC_GIT_FAILURE });
       await refreshLedger();
-      return;
+    } finally {
+      setLoading(false);
     }
-    setRepo(result.path);
-    // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
-    detailCache.current.clear();
-    setHistorySelected(null);
-    setHistoryDetail(null);
-    setHistoryResult(null);
-    setHistoryFile(null);
-    setHistoryCompare({ base: null, target: null });
-    setHistorySearch("");
-    // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
-    setStageSelection(new Set());
-    await refreshAll();
-    setNotice({ type: "success", text: `已打开仓库：${result.path}` });
   }
   async function operate(action, payload = {}) {
     if (!repo || loading) return;
@@ -1621,7 +1681,7 @@ function App() {
             <Lifebuoy size={15} />
             恢复
           </button>
-          <button type="button" className="top-action" onClick={chooseRepo}>
+          <button type="button" className="top-action" onClick={chooseRepo} disabled={loading}>
             <FolderOpen size={15} />
             打开仓库
           </button>
@@ -1917,8 +1977,9 @@ function App() {
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => refreshAll()}
+                onClick={refreshFromUser}
                 aria-label="刷新状态"
+                disabled={loading}
               >
                 <ArrowClockwise size={15} />
               </button>
