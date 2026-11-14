@@ -11,19 +11,28 @@ function disabled(reason) {
 export function commandAvailability({ hasRepository, loading, historyMode, selectedArea }) {
   const busy = disabled("正在执行其他操作。");
   const needsRepository = disabled("请先打开仓库。");
+  if (loading) {
+    return {
+      openRepository: busy,
+      refresh: busy,
+      workspace: busy,
+      history: busy,
+      ledger: busy,
+      historySearch: busy,
+      stageSelected: busy,
+    };
+  }
   return {
-    openRepository: loading ? busy : enabled(),
-    refresh: !hasRepository ? needsRepository : loading ? busy : enabled(),
+    openRepository: enabled(),
+    refresh: !hasRepository ? needsRepository : enabled(),
     workspace: enabled(),
     history: hasRepository ? enabled() : needsRepository,
     ledger: enabled(),
     historySearch: historyMode ? enabled() : disabled("仅在历史审查中可用。"),
     stageSelected: !hasRepository
       ? needsRepository
-      : loading
-        ? busy
-        : selectedArea === "unstaged"
-          ? enabled()
-          : disabled("请先选择一个未暂存文件。"),
+      : selectedArea === "unstaged"
+        ? enabled()
+        : disabled("请先选择一个未暂存文件。"),
   };
 }

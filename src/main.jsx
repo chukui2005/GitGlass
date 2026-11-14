@@ -45,7 +45,7 @@ import {
 import { BrandMark } from "./brand-mark.jsx";
 import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
-import { resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
+import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
 import "./styles.css";
 
@@ -1035,6 +1035,7 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
             onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
             placeholder="搜索操作…"
             aria-label="搜索命令"
+            name="command-search"
             autoComplete="off"
           />
           <kbd>{shortcutLabel("K", platform)}</kbd>
@@ -1652,6 +1653,14 @@ function App() {
   const commandShortcut = shortcutLabel("K", shortcutPlatform);
   const historySearchShortcut = shortcutLabel("F", shortcutPlatform);
   const ledgerShortcut = shortcutLabel("J", shortcutPlatform);
+  const modalOpen = isBlockingContextOpen({
+    paletteOpen,
+    safetyPlan,
+    branchPlan,
+    remotePlan,
+    recoveryOpen,
+  });
+  const blockingContextOpen = modalOpen;
   function openCommandPalette(trigger = document.activeElement) {
     paletteReturnFocusRef.current = trigger instanceof HTMLElement ? trigger : paletteTriggerRef.current;
     setPaletteOpen(true);
@@ -1675,6 +1684,7 @@ function App() {
     const onKeyDown = (event) => {
       const action = resolveShortcut(event, {
         paletteOpen,
+        blockingContextOpen,
         historyMode,
         loading,
         hasStaged: staged.length > 0,
@@ -1693,7 +1703,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [paletteOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historySearch]);
+  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historySearch]);
   const paletteCommands = useMemo(() => {
     const availability = commandAvailability({
       hasRepository: Boolean(repo),
@@ -1847,6 +1857,7 @@ function App() {
             title={`命令面板（${commandShortcut}）`}
             aria-haspopup="dialog"
             aria-keyshortcuts={isDarwin ? "Meta+K" : "Control+K"}
+            disabled={loading || blockingContextOpen}
           >
             <MagnifyingGlass size={15} />
             命令
