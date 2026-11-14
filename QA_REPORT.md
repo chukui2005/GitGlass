@@ -37,7 +37,7 @@ vite v8.3.7 building client environment for production...
 
 ## V0.5.6 历史查询与筛选
 
-`tests/history-query.integration.test.cjs` 创建含两位作者、两个本地分支、两个文件及特殊字符提交说明的真实临时仓库。它验证默认 200 条查询上限、关键词/作者/分支/文件路径及四条件 AND 的真实 argv，并确认非法字段、伪造分支、路径穿越和未跟踪路径被拒绝且不执行 `git log`。截图验收文件位于已忽略的 `output/v0-5-6-history-filter-1280.png` 与 `output/v0-5-6-history-no-results-1024.png`。
+`tests/history-query.integration.test.cjs` 创建含两位作者、两个本地分支、两个文件及特殊字符提交说明的真实临时仓库。它验证默认读取 80 条、筛选查询最多 200 条、关键词/作者/分支/文件路径及四条件 AND 的真实 argv，并确认非法字段、伪造分支、路径穿越和未跟踪路径被拒绝且不执行 `git log`。`tests/history-workspace-layout.test.cjs` 在真实 Chromium 中以 1024px、1280px 测量完整历史工作台，断言 document、顶栏与工作台均无横向溢出。截图验收文件位于已忽略的 `output/v0-5-6-history-filter-1280.png` 与 `output/v0-5-6-history-no-results-1024.png`。
 
 1. 写入并修改 `note.txt`，读取真实 `git diff`；
 2. 使用 `git add -- note.txt` 暂存；

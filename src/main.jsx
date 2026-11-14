@@ -1913,37 +1913,48 @@ function App() {
             className="top-action"
             ref={paletteTriggerRef}
             onClick={(event) => openCommandPalette(event.currentTarget)}
+            aria-label="命令面板"
             title={`命令面板（${commandShortcut}）`}
             aria-haspopup="dialog"
             aria-keyshortcuts={isDarwin ? "Meta+K" : "Control+K"}
             disabled={loading || blockingContextOpen}
           >
             <MagnifyingGlass size={15} />
-            命令
+            <span className="top-action-label">命令</span>
           </button>
-          <button type="button" className="top-action" onClick={() => setHistoryMode(false)} aria-pressed={!historyMode}>工作区</button>
-          <button type="button" className="top-action" onClick={() => setHistoryMode(true)} aria-pressed={historyMode}>历史审查</button>
+          <button type="button" className="top-action" onClick={() => setHistoryMode(false)} aria-label="工作区" title="工作区" aria-pressed={!historyMode}>
+            <File size={15} aria-hidden="true" />
+            <span className="top-action-label">工作区</span>
+          </button>
+          <button type="button" className="top-action" onClick={() => setHistoryMode(true)} aria-label="历史审查" title="历史审查" aria-pressed={historyMode}>
+            <GitCommit size={15} aria-hidden="true" />
+            <span className="top-action-label">历史审查</span>
+          </button>
           <button
             type="button"
             className="top-action"
+            aria-label="恢复"
+            title="恢复"
             disabled={!repo || loading}
             onClick={openRecovery}
           >
             <Lifebuoy size={15} />
-            恢复
+            <span className="top-action-label">恢复</span>
           </button>
-          <button type="button" className="top-action" onClick={chooseRepo} disabled={loading}>
+          <button type="button" className="top-action" onClick={chooseRepo} aria-label="打开仓库" title="打开仓库" disabled={loading}>
             <FolderOpen size={15} />
-            打开仓库
+            <span className="top-action-label">打开仓库</span>
           </button>
           <button
             type="button"
             className="sync-action"
+            aria-label="同步远程状态"
+            title="同步远程状态"
             disabled={!repo || loading || !remote?.remotes?.length}
             onClick={() => requestRemote("fetch")}
           >
             <ArrowClockwise size={15} />
-            同步
+            <span className="top-action-label">同步</span>
           </button>
         </div>
       </header>

@@ -79,7 +79,7 @@ Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout a
 
 ## V0.5.6 history query boundary
 
-`history:query(filters)` accepts only `{ keyword, author, branch, filePath }`; unknown keys, non-strings, NUL/control characters and overlong text are rejected in the main process and recorded as a background local validation rejection. `branch` is rechecked against `git branch --format=…`; `filePath` must be a repository-relative safe path and pass `git ls-files --error-unmatch -- <path>`. Only then does `RepositoryService` construct `git log -200 --date=iso-strict --fixed-strings --regexp-ignore-case …`; it never accepts renderer-supplied argv or a command string, never uses `--all`, and never exposes remote branch or rewrite operations. Keyword text is passed to fixed-string grep; author names and emails are both regex-escaped and passed to the Git-side `--author` filter.
+`history:query(filters)` accepts only `{ keyword, author, branch, filePath }`; unknown keys, non-strings, NUL/control characters and overlong text are rejected in the main process and recorded as a background local validation rejection. `branch` is rechecked against `git branch --format=…`; `filePath` must be a repository-relative safe path and pass `git ls-files --error-unmatch -- <path>`. Only then does `RepositoryService` construct fixed-structure `git log -200 --date=iso-strict --regexp-ignore-case …`; keyword-only queries add `--fixed-strings`, while queries containing an author use Git's regex matcher with both author and keyword safely escaped as literals. It never accepts renderer-supplied argv or a command string, never uses `--all`, and never exposes remote branch or rewrite operations.
 
 ## V0.4 Safety & Recovery boundary
 
