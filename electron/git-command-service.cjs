@@ -40,12 +40,13 @@ class GitCommandService {
    * the rejection so it can never be mistaken for an executed Git command.
    */
   recordRejection({ argv = [], intent, source, cwd, stderr = '' }) {
+    const { userMessage = '' } = arguments[0] || {}
     const note = '本地校验拒绝，未执行 Git 命令'
     const record = {
       id: this.idFactory(), operationId: this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: note, command: note,
       cwd: cwd || '', startedAt: this.now(), endedAt: this.now(),
-      stdout: '', stderr, exitCode: null, ok: false, outputTruncated: false, rejected: true,
+      stdout: '', stderr, userMessage, exitCode: null, ok: false, outputTruncated: false, rejected: true,
     }
     this.records.unshift(Object.freeze({ ...record }))
     if (this.records.length > this.maxRecords) this.records.length = this.maxRecords

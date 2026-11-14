@@ -10,11 +10,20 @@ const commandService = new GitCommandService()
 const repository = new RepositoryService(commandService, () => repoPath)
 
 async function chooseRepository() {
-  const choice = await dialog.showOpenDialog(mainWindow, { title: 'Open local Git repository', properties: ['openDirectory'] })
+  const choice = await dialog.showOpenDialog(mainWindow, { title: '打开本地 Git 仓库', properties: ['openDirectory'] })
   if (choice.canceled || !choice.filePaths[0]) return { canceled: true }
   const candidate = path.resolve(choice.filePaths[0])
   const root = await commandService.run({ argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background', cwd: candidate })
-  if (!root.ok) return { ok: false, error: root.stderr || 'This folder is not a Git repository.', execution: root }
+  if (!root.ok) {
+    const notRepository = /not a git repository|not a git repo/i.test(root.stderr || '')
+    return {
+      ok: false,
+      message: notRepository
+        ? '此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。'
+        : '无法读取仓库根目录。请确认文件夹可访问，并选择包含 .git 目录的项目文件夹。',
+      execution: root,
+    }
+  }
   repoPath = root.stdout.trim()
   return { ok: true, path: repoPath, state: await repository.state(), execution: root }
 }
