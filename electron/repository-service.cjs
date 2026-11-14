@@ -163,13 +163,17 @@ class RepositoryService {
       const tracked = await this.run(['ls-files', '--error-unmatch', '--', filters.filePath], 'Verify tracked history query file')
       if (!tracked.ok) return { ok: false, commits: [], reason: '只能按当前已跟踪的文件筛选历史。请重新选择文件或清除文件条件。', filters, record: tracked }
     }
-    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--date=iso-strict', '--fixed-strings', '--regexp-ignore-case', HISTORY_PRETTY]
-    if (filters.keyword) argv.push(`--grep=${filters.keyword}`)
+    const hasAuthor = Boolean(filters.author)
+    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
+    // --fixed-strings also changes --author semantics. With an author filter,
+    // escape both patterns for Git's basic-regexp matcher instead.
+    if (!hasAuthor) argv.push('--fixed-strings')
+    if (filters.keyword) argv.push(`--grep=${hasAuthor ? escapeGitRegexLiteral(filters.keyword) : filters.keyword}`)
     // git log --author is regex-based; escape every metacharacter so user text
     // remains a literal author/name fragment while argv remains fixed-structure.
     // Git's --author is regex-based, including email identities. Escape every
     // metacharacter so both names and emails remain literal Git-side filters.
-    if (filters.author) argv.push(`--author=${escapeGitRegexLiteral(filters.author)}`)
+    if (hasAuthor) argv.push(`--author=${escapeGitRegexLiteral(filters.author)}`)
     if (filters.branch) argv.push(`refs/heads/${filters.branch}`)
     if (filters.filePath) argv.push('--', filters.filePath)
     const record = await this.run(argv, 'Query commit history')
