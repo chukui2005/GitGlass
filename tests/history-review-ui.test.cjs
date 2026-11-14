@@ -6,15 +6,15 @@ const service = fs.readFileSync(path.join(__dirname, '..', 'electron', 'reposito
 const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8')
 
 describe('V0.5.2 history review polish UI structure', () => {
-  it('keeps a local search input with match count, clear action, and Ctrl+K hint', () => {
+  it('keeps a local search input with match count, clear action, and Ctrl/Cmd+F hint', () => {
     expect(source).toContain('aria-label="搜索提交历史"')
-    expect(source).toContain('Ctrl+K')
+    expect(source).toContain('historySearchShortcut')
     expect(source).toContain('匹配 ${matchCount} / ${total}')
     expect(source).toContain('清除搜索')
     expect(source).toContain('纯前端过滤')
   })
-  it('binds Ctrl+K to search focus and Esc to clear-or-exit', () => {
-    expect(source).toContain('event.key.toLowerCase() === "k"')
+  it('binds Ctrl/Cmd+F to search focus and preserves Esc clear-or-exit', () => {
+    expect(source).toContain('action === "focus-history-search"')
     expect(source).toContain('historySearchRef.current?.focus()')
     expect(source).toContain('event.key === "Escape"')
     expect(source).toContain('setHistorySearch("")')
