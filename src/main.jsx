@@ -36,7 +36,6 @@ import {
   binaryDiffPattern,
   changeKindLetter,
   changeOf,
-  filterCommits,
   fullLocalTime,
   isHeadCommit,
   orderComparePair,
@@ -802,7 +801,7 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
   );
 }
 
-function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total, shortcut }) {
+function HistorySearch({ value, onChange, onSubmit, inputRef, total, shortcut, loading }) {
   return (
     <div className="history-search">
       <MagnifyingGlass size={14} aria-hidden="true" />
@@ -813,6 +812,7 @@ function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total,
         autoComplete="off"
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); onSubmit(); } }}
         placeholder={`搜索提交信息、作者名或短 SHA…（${shortcut} 聚焦）`}
         aria-label="搜索提交历史"
         aria-keyshortcuts={isDarwin ? "Meta+F" : "Control+F"}
@@ -829,10 +829,35 @@ function HistorySearch({ value, onChange, inputRef, filtered, matchCount, total,
         </button>
       )}
       <span className="search-count" aria-live="polite">
-        {filtered ? `匹配 ${matchCount} / ${total}` : `共 ${total} 个提交`}
+        {loading ? "正在查询…" : `共 ${total} 个提交`}
       </span>
     </div>
   );
+}
+
+function HistoryFilters({ draft, branches, currentBranch, selectedFile, loading, dirty, onChange, onApply, onReset, onUseSelected }) {
+  const canUseSelected = Boolean(selectedFile && selectedFile.status !== "added");
+  return <section className="branch-list history-filters" aria-label="历史筛选条件">
+    <div className="section-label"><span>历史范围与筛选</span></div>
+    <label>本地分支
+      <select name="history-branch" value={draft.branch} onChange={(event) => onChange("branch", event.target.value)} disabled={loading}>
+        <option value="">当前分支{currentBranch ? `（${currentBranch}）` : ""}</option>
+        {branches.filter((branch) => !branch.current).map((branch) => <option key={branch.name} value={branch.name}>{branch.name}</option>)}
+      </select>
+    </label>
+    <label>作者
+      <input name="history-author" autoComplete="off" value={draft.author} onChange={(event) => onChange("author", event.target.value)} placeholder="作者名或邮箱" disabled={loading} />
+    </label>
+    <label>文件路径
+      <input name="history-file-path" autoComplete="off" value={draft.filePath} onChange={(event) => onChange("filePath", event.target.value)} placeholder="当前已跟踪文件" disabled={loading} />
+    </label>
+    <button type="button" className="text-action" disabled={!canUseSelected || loading} onClick={onUseSelected}>使用当前选中文件</button>
+    {dirty && <p className="filter-dirty" role="status">筛选条件已修改，点击应用筛选后查询。</p>}
+    <div className="filter-actions">
+      <button type="button" className="primary-action" disabled={loading} onClick={onApply}>应用筛选</button>
+      <button type="button" className="secondary-action" disabled={loading} onClick={onReset}>重置</button>
+    </div>
+  </section>
 }
 
 function CommitRow({ commit, selected, compareRole, onSelect, onCompare, busy = false }) {
@@ -1073,7 +1098,8 @@ function App() {
   const [historyResult, setHistoryResult] = useState(null);
   const [historyCompare, setHistoryCompare] = useState({ base: null, target: null });
   const [historyFile, setHistoryFile] = useState(null);
-  const [historySearch, setHistorySearch] = useState("");
+  const [historyDraft, setHistoryDraft] = useState({ keyword: "", author: "", branch: "", filePath: "" });
+  const [historyApplied, setHistoryApplied] = useState(null);
   const [commitsReason, setCommitsReason] = useState("");
   const [repo, setRepo] = useState(null);
   const [state, setState] = useState({ branch: "", files: [], ok: true });
@@ -1105,6 +1131,7 @@ function App() {
   const refreshSequence = useRef(0);
   const refreshCycles = useRef(new Map());
   const historySearchRef = useRef(null);
+  const historyQuerySequence = useRef(0);
   const paletteTriggerRef = useRef(null);
   const paletteReturnFocusRef = useRef(null);
   const detailCache = useRef(new Map());
@@ -1149,11 +1176,7 @@ function App() {
   useEffect(() => {
     refreshAll();
   }, []);
-  // 历史搜索为纯前端过滤：输入不会触发额外 Git 命令。
-  const historyFilter = useMemo(
-    () => filterCommits(commits, historySearch),
-    [commits, historySearch],
-  );
+  const historyFiltersDirty = JSON.stringify(historyDraft) !== JSON.stringify(historyApplied || { keyword: "", author: "", branch: "", filePath: "" });
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
   useEffect(() => {
@@ -1223,6 +1246,8 @@ function App() {
     setBranches([]);
     setCommits([]);
     setCommitsReason("");
+    setHistoryDraft({ keyword: "", author: "", branch: "", filePath: "" });
+    setHistoryApplied(null);
     setRemote(null);
     setHistoryMode(false);
     setHistorySelected(null);
@@ -1248,14 +1273,14 @@ function App() {
     }
     setRepo(next.path || repo);
     await applyState(next, preference, cycle);
+    const querySequence = ++historyQuerySequence.current;
     const [branchResult, commitResult, remoteResult] = await Promise.all([
       window.gitglass.getBranches(),
-      window.gitglass.getCommits(),
+      historyApplied ? window.gitglass.queryHistory(historyApplied) : window.gitglass.getCommits(),
       window.gitglass.getRemoteOverview(),
     ]);
     setBranches(branchResult.branches || []);
-    setCommits(commitResult.commits || []);
-    setCommitsReason(commitResult.reason || "");
+    if (querySequence === historyQuerySequence.current) applyHistoryQueryResult(commitResult);
     setRemote(remoteResult);
     await refreshLedger(cycle);
     return resolved;
@@ -1267,6 +1292,36 @@ function App() {
       await refreshAll();
     } finally {
       setLoading(false);
+    }
+  }
+  function applyHistoryQueryResult(result) {
+    const nextCommits = result.commits || [];
+    const hashes = new Set(nextCommits.map((commit) => commit.hash));
+    setCommits(nextCommits);
+    setCommitsReason(result.reason || "");
+    if (historySelected && !hashes.has(historySelected.hash)) {
+      setHistorySelected(null); setHistoryDetail(null); setHistoryResult(null); setHistoryFile(null);
+    }
+    setHistoryCompare((previous) => ({
+      base: previous.base && hashes.has(previous.base.hash) ? previous.base : null,
+      target: previous.target && hashes.has(previous.target.hash) ? previous.target : null,
+    }));
+    detailCache.current.clear();
+  }
+  async function applyHistoryFilters(next = historyDraft, reset = false) {
+    if (loading || !repo) return;
+    const filters = reset ? { keyword: "", author: "", branch: "", filePath: "" } : { ...next };
+    setLoading(true);
+    const sequence = ++historyQuerySequence.current;
+    try {
+      const result = reset ? await window.gitglass.getCommits() : await window.gitglass.queryHistory(filters);
+      if (sequence !== historyQuerySequence.current) return;
+      setHistoryApplied(reset ? null : filters);
+      setHistoryDraft(filters);
+      applyHistoryQueryResult(result);
+      await refreshLedger();
+    } finally {
+      if (sequence === historyQuerySequence.current) setLoading(false);
     }
   }
   async function loadDiff(file, cycle) {
@@ -1439,7 +1494,8 @@ function App() {
       setHistoryResult(null);
       setHistoryFile(null);
       setHistoryCompare({ base: null, target: null });
-      setHistorySearch("");
+      setHistoryDraft({ keyword: "", author: "", branch: "", filePath: "" });
+      setHistoryApplied(null);
       // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
       setStageSelection(new Set());
       const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
@@ -1676,7 +1732,7 @@ function App() {
     if (recoveryOpen) { setRecoveryOpen(false); return; }
     if (historyResult || historyFile) { setHistoryResult(null); setHistoryFile(null); return; }
     if (historyMode) {
-      if (historySearch) setHistorySearch("");
+      if (historyDraft.keyword) setHistoryDraft((draft) => ({ ...draft, keyword: "" }));
       else setHistoryMode(false);
     }
   }
@@ -1703,7 +1759,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historySearch]);
+  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historyDraft.keyword]);
   const paletteCommands = useMemo(() => {
     const availability = commandAvailability({
       hasRepository: Boolean(repo),
@@ -1891,7 +1947,19 @@ function App() {
       {historyMode ? <div id="workspace-main" className="workspace history-workspace" tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading"><h2>历史审查</h2></div>
-          <p className="inspector-copy">最多读取 80 个提交；所有查询都作为系统读取记录在命令账本中。</p>
+          <p className="inspector-copy">默认读取最近 80 条；应用筛选后最多返回 200 条。所有查询都作为系统读取记录在命令账本中。</p>
+          <HistoryFilters
+            draft={historyDraft}
+            branches={branches}
+            currentBranch={state.branch}
+            selectedFile={selected}
+            loading={loading}
+            dirty={historyFiltersDirty}
+            onChange={(field, value) => setHistoryDraft((draft) => ({ ...draft, [field]: value }))}
+            onApply={() => applyHistoryFilters()}
+            onReset={() => applyHistoryFilters(undefined, true)}
+            onUseSelected={() => selected && setHistoryDraft((draft) => ({ ...draft, filePath: selected.path }))}
+          />
           <section className="branch-list compare-panel">
             <div className="section-label"><span>双提交比较</span></div>
             <p className="selection-line">
@@ -1981,15 +2049,18 @@ function App() {
               ) : (
                 <div className="history-browser">
                   {!historyFile && (
-                    <HistorySearch
-                      value={historySearch}
-                      onChange={setHistorySearch}
-                      inputRef={historySearchRef}
-                      filtered={historyFilter.filtered}
-                      matchCount={historyFilter.matches.length}
-                      total={commits.length}
-                      shortcut={historySearchShortcut}
-                    />
+                    <>
+                      <HistorySearch
+                        value={historyDraft.keyword}
+                        onChange={(keyword) => setHistoryDraft((draft) => ({ ...draft, keyword }))}
+                        onSubmit={() => applyHistoryFilters()}
+                        inputRef={historySearchRef}
+                        total={commits.length}
+                        shortcut={historySearchShortcut}
+                        loading={loading}
+                      />
+                      {historyApplied && <p className="history-filter-summary" aria-live="polite">已应用：{historyApplied.keyword && <code>关键词：{historyApplied.keyword}</code>}{historyApplied.author && <code>作者：{historyApplied.author}</code>}{historyApplied.branch && <code>分支：{historyApplied.branch}</code>}{historyApplied.filePath && <code>文件：{historyApplied.filePath}</code>}</p>}
+                    </>
                   )}
                   <div className="commit-list">
                     {!repo ? (
@@ -2013,19 +2084,19 @@ function App() {
                           {historyFile.reason && <span>{historyFile.reason}</span>}
                         </div>
                       )
-                    ) : historyFilter.filtered && !historyFilter.matches.length ? (
+                    ) : !commits.length && historyApplied ? (
                       <div className="history-empty">
                         <MagnifyingGlass size={22} aria-hidden="true" />
-                        <p>没有匹配的提交</p>
-                        <span>未找到与「{historySearch.trim()}」匹配的提交信息、作者名或短 SHA。</span>
-                        <button type="button" className="secondary-action" onClick={() => setHistorySearch("")}>
-                          清除搜索
+                        <p>当前筛选条件下没有匹配的提交。</p>
+                        <span>可以调整条件后再次应用，或重置筛选查看最近提交。</span>
+                        <button type="button" className="secondary-action" onClick={() => applyHistoryFilters(undefined, true)} disabled={loading}>
+                          重置筛选
                         </button>
                       </div>
                     ) : commitsReason ? (
                       <div className="history-empty"><p>{commitsReason}</p></div>
                     ) : (
-                      historyFilter.matches.map((commit) => (
+                      commits.map((commit) => (
                         <CommitRow
                           key={commit.hash}
                           commit={commit}

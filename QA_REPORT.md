@@ -35,6 +35,10 @@ vite v8.3.7 building client environment for production...
 
 `tests/real-git-workflow.integration.test.cjs` 不使用 mock。测试创建临时本地 Git 仓库，并以实际 `GitCommandService` 调用用户本机 `git`：
 
+## V0.5.6 历史查询与筛选
+
+`tests/history-query.integration.test.cjs` 创建含两位作者、两个本地分支、两个文件及特殊字符提交说明的真实临时仓库。它验证默认 200 条查询上限、关键词/作者/分支/文件路径及四条件 AND 的真实 argv，并确认非法字段、伪造分支、路径穿越和未跟踪路径被拒绝且不执行 `git log`。截图验收文件位于已忽略的 `output/v0-5-6-history-filter-1280.png` 与 `output/v0-5-6-history-no-results-1024.png`。
+
 1. 写入并修改 `note.txt`，读取真实 `git diff`；
 2. 使用 `git add -- note.txt` 暂存；
 3. 使用 `git commit -m` 创建提交；

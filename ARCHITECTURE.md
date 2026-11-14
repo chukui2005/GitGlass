@@ -55,6 +55,7 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `getLedger()` | `CommandRecord[]` newest first | read-only |
 | `getBranches()` | `{ record, branches }` | one `background` branch record |
 | `getCommits()` | `{ record, commits }` | one `background` log record |
+| `queryHistory(filters)` | `{ ok, commits, filters, reason, record }` | fixed `background` branch/file validation and history query records |
 | `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; generated `plan.operationId` is not a record |
 | `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record with the reviewed plan's operation ID if safe |
 | `getRemoteOverview()` | `{ remote, upstream, ahead, behind, reason, suggestion, state }` | background records for remote/upstream URL/count reads |
@@ -75,6 +76,10 @@ Renderer intent -> preload IPC -> RepositoryService -> GitCommandService
 ```
 
 Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout and cwd stay in their CommandRecord for copy and inspection.
+
+## V0.5.6 history query boundary
+
+`history:query(filters)` accepts only `{ keyword, author, branch, filePath }`; unknown keys, non-strings, NUL/control characters and overlong text are rejected in the main process and recorded as a background local validation rejection. `branch` is rechecked against `git branch --format=…`; `filePath` must be a repository-relative safe path and pass `git ls-files --error-unmatch -- <path>`. Only then does `RepositoryService` construct `git log -200 --date=iso-strict --fixed-strings --regexp-ignore-case …`; it never accepts renderer-supplied argv or a command string, never uses `--all`, and never exposes remote branch or rewrite operations. Keyword text is passed to fixed-string grep, name text is escaped before `--author`, and email text is matched from the bounded parsed result because Git's author matcher is not consistently email-aware.
 
 ## V0.4 Safety & Recovery boundary
 
