@@ -46,6 +46,7 @@ import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-no
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
+import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
 import "./styles.css";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
@@ -1098,7 +1099,7 @@ function App() {
   const [historyResult, setHistoryResult] = useState(null);
   const [historyCompare, setHistoryCompare] = useState({ base: null, target: null });
   const [historyFile, setHistoryFile] = useState(null);
-  const [historyDraft, setHistoryDraft] = useState({ keyword: "", author: "", branch: "", filePath: "" });
+  const [historyDraft, setHistoryDraft] = useState(emptyHistoryFilters);
   const [historyApplied, setHistoryApplied] = useState(null);
   const [commitsReason, setCommitsReason] = useState("");
   const [repo, setRepo] = useState(null);
@@ -1176,7 +1177,7 @@ function App() {
   useEffect(() => {
     refreshAll();
   }, []);
-  const historyFiltersDirty = JSON.stringify(historyDraft) !== JSON.stringify(historyApplied || { keyword: "", author: "", branch: "", filePath: "" });
+  const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
   useEffect(() => {
@@ -1246,7 +1247,7 @@ function App() {
     setBranches([]);
     setCommits([]);
     setCommitsReason("");
-    setHistoryDraft({ keyword: "", author: "", branch: "", filePath: "" });
+    setHistoryDraft(emptyHistoryFilters);
     setHistoryApplied(null);
     setRemote(null);
     setHistoryMode(false);
@@ -1310,7 +1311,7 @@ function App() {
   }
   async function applyHistoryFilters(next = historyDraft, reset = false) {
     if (loading || !repo) return;
-    const filters = reset ? { keyword: "", author: "", branch: "", filePath: "" } : { ...next };
+    const filters = reset ? emptyHistoryFilters : { ...next };
     setLoading(true);
     const sequence = ++historyQuerySequence.current;
     try {
@@ -1494,7 +1495,7 @@ function App() {
       setHistoryResult(null);
       setHistoryFile(null);
       setHistoryCompare({ base: null, target: null });
-      setHistoryDraft({ keyword: "", author: "", branch: "", filePath: "" });
+      setHistoryDraft(emptyHistoryFilters);
       setHistoryApplied(null);
       // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
       setStageSelection(new Set());
@@ -1732,7 +1733,9 @@ function App() {
     if (recoveryOpen) { setRecoveryOpen(false); return; }
     if (historyResult || historyFile) { setHistoryResult(null); setHistoryFile(null); return; }
     if (historyMode) {
-      if (historyDraft.keyword) setHistoryDraft((draft) => ({ ...draft, keyword: "" }));
+      const next = resolveHistoryEscape(historyDraft, historyApplied);
+      if (next.kind === "discard-draft") setHistoryDraft(next.filters);
+      else if (next.kind === "reset-applied") applyHistoryFilters(undefined, true);
       else setHistoryMode(false);
     }
   }
@@ -1759,7 +1762,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historyDraft.keyword]);
+  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historyDraft, historyApplied]);
   const paletteCommands = useMemo(() => {
     const availability = commandAvailability({
       hasRepository: Boolean(repo),

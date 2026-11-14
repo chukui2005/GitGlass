@@ -17,7 +17,7 @@ describe('V0.5.2 history review polish UI structure', () => {
     expect(source).toContain('action === "focus-history-search"')
     expect(source).toContain('historySearchRef.current?.focus()')
     expect(source).toContain('event.key === "Escape"')
-    expect(source).toContain('keyword: ""')
+    expect(source).toContain('resolveHistoryEscape')
   })
   it('renders two-line rows with relative time and a lightweight HEAD badge', () => {
     expect(source).toContain('isHeadCommit(commit)')

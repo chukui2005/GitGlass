@@ -19,7 +19,11 @@ const HISTORY_PRETTY = '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%a
 const controlCharacter = /[\u0000-\u001f\u007f]/
 
 function invalidHistoryText(value, maximum) { return typeof value !== 'string' || value.length > maximum || controlCharacter.test(value) }
-function escapeGitRegexLiteral(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+// git log --author uses a POSIX basic regular expression. `+`, `?`, `(`,
+// `)` and `|` are ordinary there, while a dot is safely represented by `[.]`.
+function escapeGitRegexLiteral(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/\./g, '[.]').replace(/[\^$*]/g, '\\$&')
+}
 function isSafeHistoryPath(value) {
   if (typeof value !== 'string' || !value || value.length > 1024 || controlCharacter.test(value)) return false
   if (/^[\\/]|^[A-Za-z]:[\\/]/.test(value) || value === '.' || value === '..') return false
@@ -163,18 +167,14 @@ class RepositoryService {
     if (filters.keyword) argv.push(`--grep=${filters.keyword}`)
     // git log --author is regex-based; escape every metacharacter so user text
     // remains a literal author/name fragment while argv remains fixed-structure.
-    // Git's --author does not reliably match the email address on all Git
-    // versions. Name searches use Git's literal-safe author filter; email
-    // searches are filtered from the same fixed, bounded parsed result.
-    const authorIsEmail = filters.author.includes('@')
-    if (filters.author && !authorIsEmail) argv.push(`--author=${escapeGitRegexLiteral(filters.author)}`)
+    // Git's --author is regex-based, including email identities. Escape every
+    // metacharacter so both names and emails remain literal Git-side filters.
+    if (filters.author) argv.push(`--author=${escapeGitRegexLiteral(filters.author)}`)
     if (filters.branch) argv.push(`refs/heads/${filters.branch}`)
     if (filters.filePath) argv.push('--', filters.filePath)
     const record = await this.run(argv, 'Query commit history')
     const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
-    const parsed = record.ok ? parseCommits(record.stdout) : []
-    const commits = authorIsEmail ? parsed.filter((commit) => commit.authorEmail.toLocaleLowerCase().includes(filters.author.toLocaleLowerCase())) : parsed
-    return { ok: record.ok, commits, filters, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
+    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
   }
 
   async verifyHistoryCommit(hash) {

@@ -57,4 +57,22 @@ describe('V0.5.6 real history query', () => {
       expect(commands.history().filter((record) => record.intent === 'Query commit history')).toHaveLength(before)
     }
   }, 20_000)
+
+  it('filters a unique literal email in Git even when it is older than 200 newer commits', async () => {
+    const { cwd, commands, repository } = await fixture()
+    const run = (argv) => commands.run({ argv, intent: 'Fixture', source: 'background', cwd })
+    const specialEmail = 'only+tag[one].old@example.test'
+    await run(['config', 'user.name', 'Older Email'])
+    await run(['config', 'user.email', specialEmail])
+    await run(['commit', '--allow-empty', '-m', 'test: unique older email'])
+    await run(['config', 'user.name', 'Newer'])
+    await run(['config', 'user.email', 'newer@example.test'])
+    for (let index = 0; index < 205; index += 1) await run(['commit', '--allow-empty', '-m', `test: newer ${index}`])
+    const result = await repository.queryHistory({ keyword: '', author: specialEmail, branch: '', filePath: '' })
+    expect(result.ok).toBe(true)
+    expect(result.commits.map((commit) => commit.authorEmail)).toContain(specialEmail)
+    const authorArg = result.record.argv.find((entry) => entry.startsWith('--author='))
+    expect(authorArg).toBe('--author=only+tag\\[one\\][.]old@example[.]test')
+    expect(result.record.argv).not.toContain(specialEmail)
+  }, 60_000)
 })
