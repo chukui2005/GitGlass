@@ -40,3 +40,7 @@
 
 /* V0.5.6：筛选是连续工作台侧栏，不创建独立卡片。 */
 .history-filters{display:grid;gap:7px}.history-filters label{display:grid;gap:3px;color:var(--muted);font-size:10px}.history-filters input,.history-filters select{width:100%;min-width:0;padding:6px 7px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--text);font-size:11px}.history-filters select{overflow:hidden;text-overflow:ellipsis}.filter-actions{display:flex;gap:6px}.filter-actions button{flex:1;padding:6px 7px;font-size:11px}.filter-dirty{margin:0;color:#7a5a00;font-size:10px;line-height:1.45}.history-filter-summary{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px;color:var(--muted);font-size:10px}.history-filter-summary code{max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475467}
+
+/* V0.5.6：窗口自身限制最小宽度；页面不再用 body 最小宽度挤出横向滚动条。 */
+html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0}.top-actions{flex:none}
+@media(max-width:1080px){.topbar{padding-left:12px;padding-right:calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) + 12px)}.top-actions{gap:5px}.top-action,.sync-action{min-width:30px;padding:0 7px}.top-action-label{display:none}}
