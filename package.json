@@ -1,6 +1,6 @@
 {
   "name": "gitglass",
-  "version": "0.1.0",
+  "version": "0.5.6-beta.1",
   "private": true,
   "description": "A transparent Git commit workbench",
   "main": "electron/main.cjs",
@@ -8,15 +8,68 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build": "vite build",
     "start": "electron .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pack:win": "electron-builder --win --x64 --publish never",
+    "checksum:win": "node scripts/write-release-checksums.mjs",
+    "dist:win": "npm run build && npm run pack:win && npm run checksum:win"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "6.3.0",
     "concurrently": "10.0.7",
     "electron": "45.2.3",
+    "electron-builder": "^26.0.12",
     "vite": "8.3.7",
     "vitest": "5.1.0",
     "wait-on": "9.5.1"
+  },
+  "build": {
+    "appId": "io.github.chukui2005.gitglass",
+    "productName": "GitGlass",
+    "asar": true,
+    "icon": "public/icon.ico",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "public/**",
+      "package.json",
+      "LICENSE",
+      "!node_modules/**",
+      "!tests/**",
+      "!output/**",
+      "!.env",
+      "!.env.*",
+      "!.screenshots/**",
+      "!.trae-html-share-packages/**"
+    ],
+    "artifactName": "GitGlass-${version}-win-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "GitGlass-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",

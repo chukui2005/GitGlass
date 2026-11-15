@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="GitGlass">
+  <!-- GitGlass 观察窗：圆角方形窗口 + 穿过窗口的 Git 分支路径与提交节点 -->
+  <rect x="14" y="14" width="100" height="100" rx="26" fill="none" stroke="#2F6FED" stroke-width="10"/>
+  <path d="M46 104V24" fill="none" stroke="#1F2937" stroke-width="9" stroke-linecap="round"/>
+  <path d="M46 88C46 66 82 74 82 44" fill="none" stroke="#2F6FED" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="46" cy="88" r="9" fill="#F7F8FA" stroke="#1F2937" stroke-width="8"/>
+  <circle cx="46" cy="44" r="9" fill="#F7F8FA" stroke="#1F2937" stroke-width="8"/>
+  <circle cx="82" cy="44" r="9" fill="#F7F8FA" stroke="#2F6FED" stroke-width="8"/>
+</svg>
