@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('gitglass', {
   getLedger: () => ipcRenderer.invoke('repo:ledger'),
   getBranches: () => ipcRenderer.invoke('repo:branches'),
   getCommits: () => ipcRenderer.invoke('repo:commits'),
+  queryHistory: (filters) => ipcRenderer.invoke('history:query', filters),
   getCommitDetail: (sha) => ipcRenderer.invoke('history:detail', sha),
   getCommitDiff: (sha) => ipcRenderer.invoke('history:diff', sha),
   compareCommits: (baseSha, targetSha) => ipcRenderer.invoke('history:compare', baseSha, targetSha),

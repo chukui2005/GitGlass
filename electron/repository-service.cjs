@@ -13,6 +13,33 @@ function rescueBranchName(timestamp, shortHash) {
 // 批量暂存的安全上限：超过时不执行命令，直接返回中文原因。
 const STAGE_SELECTED_MAX_PATHS = 200
 const STAGE_SELECTED_MAX_TOTAL_CHARS = 8192
+const HISTORY_QUERY_LIMIT = 200
+const HISTORY_DEFAULT_LIMIT = 80
+const HISTORY_PRETTY = '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'
+const controlCharacter = /[\u0000-\u001f\u007f]/
+
+function invalidHistoryText(value, maximum) { return typeof value !== 'string' || value.length > maximum || controlCharacter.test(value) }
+// git log --author uses a POSIX basic regular expression. `+`, `?`, `(`,
+// `)` and `|` are ordinary there, while a dot is safely represented by `[.]`.
+function escapeGitRegexLiteral(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/\./g, '[.]').replace(/[\^$*]/g, '\\$&')
+}
+function isSafeHistoryPath(value) {
+  if (typeof value !== 'string' || !value || value.length > 1024 || controlCharacter.test(value)) return false
+  if (/^[\\/]|^[A-Za-z]:[\\/]/.test(value) || value === '.' || value === '..') return false
+  return !value.split(/[\\/]/).some((part) => part === '..' || part === '.')
+}
+function normalizeHistoryFilters(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, reason: '筛选条件格式无效。请重新填写后应用。' }
+  const allowed = new Set(['keyword', 'author', 'branch', 'filePath'])
+  if (Object.keys(input).some((key) => !allowed.has(key))) return { ok: false, reason: '筛选条件包含不支持的内容。请重新填写后应用。' }
+  const filters = { keyword: input.keyword ?? '', author: input.author ?? '', branch: input.branch ?? '', filePath: input.filePath ?? '' }
+  if (invalidHistoryText(filters.keyword, 160)) return { ok: false, reason: '关键词无效或过长，请控制在 160 个字符以内。' }
+  if (invalidHistoryText(filters.author, 120)) return { ok: false, reason: '作者条件无效或过长，请控制在 120 个字符以内。' }
+  if (invalidHistoryText(filters.branch, 255)) return { ok: false, reason: '分支条件无效，请重新选择本地分支。' }
+  if (filters.filePath && !isSafeHistoryPath(filters.filePath)) return { ok: false, reason: '文件路径必须是当前仓库中的相对路径。' }
+  return { ok: true, filters }
+}
 
 // 只接受非空、去重后的合法路径数组；任何一项非法都会拒绝整批操作。
 function normalizeStagePaths(paths) {
@@ -104,7 +131,7 @@ class RepositoryService {
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
   commits() {
-    return this.run(['log', '-80', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'], 'Read recent commits').then((record) => {
+    return this.run(['log', `-${HISTORY_DEFAULT_LIMIT}`, '--date=iso-strict', HISTORY_PRETTY], 'Read recent commits').then((record) => {
       // 空仓库或尚无提交的分支是正常状态，给出中文说明而不是原始 stderr。
       const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
       return {
@@ -113,6 +140,45 @@ class RepositoryService {
         reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请刷新后重试；诊断信息已保留在命令账本。',
       }
     })
+  }
+  rejectHistoryQuery(reason, filters = {}) {
+    const requested = [filters.keyword, filters.author, filters.branch, filters.filePath].filter((value) => typeof value === 'string' && value)
+    const record = this.commands.recordRejection({ argv: ['log', ...requested], intent: 'Validate history query', source: 'background', cwd: this.cwd, stderr: reason, userMessage: reason })
+    return { ok: false, commits: [], reason, filters: { keyword: '', author: '', branch: '', filePath: '' }, record }
+  }
+  async queryHistory(input) {
+    const normalized = normalizeHistoryFilters(input)
+    if (!normalized.ok) return this.rejectHistoryQuery(normalized.reason, input || {})
+    const filters = normalized.filters
+    if (!filters.keyword && !filters.author && !filters.branch && !filters.filePath) {
+      const defaults = await this.commits()
+      return { ok: defaults.record.ok, commits: defaults.commits, filters, record: defaults.record, reason: defaults.reason }
+    }
+    if (filters.branch) {
+      const branchResult = await this.branches()
+      if (!branchResult.record.ok) return { ok: false, commits: [], reason: '无法读取本地分支。请刷新后重试；诊断信息已保留在命令账本。', filters, record: branchResult.record }
+      if (!branchResult.branches.some((branch) => branch.name === filters.branch)) return this.rejectHistoryQuery('所选分支已不存在，请刷新分支列表后重试。', filters)
+    }
+    if (filters.filePath) {
+      const tracked = await this.run(['ls-files', '--error-unmatch', '--', filters.filePath], 'Verify tracked history query file')
+      if (!tracked.ok) return { ok: false, commits: [], reason: '只能按当前已跟踪的文件筛选历史。请重新选择文件或清除文件条件。', filters, record: tracked }
+    }
+    const hasAuthor = Boolean(filters.author)
+    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
+    // --fixed-strings also changes --author semantics. With an author filter,
+    // escape both patterns for Git's basic-regexp matcher instead.
+    if (!hasAuthor) argv.push('--fixed-strings')
+    if (filters.keyword) argv.push(`--grep=${hasAuthor ? escapeGitRegexLiteral(filters.keyword) : filters.keyword}`)
+    // git log --author is regex-based; escape every metacharacter so user text
+    // remains a literal author/name fragment while argv remains fixed-structure.
+    // Git's --author is regex-based, including email identities. Escape every
+    // metacharacter so both names and emails remain literal Git-side filters.
+    if (hasAuthor) argv.push(`--author=${escapeGitRegexLiteral(filters.author)}`)
+    if (filters.branch) argv.push(`refs/heads/${filters.branch}`)
+    if (filters.filePath) argv.push('--', filters.filePath)
+    const record = await this.run(argv, 'Query commit history')
+    const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
+    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
   }
 
   async verifyHistoryCommit(hash) {
@@ -327,4 +393,4 @@ class RepositoryService {
 
   invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }
 }
-module.exports = { RepositoryService, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind }
+module.exports = { RepositoryService, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind, normalizeHistoryFilters, isSafeHistoryPath, HISTORY_QUERY_LIMIT, escapeGitRegexLiteral }
