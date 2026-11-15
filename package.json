@@ -36,6 +36,7 @@
       "electron/**",
       "public/**",
       "package.json",
+      "LICENSE",
       "!node_modules/**",
       "!tests/**",
       "!output/**",

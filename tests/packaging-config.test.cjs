@@ -23,7 +23,7 @@ describe('Windows beta packaging configuration', () => {
     expect(build.icon).toBe('public/icon.ico')
     expect(build.directories.output).toBe('release')
     expect(build.files).toEqual([
-      'dist/**', 'electron/**', 'public/**', 'package.json',
+      'dist/**', 'electron/**', 'public/**', 'package.json', 'LICENSE',
       '!node_modules/**', '!tests/**', '!output/**', '!.env', '!.env.*',
       '!.screenshots/**', '!.trae-html-share-packages/**',
     ])

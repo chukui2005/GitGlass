@@ -122,4 +122,4 @@ GitGlass uses the Git installed on your machine, and the Command Ledger makes ea
 
 ## License
 
-License: pending project maintainer decision.
+Licensed under the [Apache License 2.0](LICENSE).
