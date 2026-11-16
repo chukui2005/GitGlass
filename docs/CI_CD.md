@@ -22,8 +22,8 @@ In **Settings → General → Pull Requests**, enable **Allow auto-merge**. Then
 
 In **Settings → Secrets and variables → Actions**, add the repository secret `RELEASE_PLEASE_TOKEN`:
 
-- Prefer a short-lived GitHub App installation token. A fine-grained personal access token is also acceptable.
-- Scope it to this repository with **Contents: read/write** and **Pull requests: read/write** only.
+- Create a **fine-grained personal access token**. Do not use a GitHub App installation token directly: it expires after one hour, while this workflow expects a saved repository secret.
+- Limit it to this repository with **Contents: read/write** and **Pull requests: read/write** only.
 - Do not use a token in source files, workflow logs, command lines, or documentation examples.
 
 The token is necessary so the `v*` tag created after a merged release PR can trigger `Publish Release`. The built-in `GITHUB_TOKEN` intentionally does not trigger follow-on workflows from its own events.

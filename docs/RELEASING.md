@@ -24,7 +24,7 @@ Complete the repository settings in [CI/CD setup](CI_CD.md) before relying on th
 
 - Protect `main`, require `GitGlass CI / Quality (test and build)`, at least one maintainer approval, and PR-only merges.
 - Enable GitHub native Auto-merge. Authors or maintainers decide whether to enable it for each PR.
-- Add a repository Actions secret named `RELEASE_PLEASE_TOKEN`. It must be a fine-grained token (or GitHub App installation token) that can create release PRs and push tags: repository **Contents: read/write** and **Pull requests: read/write**. This non-default token is required because events created with the built-in `GITHUB_TOKEN` do not start the tag-triggered publishing workflow.
+- Add a repository Actions secret named `RELEASE_PLEASE_TOKEN`. Use a fine-grained personal access token that can create release PRs and push tags: repository **Contents: read/write** and **Pull requests: read/write**. This non-default token is required because events created with the built-in `GITHUB_TOKEN` do not start the tag-triggered publishing workflow. Do not paste a GitHub App installation token here: it expires after one hour. A GitHub App requires a separate workflow step that mints a fresh token for each run.
 - Keep Actions workflow permissions limited. The publishing workflow is read-only by default: its Windows build job has read-only access, and only the final job that creates the GitHub Release gets `contents: write`.
 
 ## Local Windows package check
