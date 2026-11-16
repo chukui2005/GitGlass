@@ -31,5 +31,7 @@ describe("Resizable workbench panels", () => {
   it("prioritizes legible file and branch names in the workspace sidebar", () => {
     expect(styles).toContain('.status-panel .file-select,.status-panel .branch-row{font-size:13px}');
     expect(styles).toContain('.status-panel .section-label{font-size:12px}');
+    expect(styles).toContain('.status-panel .file-select{padding:8px 6px}');
+    expect(styles).toContain('.status-panel .branch-list,.status-panel .remote-summary{margin-top:20px;padding-top:16px}');
   });
 });
