@@ -19,9 +19,10 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}')
     expect(ci).toContain('cancel-in-progress: true')
     expect(ci).toContain('name: Quality (test and build)')
+    expect(ci).toContain('runs-on: windows-2022')
     expect(ci).toContain('node-version: 22.12.0')
     expect(ci).toContain('run: npm ci')
-    expect(ci).toContain('xvfb-run --auto-servernum npm test')
+    expect(ci).toContain('run: npm test')
     expect(ci).toContain('run: npm run build')
   })
 
