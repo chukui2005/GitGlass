@@ -21,7 +21,7 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('name: Quality (test and build)')
     expect(ci).toContain('node-version: 22.12.0')
     expect(ci).toContain('run: npm ci')
-    expect(ci).toContain('run: npm test')
+    expect(ci).toContain('xvfb-run --auto-servernum npm test')
     expect(ci).toContain('run: npm run build')
   })
 
