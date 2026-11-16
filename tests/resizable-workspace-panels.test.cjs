@@ -26,4 +26,9 @@ describe("Resizable workbench panels", () => {
     expect(styles).toContain('.status-panel{overflow-x:hidden}');
     expect(styles).toContain('.remote-summary>code,.remote-summary>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}');
   });
+
+  it("prioritizes legible file and branch names in the workspace sidebar", () => {
+    expect(styles).toContain('.status-panel .file-select,.status-panel .branch-row{font-size:13px}');
+    expect(styles).toContain('.status-panel .section-label{font-size:12px}');
+  });
 });
