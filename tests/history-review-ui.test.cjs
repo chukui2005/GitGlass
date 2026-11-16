@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.jsx'), 'utf8')
+const diffPresentation = fs.readFileSync(path.join(__dirname, '..', 'src', 'diff-presentation.js'), 'utf8')
 const ledger = fs.readFileSync(path.join(__dirname, '..', 'src', 'workbench-ledger.js'), 'utf8')
 const service = fs.readFileSync(path.join(__dirname, '..', 'electron', 'repository-service.cjs'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8')
@@ -44,7 +45,8 @@ describe('V0.5.2 history review polish UI structure', () => {
     expect(source).toContain('没有匹配的提交')
     expect(source).toContain('打开仓库后可查看提交历史。')
     expect(source).toContain('正在读取提交历史…')
-    expect(source).toContain('二进制文件差异：Git 无法生成文本内容')
+    expect(diffPresentation).toContain("label: '二进制文件差异'")
+    expect(diffPresentation).toContain("content: 'Git 无法生成文本内容'")
     expect(source).toContain('无法比较这两个提交')
   })
   it('keeps the compare flow explicit: base, target, direction, and swap', () => {

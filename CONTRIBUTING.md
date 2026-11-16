@@ -5,7 +5,7 @@
 ## 分支规则
 
 - `main` 是稳定分支；只允许通过已验收的提交进入。
-- 不直接在 `main` 开发。一个需求或修复使用一个分支，例如：
+- 不直接在 `main` 开发，也不直接推送到 `main`。**所有普通改动必须通过 Pull Request（PR）进入 `main`**。一个需求或修复使用一个分支，例如：
 
   ```text
   feat/command-ledger-filter
@@ -30,6 +30,13 @@
   禁止 git commit --amend 已推送到 main 的提交
   ```
 
+## PR、审批与自动合并
+
+- 合并 PR 前必须同时满足 GitHub CI 的 `GitGlass CI / Quality (test and build)` 检查通过，以及至少一位维护者人工审批。
+- 作者或维护者可在 PR 页面**主动**开启 GitHub 原生 Auto-merge；它不会由机器人绕过审查、状态检查或分支保护。
+- 启用 Auto-merge 后，GitHub 只会在审批和必需 CI 均满足时自动合并。未开启时仍需人工合并。
+- 分支保护和 Auto-merge 是仓库管理员在 GitHub 网页完成的一次性设置，具体步骤见 [docs/CI_CD.md](docs/CI_CD.md)。
+
 ## 提交边界
 
 - 一笔提交只解决一个可描述的问题；不得把 UI、架构重构、格式化和无关修复混在一起。
@@ -52,6 +59,8 @@
   docs: add upload rules
   chore: pin development dependencies
   ```
+
+- 继续使用上述 Conventional Commits。Release Please 依此计算版本和生成 `CHANGELOG.md`；普通功能或修复 PR **不要手动修改版本号或 CHANGELOG**。
 
 - 不提交密钥、令牌、个人配置、真实仓库路径、用户日志或屏幕录制中的敏感内容。
 
@@ -87,6 +96,21 @@ git push -u origin <当前分支>
 ```
 
 若 `git status --short` 出现不属于本任务的文件，停止上传。不要代替其他人提交，也不要用 `git stash`、`reset`、`checkout --` 清理他人的工作区。
+
+## 发版协作
+
+- 普通 PR 合并到 `main` 后，Release Please 会创建或更新单独的发版 PR；普通 PR 本身不会发布。
+- 维护者审阅并合并发版 PR 后，CI 会在对应 `v*` tag 上构建 Windows 安装包并创建 GitHub Release。
+- 本地仍可用以下命令验证 Windows 安装包；它保留 `--publish never`，不会上传任何内容：
+
+  ```powershell
+  npm ci
+  npm run dist:win
+  ```
+
+  预期在忽略的 `release/` 目录得到 EXE、ZIP 和 `SHA256SUMS.txt`。
+
+- 发版完整流程、所需管理员配置及故障排查见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## AI 代理额外规则
 

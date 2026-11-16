@@ -1,0 +1,80 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows-release:
+    name: Build Windows release artifacts
+    runs-on: windows-2022
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Windows artifacts
+        run: npm run dist:win
+      - name: Verify release artifacts
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $version = (node -p "require('./package.json').version").Trim()
+          if ($env:TAG_NAME -ne "v$version") {
+            throw "Tag $env:TAG_NAME does not match package version v$version."
+          }
+
+          $requiredFiles = @(
+            "release/GitGlass-Setup-$version-x64.exe",
+            "release/GitGlass-$version-win-x64.zip",
+            'release/SHA256SUMS.txt'
+          )
+          $missingFiles = $requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }
+          if ($missingFiles) {
+            throw "Missing release artifact(s): $($missingFiles -join ', ')"
+          }
+      - name: Store verified release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-release-assets
+          if-no-files-found: error
+          path: |
+            release/GitGlass-Setup-*-x64.exe
+            release/GitGlass-*-win-x64.zip
+            release/SHA256SUMS.txt
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: build-windows-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-release-assets
+          path: release
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/GitGlass-Setup-*-x64.exe
+            release/GitGlass-*-win-x64.zip
+            release/SHA256SUMS.txt
