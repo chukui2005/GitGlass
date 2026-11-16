@@ -19,7 +19,9 @@ app.whenReady().then(async () => {
         const shell = document.querySelector('.app-shell')
         const topbar = document.querySelector('.topbar')
         const right = document.querySelector('.context-panel').getBoundingClientRect()
-        return { viewport: root.clientWidth, documentWidth: root.scrollWidth, shellWidth: shell.scrollWidth, shellClientWidth: shell.clientWidth, topbarWidth: topbar.scrollWidth, topbarClientWidth: topbar.clientWidth, rightEdge: right.right }
+        const left = document.querySelector('.status-panel').getBoundingClientRect()
+        const main = document.querySelector('.main-panel').getBoundingClientRect()
+        return { viewport: root.clientWidth, documentWidth: root.scrollWidth, shellWidth: shell.scrollWidth, shellClientWidth: shell.clientWidth, topbarWidth: topbar.scrollWidth, topbarClientWidth: topbar.clientWidth, leftWidth: left.width, mainWidth: main.width, rightWidth: right.width, rightEdge: right.right }
       })()`))
     }
     console.log('[LAYOUT] ' + JSON.stringify(results))

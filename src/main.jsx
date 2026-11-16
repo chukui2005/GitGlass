@@ -77,6 +77,48 @@ const rescueName = (entry) =>
   }-${entry.shortHash}`;
 // 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
 const stageSelectionKey = (path) => `unstaged:${path}`;
+const panelWidthStorageKey = "gitglass:workspace-panel-widths";
+const panelBounds = {
+  left: { min: 190, max: 420, default: 224 },
+  right: { min: 240, max: 420, default: 296 },
+};
+const workspaceGutterWidth = 24;
+const workspaceMainMinimum = 360;
+
+function readPanelWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(panelWidthStorageKey));
+    return {
+      left: Number.isFinite(saved?.left) ? Math.max(panelBounds.left.min, Math.min(panelBounds.left.max, saved.left)) : panelBounds.left.default,
+      right: Number.isFinite(saved?.right) ? Math.max(panelBounds.right.min, Math.min(panelBounds.right.max, saved.right)) : panelBounds.right.default,
+    };
+  } catch {
+    return { left: panelBounds.left.default, right: panelBounds.right.default };
+  }
+}
+
+function PanelSplitter({ side, value, limits, onPointerDown, onPointerMove, onPointerUp, onKeyDown }) {
+  const label = side === "left" ? "调整工作区边栏宽度" : "调整文件详情面板宽度";
+  return (
+    <div
+      className={`panel-splitter panel-splitter-${side}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      aria-valuemin={limits.min}
+      aria-valuemax={limits.max}
+      aria-valuenow={value}
+      tabIndex="0"
+      onPointerDown={(event) => onPointerDown(side, event)}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={(event) => onKeyDown(side, event)}
+    >
+      <span aria-hidden="true" />
+    </div>
+  );
+}
 
 function DiffLine({ line }) {
   const kind =
@@ -146,6 +188,7 @@ function FileRow({
         type="button"
         className="file-select"
         aria-label={`选择文件 ${file.path}`}
+        title={file.path}
         onClick={() => onSelect(file)}
       >
         <span className={`status ${file.status}`}>{iconFor[file.status]}</span>
@@ -597,7 +640,7 @@ function FileInspector({ file, loading, onStage, onDiscard }) {
     <section className="inspector-flow">
       <div className="inspector-heading">
         <span>文件详情</span>
-        <h2>{file.path}</h2>
+        <h2 title={file.path}>{file.path}</h2>
       </div>
       <dl className="file-facts">
         <div>
@@ -769,8 +812,8 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
           <ArrowClockwise size={14} />
         </button>
       </div>
-      <code>{remote.remote?.name || "—"}</code>
-      <span>{remote.remote?.url}</span>
+      <code title={remote.remote?.name}>{remote.remote?.name || "—"}</code>
+      <span title={remote.remote?.url}>{remote.remote?.url}</span>
       {remote.upstream && (
         <>
           <div className="remote-status">
@@ -1129,6 +1172,9 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusedOperationId, setFocusedOperationId] = useState(null);
   const [newBranch, setNewBranch] = useState("");
+  const [panelWidths, setPanelWidths] = useState(readPanelWidths);
+  const workspaceRef = useRef(null);
+  const panelResize = useRef(null);
   const refreshSequence = useRef(0);
   const refreshCycles = useRef(new Map());
   const historySearchRef = useRef(null);
@@ -1136,6 +1182,70 @@ function App() {
   const paletteTriggerRef = useRef(null);
   const paletteReturnFocusRef = useRef(null);
   const detailCache = useRef(new Map());
+  const getPanelLimits = (side, widths = panelWidths) => {
+    const { min, max } = panelBounds[side];
+    const otherSide = side === "left" ? "right" : "left";
+    const workspaceWidth = workspaceRef.current?.clientWidth || window.innerWidth;
+    const layoutMaximum = workspaceWidth - widths[otherSide] - workspaceMainMinimum - workspaceGutterWidth;
+    return { min, max: Math.max(min, Math.min(max, layoutMaximum)) };
+  };
+  const setPanelWidth = (side, requestedWidth) => {
+    setPanelWidths((current) => {
+      const limits = getPanelLimits(side, current);
+      return { ...current, [side]: Math.round(Math.max(limits.min, Math.min(limits.max, requestedWidth))) };
+    });
+  };
+  const startPanelResize = (side, event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    panelResize.current = { side, startX: event.clientX, startWidth: panelWidths[side] };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-resizing-panels");
+  };
+  const movePanelResize = (event) => {
+    const resizing = panelResize.current;
+    if (!resizing) return;
+    const movement = event.clientX - resizing.startX;
+    setPanelWidth(resizing.side, resizing.startWidth + (resizing.side === "left" ? movement : -movement));
+  };
+  const stopPanelResize = () => {
+    panelResize.current = null;
+    document.body.classList.remove("is-resizing-panels");
+  };
+  const resizePanelWithKeyboard = (side, event) => {
+    const directions = { ArrowLeft: -16, ArrowRight: 16 };
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const limits = getPanelLimits(side);
+      setPanelWidth(side, event.key === "Home" ? limits.min : limits.max);
+    } else if (directions[event.key]) {
+      event.preventDefault();
+      const movement = directions[event.key];
+      setPanelWidth(side, panelWidths[side] + (side === "left" ? movement : -movement));
+    }
+  };
+  useEffect(() => {
+    try {
+      localStorage.setItem(panelWidthStorageKey, JSON.stringify(panelWidths));
+    } catch {
+      // 存储不可用时继续使用当前会话的宽度。
+    }
+  }, [panelWidths]);
+  useEffect(() => {
+    const constrainPanels = () => {
+      setPanelWidths((current) => {
+        const workspaceWidth = workspaceRef.current?.clientWidth || window.innerWidth;
+        const leftMaximum = Math.max(panelBounds.left.min, Math.min(panelBounds.left.max, workspaceWidth - panelBounds.right.min - workspaceMainMinimum - workspaceGutterWidth));
+        const left = Math.min(current.left, leftMaximum);
+        const rightMaximum = Math.max(panelBounds.right.min, Math.min(panelBounds.right.max, workspaceWidth - left - workspaceMainMinimum - workspaceGutterWidth));
+        const right = Math.min(current.right, rightMaximum);
+        return left === current.left && right === current.right ? current : { left, right };
+      });
+    };
+    window.addEventListener("resize", constrainPanels);
+    constrainPanels();
+    return () => window.removeEventListener("resize", constrainPanels);
+  }, []);
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
     [state.files],
@@ -1958,7 +2068,7 @@ function App() {
           </button>
         </div>
       </header>
-      {historyMode ? <div id="workspace-main" className="workspace history-workspace" tabIndex="-1">
+      {historyMode ? <div ref={workspaceRef} id="workspace-main" className="workspace history-workspace" style={{ "--left-panel-width": `${panelWidths.left}px`, "--right-panel-width": `${panelWidths.right}px` }} tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading"><h2>历史审查</h2></div>
           <p className="inspector-copy">默认读取最近 80 条；应用筛选后最多返回 200 条。所有查询都作为系统读取记录在命令账本中。</p>
@@ -2027,11 +2137,12 @@ function App() {
             )}
           </section>
         </aside>
+        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
         <section className="main-panel">
           <div className="main-toolbar">
             <div>
               <h2>{historyTitle}</h2>
-              <span>{historySubtitle}</span>
+              <span title={historySubtitle}>{historySubtitle}</span>
             </div>
             {historyResult?.record && (
               <button
@@ -2134,6 +2245,7 @@ function App() {
             </div>
           </div>
         </section>
+        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
         <aside className="context-panel">
           {historyFile ? (
             <div className="inspector-flow">
@@ -2247,7 +2359,7 @@ function App() {
             </div>
           )}
         </aside>
-      </div> : <div id="workspace-main" className="workspace" tabIndex="-1">
+      </div> : <div ref={workspaceRef} id="workspace-main" className="workspace" style={{ "--left-panel-width": `${panelWidths.left}px`, "--right-panel-width": `${panelWidths.right}px` }} tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading">
             <h2>工作区</h2>
@@ -2380,11 +2492,12 @@ function App() {
             </div>
           )}
         </aside>
+        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
         <section className="main-panel">
           <div className="main-toolbar">
             <div>
               <h2>{selected ? "文件差异" : "提交历史"}</h2>
-              <span>
+              <span title={selected?.path || (commits.length ? `最近 ${commits.length} 个提交` : "选择仓库后读取提交记录")}>
                 {selected?.path ||
                   (commits.length
                     ? `最近 ${commits.length} 个提交`
@@ -2425,6 +2538,7 @@ function App() {
             <CommitGraph commits={commits} />
           )}
         </section>
+        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
         <aside className="context-panel">{inspector}</aside>
       </div>}
       <section className="command-ledger" aria-label="命令账本">

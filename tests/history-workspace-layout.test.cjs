@@ -16,6 +16,9 @@ describe('V0.5.6 history workspace width', () => {
       expect(entry.shellWidth, label).toBeLessThanOrEqual(entry.shellClientWidth + 1)
       expect(entry.topbarWidth, label).toBeLessThanOrEqual(entry.topbarClientWidth + 1)
       expect(entry.rightEdge, label).toBeLessThanOrEqual(entry.viewport + 1)
+      expect(entry.leftWidth, label).toBeGreaterThanOrEqual(190)
+      expect(entry.mainWidth, label).toBeGreaterThanOrEqual(360)
+      expect(entry.rightWidth, label).toBeGreaterThanOrEqual(240)
     }
   }, 90_000)
 })
