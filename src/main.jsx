@@ -82,7 +82,7 @@ const panelBounds = {
   left: { min: 190, max: 420, default: 224 },
   right: { min: 240, max: 420, default: 296 },
 };
-const workspaceGutterWidth = 24;
+const workspaceGutterWidth = 16;
 const workspaceMainMinimum = 360;
 
 function readPanelWidths() {

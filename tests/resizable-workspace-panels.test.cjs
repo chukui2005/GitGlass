@@ -22,9 +22,10 @@ describe("Resizable workbench panels", () => {
   });
 
   it("uses flexible columns and truncates long paths instead of creating horizontal overflow", () => {
-    expect(styles).toContain('grid-template-columns:minmax(190px,var(--left-panel-width,224px)) 12px minmax(0,1fr) 12px minmax(240px,var(--right-panel-width,296px))');
+    expect(styles).toContain('grid-template-columns:minmax(190px,var(--left-panel-width,224px)) 8px minmax(0,1fr) 8px minmax(240px,var(--right-panel-width,296px))');
     expect(styles).toContain('.status-panel{overflow-x:hidden}');
-    expect(styles).toContain('.remote-summary>code,.remote-summary>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}');
+    expect(styles).toContain('.remote-summary>span{display:block;overflow:visible;white-space:normal;overflow-wrap:anywhere}');
+    expect(styles).toContain('.inspector-heading h2{min-width:0;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;white-space:normal}');
   });
 
   it("prioritizes legible file and branch names in the workspace sidebar", () => {
