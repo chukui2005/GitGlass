@@ -42,6 +42,7 @@ import {
   relativeTime,
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
+import { presentDiff } from "./diff-presentation.js";
 import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
@@ -78,19 +79,22 @@ const rescueName = (entry) =>
 // 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
 const stageSelectionKey = (path) => `unstaged:${path}`;
 
-function DiffLine({ line }) {
-  const kind =
-    line.startsWith("+") && !line.startsWith("+++")
-      ? "plus"
-      : line.startsWith("-") && !line.startsWith("---")
-        ? "minus"
-        : line.startsWith("@@")
-          ? "hunk"
-          : "";
+function DiffLine({ row }) {
   return (
-    <div className={`diff-line ${kind}`}>
-      <span>{kind === "plus" ? "+" : kind === "minus" ? "−" : " "}</span>
-      <code>{line}</code>
+    <div className={`diff-line ${row.type}`}>
+      <span className="diff-line-number" aria-label={row.oldLine ? `原文件第 ${row.oldLine} 行` : undefined}>{row.oldLine || ""}</span>
+      <span className="diff-line-number" aria-label={row.newLine ? `新文件第 ${row.newLine} 行` : undefined}>{row.newLine || ""}</span>
+      <span className="diff-marker" aria-hidden="true">{row.marker || ""}</span>
+      {row.label && <span className="diff-label">{row.label}</span>}
+      <code>{row.content}</code>
+    </div>
+  );
+}
+
+function DiffContent({ diff }) {
+  return (
+    <div className="diff-content">
+      {presentDiff(diff).map((row, index) => <DiffLine key={index} row={row} />)}
     </div>
   );
 }
@@ -919,17 +923,7 @@ function HistoryDiff({ diff, emptyText }) {
       </div>
     );
   return (
-    <div className="diff-content">
-      {diff.split("\n").map((line, index) =>
-        binaryDiffPattern.test(line.trim()) ? (
-          <div className="diff-binary" key={index}>
-            二进制文件差异：Git 无法生成文本内容；完整命令结果已记录在命令账本。
-          </div>
-        ) : (
-          <DiffLine key={index} line={line} />
-        ),
-      )}
-    </div>
+    <DiffContent diff={diff} />
   );
 }
 
@@ -2414,11 +2408,7 @@ function App() {
                   <p>{diffMessage}</p>
                 </div>
               ) : (
-                <div className="diff-content">
-                  {diff.split("\n").map((line, index) => (
-                    <DiffLine key={index} line={line} />
-                  ))}
-                </div>
+                <DiffContent diff={diff} />
               )}
             </div>
           ) : (
