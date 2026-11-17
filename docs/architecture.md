@@ -17,6 +17,10 @@ startedAt, endedAt, stdout, stderr, exitCode, ok
 
 `source` is `user` for an explicit interaction and `background` for refreshes, status, diff, branch, and history reads. Records are retained in reverse chronological order in the in-memory ledger and exposed through the narrow `repo:ledger` IPC endpoint.
 
+Every command runs with `GIT_TERMINAL_PROMPT=0` and empty `GIT_ASKPASS` / `SSH_ASKPASS`, so a missing credential fails instead of blocking the main process. Local commands are killed after 60 seconds and remote operations (`fetch`, `push`, `pull`) after 300 seconds; a killed attempt records `timedOut: true` and a Chinese explanation. Captured output is capped at 64 KiB per attempt (diff-style reads may raise it to 1 MiB) and sets `outputTruncated`, so the 300-entry in-memory ledger and the `repo:ledger` response stay bounded.
+
+Credentials never reach the ledger: `redactCredentials()` strips `scheme://user:password@host` user info and `token`/`access_token`/`password`-style query parameters from every stdout and stderr before the record is retained, and `git remote get-url` additionally uses the narrower URL redaction described below.
+
 `GitCommandService.run()` supports an output-redaction function for the narrow case where a Git command returns a remote URL. Redaction happens before the immutable record is retained or sent over IPC: URL username/password, query parameters, and fragments never enter the Command Ledger.
 
 ## Planned versus executed

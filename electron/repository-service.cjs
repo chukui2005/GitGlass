@@ -14,6 +14,8 @@ function rescueBranchName(timestamp, shortHash) {
 // 批量暂存的安全上限：超过时不执行命令，直接返回中文原因。
 const STAGE_SELECTED_MAX_PATHS = 200
 const STAGE_SELECTED_MAX_TOTAL_CHARS = 8192
+// Diff review keeps a larger budget than ordinary reads (the ledger default is 64 KiB).
+const DIFF_OUTPUT_BYTES = 1024 * 1024
 const HISTORY_QUERY_LIMIT = 200
 const HISTORY_DEFAULT_LIMIT = 80
 const HISTORY_PRETTY = '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'
@@ -106,7 +108,9 @@ class RepositoryService {
 
   diff(file) {
     if (!file || !isPath(file.path)) return Promise.resolve(this.invalid('Read diff', 'Invalid file path.'))
-    return this.run(file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path], 'Read file diff')
+    // Interactive diff review keeps a larger budget than ordinary reads; the
+    // record still reports outputTruncated when a file exceeds it.
+    return this.run(file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path], 'Read file diff', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
   }
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
   async unstage(path) {
