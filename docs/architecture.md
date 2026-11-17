@@ -96,3 +96,10 @@ V0.4 retains the same `GitCommandService` execution boundary. New state-changing
 | Create rescue branch | 40-hex commit, valid rescue ref, verified commit, and target branch absent | `['branch', rescueBranch, fullSha]` |
 
 The recovery reader uses `git reflog -20 --date=iso --pretty=format:%H%x1f%h%x1f%gd%x1f%gs` as a background record. Reflog entries can only be used to create a new branch; V0.4 deliberately exposes no reset, force checkout, history rewrite, `git clean`, `restore --source`, `checkout .`, `reset --hard`, or `branch -D` route. Branch names and commit SHA values are validated before becoming argv entries, and file paths retain Git's `--` separator.
+
+
+## Startup and workspace state
+
+`RecentRepositories` (`electron/recent-repositories.cjs`) keeps the last five opened repository roots in `userData/recent-repos.json`; only local paths are stored. Startup order is: `GITGLASS_REPOSITORY`, then an update restart draft, then the most recent path that still exists on disk. A missing, oversized or damaged list is ignored rather than blocking launch. `chooseRepository` records the resolved worktree root, not the folder the user picked.
+
+`RepositoryService.state()` also reports `operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null`, derived from the marker files (`MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) inside the resolved git directory, so the renderer can explain an in-progress operation instead of blaming uncommitted changes. `refreshAll` compares its refresh sequence before and after each await and drops a snapshot that a newer refresh has superseded.

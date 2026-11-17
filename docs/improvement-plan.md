@@ -18,10 +18,10 @@
 
 | # | 问题 | 位置 | 修法 |
 | --- | --- | --- | --- |
-| 5 | **不记得最近打开的仓库**：`repoPath` 只来自 `GITGLASS_REPOSITORY` 环境变量或更新恢复，每次启动都要重新选 | `main.cjs:12,125-128` | `userData/recent-repos.json` 存最近 5 个，启动自动打开最后一个，顶栏提供切换 |
+| 5 | **不记得最近打开的仓库**：`repoPath` 只来自 `GITGLASS_REPOSITORY` 环境变量或更新恢复，每次启动都要重新选 | `main.cjs:12,125-128` | `userData/recent-repos.json` 存最近 5 个，启动自动打开最后一个，顶栏提供切换 | ✅
 | 6 | 多处异步操作缺 `try/finally`，异常后 `loading` 永久为 `true`（界面变灰、所有按钮禁用） | `src/main.jsx:1627,1658,1714,1788,1501` | 统一 `withLoading()` 包装；异常统一走 `setNotice` |
-| 7 | `refreshAll` 生成了 `refresh-*` 序号却从不比较，只有历史查询序号生效；快速连点会出现旧响应覆盖新状态 | `src/main.jsx:1376,1391-1398` | 与 `historyQuerySequence` 同款：响应返回时比对序号，丢过期结果 |
-| 8 | 处于 merge / rebase / cherry-pick 中途的仓库没有识别，用户在应用里看到的"脏工作区"提示会误导 | 全局（`.git/MERGE_HEAD` 等均未读取） | `state()` 增加 `operation: 'merge' \| 'rebase' \| null`，UI 明确提示"请在终端完成或中止该操作" |
+| 7 | `refreshAll` 生成了 `refresh-*` 序号却从不比较，只有历史查询序号生效；快速连点会出现旧响应覆盖新状态 | `src/main.jsx:1376,1391-1398` | 与 `historyQuerySequence` 同款：响应返回时比对序号，丢过期结果 | ✅（序号已比较；loading 兜底未做）
+| 8 | 处于 merge / rebase / cherry-pick 中途的仓库没有识别，用户在应用里看到的"脏工作区"提示会误导 | 全局（`.git/MERGE_HEAD` 等均未读取） | `state()` 增加 `operation: 'merge' \| 'rebase' \| null`，UI 明确提示"请在终端完成或中止该操作" | ✅
 
 ## P2 工程质量（决定改得动不动）
 
