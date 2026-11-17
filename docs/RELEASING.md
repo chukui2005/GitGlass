@@ -7,8 +7,8 @@ GitGlass uses a reviewed, two-stage release process. Maintainers do not manually
 1. Contributors open normal PRs against `main` and use Conventional Commits (`feat:`, `fix:`, and so on). The `GitGlass CI / Quality (test and build)` check runs `npm ci`, `npm test`, and `npm run build`.
 2. After the PR is approved and merged, Release Please parses the Conventional Commits and creates or updates a separate release PR. It maintains the version, `package-lock.json`, and `CHANGELOG.md`; do not edit those release-managed files in normal PRs.
 3. A maintainer reviews the release PR. Merging it is the explicit confirmation to release. A normal feature PR never publishes a release by itself.
-4. Release Please creates the corresponding `v<version>` tag. The tag starts `Publish Release` on a Windows runner.
-5. The publishing workflow runs `npm ci` and `npm run dist:win`, verifies the expected files, uploads them to a draft GitHub Release, then publishes the complete release. Tags containing a prerelease suffix are marked as GitHub prereleases.
+4. Release Please creates the corresponding `v<version>` tag and a draft prerelease. The tag starts `Publish Release` on a Windows runner.
+5. The publishing workflow runs `npm ci` and `npm run dist:win`, verifies the expected files, updates that draft with the build assets, then publishes the complete release. Tags containing a prerelease suffix are marked as GitHub prereleases.
 
 The published assets are:
 

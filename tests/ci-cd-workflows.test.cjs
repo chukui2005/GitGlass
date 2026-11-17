@@ -26,7 +26,7 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('run: npm run build')
   })
 
-  it('uses Release Please to propose, rather than immediately publish, Node releases', () => {
+  it('uses Release Please to propose and tag reviewed Node releases', () => {
     expect(releasePlease).toContain('name: Release Please')
     expect(releasePlease).toMatch(/push:\s*\n\s*branches:\s*\n\s*- main/)
     expect(releasePlease).toContain('contents: read')
@@ -36,7 +36,10 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(releaseConfig['release-type']).toBe('node')
     expect(releaseConfig['include-component-in-tag']).toBe(false)
     expect(releaseConfig['include-v-in-tag']).toBe(true)
-    expect(releaseConfig['skip-github-release']).toBe(true)
+    expect(releaseConfig.draft).toBe(true)
+    expect(releaseConfig.prerelease).toBe(true)
+    expect(releaseConfig['force-tag-creation']).toBe(true)
+    expect(releaseConfig['skip-github-release']).toBe(false)
     expect(releaseConfig.packages['.']['changelog-path']).toBe('CHANGELOG.md')
   })
 
