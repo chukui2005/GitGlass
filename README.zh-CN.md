@@ -108,7 +108,7 @@ npm install
 npm run dev
 ```
 
-深入资料请参阅[架构说明](ARCHITECTURE.md)、[设计 v2](DESIGN_V2.md)、[QA 报告](QA_REPORT.md)、[发布说明](docs/RELEASING.md)和[贡献指南](CONTRIBUTING.md)。
+深入资料请参阅[架构说明](docs/architecture.md)、[设计](docs/design.md)、[QA 报告](docs/archive/qa-v0.4.md)、[发布说明](docs/releasing.md)和[贡献指南](CONTRIBUTING.md)。
 
 <!-- section:security -->
 

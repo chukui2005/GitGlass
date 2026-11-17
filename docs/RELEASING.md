@@ -22,11 +22,11 @@ The package command retains `--publish never`; electron-builder never uploads ar
 
 `latest.yml` and the EXE must come from the same build. The Windows NSIS updater reads the manifest and checks SHA-512 before offering installation. Keep the blockmap with the release so differential downloads work; the updater can fall back to a full download. GitHub provider prereleases use the GitHub release flag; `latest.yml` is intentionally also included in Beta releases (the provider supports this fallback). Do not change the installed application ID, owner/repository or artifact naming without planning compatibility for existing clients.
 
-The first version with an updater must be installed manually once. Previous builds have no update code. Windows ZIP builds remain manual downloads; only NSIS installs receive the `resources/gitglass-installed` marker required to enable in-app updates. See [in-app updates and acceptance](UPDATES.md).
+The first version with an updater must be installed manually once. Previous builds have no update code. Windows ZIP builds remain manual downloads; only NSIS installs receive the `resources/gitglass-installed` marker required to enable in-app updates. See [in-app updates and acceptance](updates.md).
 
 ## One-time administrator checklist
 
-Complete the repository settings in [CI/CD setup](CI_CD.md) before relying on this flow. In particular:
+Complete the repository settings in [CI/CD setup](ci-cd.md) before relying on this flow. In particular:
 
 - Protect `main`, require `GitGlass CI / Quality (test and build)`, at least one maintainer approval, and PR-only merges. Its name stays unchanged when packaging verification is added.
 - Enable GitHub native Auto-merge. Authors or maintainers decide whether to enable it for each PR.
@@ -61,3 +61,20 @@ Unsigned Windows builds remain supported. Code signing is an optional future enh
 - **electron.exe is missing:** check the `prepare:electron` / `prepack:win` logs. Run `npm run prepare:electron` to download the pinned runtime before packaging; do not assume `npm ci` downloaded it.
 - **The publishing job cannot find an asset:** reproduce with `npm ci` and `npm run dist:win`, then check that electron-builder still emits the EXE and ZIP and that the checksum script writes `SHA256SUMS.txt`.
 - **Release creation is forbidden:** verify the job-level `contents: write` permission and the repository Actions policy. Do not broaden permissions for the PR CI workflow.
+
+## Version policy
+
+GitGlass stays in `0.x` for a long time and uses the patch position as the iteration number, so a normal release is `0.6.2`, `0.6.3`, ... `0.6.10`, not `0.7.0`. This mirrors how larger projects keep shipping: minor only moves for a breaking change, and `1.0.0` is a deliberate, manual decision that is never produced automatically.
+
+`release-please-config.json` encodes the policy:
+
+- `bump-patch-for-minor-pre-major: true` - a `feat:` commit only bumps the patch position while the version is `0.x`.
+- `bump-minor-pre-major: true` - a breaking change (`feat!:`) bumps the minor position to `0.7.0` instead of jumping to `1.0.0`.
+- `prerelease: false` - a published release is a normal release. GitHub reserves the **Latest** badge and the repository sidebar "Releases" card for the newest release that is *not* a prerelease, so marking every release as a prerelease hides the product from the repository front page. Beta builds stay available as explicitly tagged prereleases.
+
+Rules that follow from this:
+
+1. Never hand-edit `package.json`, `package-lock.json`, `CHANGELOG.md` or `.release-please-manifest.json` in a normal PR; Release Please owns them.
+2. To choose the next number yourself, add a `Release-As: 0.6.10` footer to the commit (or PR body) that should carry it. Release Please then generates that exact version once and continues incrementing the patch position afterwards.
+3. To ship a beta, publish it as a prerelease tag (`v0.6.10-beta.1`). `publish-release.yml` marks any tag containing `-` as a GitHub prerelease, and the in-app updater keeps stable builds off that channel.
+4. A tag with no Release (for example after a failed tag build) is an orphan: delete it rather than reusing it, because tags are immutable and a re-run rebuilds the old source.
