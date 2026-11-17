@@ -4,7 +4,9 @@
 
 <h1 align="center">GitGlass</h1>
 
-<p align="center">A transparent desktop Git workbench that shows the real Git command behind every action.</p>
+<p align="center"><strong>Review every Git action before it changes your repository.</strong></p>
+
+<p align="center">A local-first desktop Git workspace for inspecting real commands, reviewing changes, and committing with confidence.</p>
 
 <p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
 
@@ -12,9 +14,9 @@
 
 <!-- section:hero -->
 
-![GitGlass workspace showing real Git commands](docs/assets/readme/workspace-light.png)
+![GitGlass workspace reviewing an unstaged change](docs/assets/readme/workspace-light.png)
 
-GitGlass makes local Git work visible: inspect the command, the result, and the safety boundary before an operation changes a repository.
+Start with a familiar review flow: select a changed file, inspect its real Git Diff, then decide what to stage.
 
 <!-- section:why-gitglass -->
 
@@ -91,15 +93,11 @@ If Git is missing, GitGlass will prompt you to install Git. GitGlass does not bu
 
 <!-- section:screenshots -->
 
-## Screenshots
+## Command Ledger
 
-![GitGlass workspace showing real Git commands](docs/assets/readme/workspace-light.png)
+![GitGlass Command Ledger showing a successful git add operation](docs/assets/readme/command-ledger.png)
 
-The workspace shows file status, a real Git Diff, and a collapsed Command Ledger.
-
-![GitGlass history review with an applied filter and commit detail](docs/assets/readme/history-review.png)
-
-History review keeps the applied filter, selected commit, changed files, and real review actions in view.
+After a user action, the Command Ledger keeps the actual command, its source, working directory, result, and exit status available for review. Technical output stays collapsed unless you need it.
 
 <!-- section:development -->
 
