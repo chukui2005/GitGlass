@@ -14,6 +14,7 @@
     "prepack:win": "npm run prepare:electron",
     "pack:win": "electron-builder --win --x64 --publish never",
     "checksum:win": "node scripts/write-release-checksums.mjs",
+    "release": "node scripts/release.mjs",
     "dist:win": "npm run build && npm run pack:win && npm run checksum:win",
     "verify:release": "node scripts/verify-release.mjs"
   },
