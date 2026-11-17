@@ -3,8 +3,10 @@
   "release-type": "node",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
   "draft": true,
-  "prerelease": true,
+  "prerelease": false,
   "force-tag-creation": true,
   "skip-github-release": false,
   "packages": {
