@@ -7,8 +7,10 @@ const mainProcess = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'ut
 const ignoreFile = fs.readFileSync(path.join(root, '.gitignore'), 'utf8')
 
 describe('Windows beta packaging configuration', () => {
-  it('uses the intended private beta version and Windows-only build entry points', () => {
-    expect(packageJson.version).toBe('0.5.6-beta.1')
+  it('uses a valid private prerelease version and Windows-only build entry points', () => {
+    // Release Please owns the exact version. Keep this test compatible with the
+    // version it writes into its generated release pull requests.
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/)
     expect(packageJson.private).toBe(true)
     expect(packageJson.devDependencies['electron-builder']).toBeTruthy()
     expect(packageJson.scripts['pack:win']).toContain('--win --x64 --publish never')
