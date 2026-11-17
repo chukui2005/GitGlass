@@ -105,6 +105,21 @@ describe('GitCommandService', () => {
 })
 
 describe('redactCredentials', () => {
+  it('leaves large credential-free output untouched without pathological backtracking', () => {
+    const big = 'y'.repeat(200_000)
+    const started = Date.now()
+    expect(redactCredentials(big)).toBe(big)
+    // The unbounded scheme pattern took seconds per 64 KiB chunk; keep this honest.
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  it('redacts a credential URL inside large output', () => {
+    const text = 'x'.repeat(100_000) + ' https://user:tok@example.com/repo\n'
+    const redacted = redactCredentials(text)
+    expect(redacted).not.toContain('tok@')
+    expect(redacted).toContain('https://example.com/repo')
+  })
+
   it('keeps ordinary output untouched', () => {
     expect(redactCredentials('git@github.com:owner/repo.git')).toBe('git@github.com:owner/repo.git')
     expect(redactCredentials('https://github.com/owner/repo')).toBe('https://github.com/owner/repo')
