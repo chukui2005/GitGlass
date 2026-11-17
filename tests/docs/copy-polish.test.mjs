@@ -87,6 +87,9 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(renderer).toContain('工作区干净，没有待暂存的改动。')
     expect(renderer).toContain('没有已暂存的改动。')
     expect(renderer).toContain('Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。')
+    // 提示条必须挂在标题栏下方，而不是塞进命令账本面板内部（否则账本收起时看不到）。
+    expect(renderer).toContain('const operationBanner = state?.operation ? operationInProgressNotice(state.operation) : null;')
+    expect(renderer).toContain('app-notice')
     expect(renderer).toContain('disabled={loading}')
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     expect(renderer).toContain('onClick={refreshFromUser}')
