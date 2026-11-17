@@ -90,6 +90,9 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     // 提示条必须挂在标题栏下方，而不是塞进命令账本面板内部（否则账本收起时看不到）。
     expect(renderer).toContain('const operationBanner = state?.operation ? operationInProgressNotice(state.operation) : null;')
     expect(renderer).toContain('app-notice')
+    // 多出的一行必须显式声明，否则 banner 会吃掉 workspace 的 1fr。
+    expect(renderer).toContain('has-banner')
+    expect(styles).toContain('.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}')
     expect(renderer).toContain('disabled={loading}')
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     expect(renderer).toContain('onClick={refreshFromUser}')
