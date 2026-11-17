@@ -26,7 +26,7 @@ In **Settings → Secrets and variables → Actions**, add the repository secret
 - Limit it to this repository with **Contents: read/write** and **Pull requests: read/write** only.
 - Do not use a token in source files, workflow logs, command lines, or documentation examples.
 
-The token is necessary so the `v*` tag created after a merged release PR can trigger `Publish Release`. The built-in `GITHUB_TOKEN` intentionally does not trigger follow-on workflows from its own events.
+The token is necessary so Release Please can create the draft prerelease and its matching `v*` tag after a merged release PR. The tag triggers `Publish Release`, which uploads the Windows assets and publishes that draft. The built-in `GITHUB_TOKEN` intentionally does not trigger follow-on workflows from its own events.
 
 Under **Settings → Actions → General**, allow repository Actions to run and do not grant broad default write permissions. The workflows request their own minimal permissions: CI reads contents, Release Please can write release PRs/tags, the Windows build job reads contents, and only the final GitHub Release job gets `contents: write`.
 

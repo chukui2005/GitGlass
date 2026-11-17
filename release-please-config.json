@@ -3,7 +3,10 @@
   "release-type": "node",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
-  "skip-github-release": true,
+  "draft": true,
+  "prerelease": true,
+  "force-tag-creation": true,
+  "skip-github-release": false,
   "packages": {
     ".": {
       "package-name": "gitglass",
