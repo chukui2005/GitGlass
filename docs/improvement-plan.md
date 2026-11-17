@@ -32,7 +32,7 @@
 
 ## P3 发布与版本
 
-1. 版本策略落地：`bump-patch-for-minor-pre-major` + `bump-minor-pre-major` + `prerelease: false`，见 [releasing.md](releasing.md#version-policy)。
+1. 版本策略已改为手动：`npm run release -- <版本号>` 手写版本、写 CHANGELOG、打 tag，tag 触发构建；见 [releasing.md](releasing.md#version-policy)。
 2. 清理孤儿 tag `v0.6.0-beta.1`（只有 tag、没有 Release 与产物）。
 3. Release 正文统一模板：下载项、`SHA256SUMS.txt` 校验步骤、Windows x64 / 未签名 / 需自备 Git 三条说明（对齐成熟项目做法）。
 4. 可选：增加 `sync-changelog` 类似流程，把 `CHANGELOG.md` 同步到 Release 正文，避免两套叙述。

@@ -4,12 +4,12 @@ const { load } = require('js-yaml')
 
 const root = path.join(__dirname, '..', '..')
 const read = (...segments) => fs.readFileSync(path.join(root, ...segments), 'utf8')
+const exists = (...segments) => fs.existsSync(path.join(root, ...segments))
 
 describe('GitHub CI/CD workflow configuration', () => {
   const ci = read('.github', 'workflows', 'ci.yml')
-  const releasePlease = read('.github', 'workflows', 'release-please.yml')
   const publish = read('.github', 'workflows', 'publish-release.yml')
-  const releaseConfig = JSON.parse(read('release-please-config.json'))
+  const packageJson = JSON.parse(read('package.json'))
 
   it('keeps actual package builds in read-only PR CI and gates publishing on them', () => {
     const checks = load(ci)
@@ -39,27 +39,16 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('run: npm run build')
   })
 
-  it('uses Release Please to propose and tag reviewed Node releases', () => {
-    expect(releasePlease).toContain('name: Release Please')
-    expect(releasePlease).toMatch(/push:\s*\n\s*branches:\s*\n\s*- main/)
-    expect(releasePlease).toContain('contents: read')
-    expect(releasePlease).toContain('pull-requests: write')
-    expect(releasePlease).toContain('token: ${{ secrets.RELEASE_PLEASE_TOKEN }}')
-    expect(releasePlease).toContain('googleapis/release-please-action@')
-    expect(releaseConfig['release-type']).toBe('node')
-    expect(releaseConfig['include-component-in-tag']).toBe(false)
-    expect(releaseConfig['include-v-in-tag']).toBe(true)
-    expect(releaseConfig.draft).toBe(true)
-    // GitHub only awards the Latest badge to the newest release that is not a
-    // prerelease, so ordinary releases must not be generated as prereleases.
-    expect(releaseConfig.prerelease).toBe(false)
-    // A 0.x project keeps its iteration number in the patch position: features
-    // and fixes bump the patch, and only a breaking change moves the minor.
-    expect(releaseConfig['bump-patch-for-minor-pre-major']).toBe(true)
-    expect(releaseConfig['bump-minor-pre-major']).toBe(true)
-    expect(releaseConfig['force-tag-creation']).toBe(true)
-    expect(releaseConfig['skip-github-release']).toBe(false)
-    expect(releaseConfig.packages['.']['changelog-path']).toBe('CHANGELOG.md')
+  it('releases from a maintainer-chosen version and a pushed tag, without a release bot', () => {
+    // A release is a deliberate local action: no bot opens release pull requests,
+    // and no release token is required because the tag is pushed by a person.
+    expect(exists('.github', 'workflows', 'release-please.yml')).toBe(false)
+    expect(exists('release-please-config.json')).toBe(false)
+    expect(exists('.release-please-manifest.json')).toBe(false)
+    expect(exists('scripts', 'release.mjs')).toBe(true)
+    expect(packageJson.scripts.release).toBe('node scripts/release.mjs')
+    // The version has a single source of truth.
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
   })
 
   it('publishes only version tags after verifying the exact Windows artifacts', () => {
@@ -87,16 +76,21 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(publish).toContain('fail_on_unmatched_files: true')
   })
 
-  it('documents the required GitHub-side controls and optional signing secrets', () => {
+  it('documents the manual release steps and the required GitHub-side controls', () => {
     const contributing = read('CONTRIBUTING.md')
     const releasing = read('docs', 'releasing.md')
     const ciCd = read('docs', 'ci-cd.md')
 
     expect(contributing).toContain('Auto-merge')
     expect(contributing).toContain('不要手动修改版本号或 CHANGELOG')
-    expect(releasing).toContain('RELEASE_PLEASE_TOKEN')
+    expect(contributing).toContain('npm run release')
+    expect(releasing).toContain('npm run release')
+    expect(releasing).toContain('--follow-tags')
+    expect(releasing).toContain('Version policy')
+    expect(releasing).not.toContain('RELEASE_PLEASE_TOKEN')
     expect(releasing).toContain('CSC_LINK')
     expect(ciCd).toContain('GitGlass CI / Quality (test and build)')
     expect(ciCd).toContain('at least **one approving review**')
+    expect(ciCd).not.toContain('RELEASE_PLEASE_TOKEN')
   })
 })

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { writeReleaseChecksums } from '../../scripts/write-release-checksums.mjs'
 
 const temporaryDirectories = []
-// The writer defaults to the package version, which Release Please owns. Deriving the
+// The writer defaults to the package version, which the release helper owns. Deriving the
 // expected names from the same source keeps this test green in release pull requests.
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const { version: packageVersion } = JSON.parse(fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8'))
