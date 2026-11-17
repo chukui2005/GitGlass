@@ -7,9 +7,11 @@ const { OperationGate } = require('./operation-gate.cjs')
 const { UpdateStore } = require('./update-store.cjs')
 const { UpdateService } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
+const { RecentRepositories } = require('./recent-repositories.cjs')
 
 let mainWindow
 let repoPath = null
+let recentRepositories = null
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
 app.on('second-instance', () => {
@@ -73,6 +75,8 @@ async function chooseRepository() {
     }
   }
   repoPath = root.stdout.trim()
+  // Remember the resolved root, not the folder the user picked.
+  recentRepositories?.remember(repoPath)
   return { ok: true, path: repoPath, state: await repository.state(), execution: root }
 }
 
@@ -123,9 +127,13 @@ if (primaryInstance) app.whenReady().then(async () => {
   // native window controls intact.
   if (process.platform === 'win32') Menu.setApplicationMenu(null)
   if (process.env.GITGLASS_REPOSITORY && fs.existsSync(process.env.GITGLASS_REPOSITORY)) repoPath = path.resolve(process.env.GITGLASS_REPOSITORY)
+  recentRepositories = new RecentRepositories(path.join(app.getPath('userData'), 'recent-repos.json'))
   updateStore = new UpdateStore(path.join(app.getPath('userData'), 'updates.json'))
   const resume = updateStore.value.resume
+  // An update restart draft names the repository it belongs to, so it wins.
   if (!repoPath && typeof resume?.repoPath === 'string' && fs.existsSync(resume.repoPath)) repoPath = resume.repoPath
+  // Otherwise fall back to the most recent repository that still exists on disk.
+  if (!repoPath) repoPath = recentRepositories.list().find((candidate) => fs.existsSync(candidate)) ?? null
   const supported = app.isPackaged && process.platform === 'win32' && process.arch === 'x64' && fs.existsSync(path.join(process.resourcesPath, 'gitglass-installed'))
   updates = new UpdateService({
     updater: supported ? createWindowsUpdater({ NsisUpdater: require('electron-updater').NsisUpdater, app }) : null,

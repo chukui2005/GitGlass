@@ -1,5 +1,7 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
+const fs = require('node:fs')
+const path = require('node:path')
 
 function isPath(value) { return typeof value === 'string' && value.length > 0 && !value.includes('\0') }
 function isBranchInput(value) { return typeof value === 'string' && value.length > 0 && value.length <= 255 && !value.includes('\0') }
@@ -20,6 +22,32 @@ const HISTORY_QUERY_LIMIT = 200
 const HISTORY_DEFAULT_LIMIT = 80
 const HISTORY_PRETTY = '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'
 const controlCharacter = /[\u0000-\u001f\u007f]/
+
+// A merge, rebase, cherry-pick or revert left in progress is not a dirty
+// working tree: Git already wrote a marker inside the git directory, and
+// GitGlass must say so instead of blaming uncommitted changes.
+const IN_PROGRESS_MARKERS = [
+  ['MERGE_HEAD', 'merge'],
+  ['CHERRY_PICK_HEAD', 'cherry-pick'],
+  ['REVERT_HEAD', 'revert'],
+  ['rebase-merge', 'rebase'],
+  ['rebase-apply', 'rebase'],
+]
+
+function resolveGitDirectory(workingDirectory) {
+  if (typeof workingDirectory !== 'string' || !workingDirectory) return null
+  const candidate = path.join(workingDirectory, '.git')
+  try {
+    const stat = fs.statSync(candidate)
+    if (stat.isDirectory()) return candidate
+    const match = /^gitdir:\\s*(.+)$/m.exec(fs.readFileSync(candidate, 'utf8'))
+    if (!match) return null
+    return path.resolve(workingDirectory, match[1].trim())
+  } catch {
+    // A bare repository keeps HEAD and objects directly in the folder.
+    return fs.existsSync(path.join(workingDirectory, 'HEAD')) && fs.existsSync(path.join(workingDirectory, 'objects')) ? workingDirectory : null
+  }
+}
 
 function invalidHistoryText(value, maximum) { return typeof value !== 'string' || value.length > maximum || controlCharacter.test(value) }
 // git log --author uses a POSIX basic regular expression. `+`, `?`, `(`,
@@ -102,8 +130,20 @@ class RepositoryService {
       // 依赖“每个未暂存条目都是精确文件路径”。
       this.run(['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'Read working tree status'),
     ])
-    if (!statusRecord.ok) return { ok: false, error: '无法读取工作区状态。请确认仓库仍可访问后刷新。', path: this.cwd, branch: '', files: [], records: [branchRecord, statusRecord] }
-    return { ok: true, path: this.cwd, branch: branchRecord.stdout.trim() || 'DETACHED HEAD', files: parseStatus(statusRecord.stdout), records: [branchRecord, statusRecord] }
+    const operation = this.operationInProgress()
+    if (!statusRecord.ok) return { ok: false, error: '无法读取工作区状态。请确认仓库仍可访问后刷新。', path: this.cwd, branch: '', files: [], operation, records: [branchRecord, statusRecord] }
+    return { ok: true, path: this.cwd, branch: branchRecord.stdout.trim() || 'DETACHED HEAD', files: parseStatus(statusRecord.stdout), operation, records: [branchRecord, statusRecord] }
+  }
+
+  // Reported to the UI so an in-progress merge/rebase is explained instead of
+  // being mistaken for ordinary uncommitted changes.
+  operationInProgress() {
+    const gitDirectory = resolveGitDirectory(this.cwd)
+    if (!gitDirectory) return null
+    for (const [marker, kind] of IN_PROGRESS_MARKERS) {
+      if (fs.existsSync(path.join(gitDirectory, marker))) return kind
+    }
+    return null
   }
 
   diff(file) {
