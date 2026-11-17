@@ -43,7 +43,7 @@ import {
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
 import { presentDiff } from "./diff-presentation.js";
-import { executionNotice, GENERIC_GIT_FAILURE, operationNotice } from "./user-notices.js";
+import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
@@ -1172,6 +1172,9 @@ function App() {
   const workspaceRef = useRef(null);
   const panelResize = useRef(null);
   const refreshSequence = useRef(0);
+  // Last merge/rebase/cherry-pick/revert state we already told the user about,
+  // so a background refresh does not repeat the same banner every cycle.
+  const operationNoticeRef = useRef(null);
   const refreshCycles = useRef(new Map());
   const historySearchRef = useRef(null);
   const historyQuerySequence = useRef(0);
@@ -1328,6 +1331,17 @@ function App() {
   }
   async function applyState(next, preference, cycle) {
     setState(next);
+    // An in-progress merge/rebase/cherry-pick/revert explains the dirty tree, so
+    // say it once instead of letting the user guess why every action is blocked.
+    const operation = next.operation || null;
+    if (operation && operation !== operationNoticeRef.current) {
+      operationNoticeRef.current = operation;
+      const notice = operationInProgressNotice(operation);
+      if (notice) setNotice(notice);
+    } else if (!operation && operationNoticeRef.current) {
+      operationNoticeRef.current = null;
+      setNotice(operationFinishedNotice());
+    }
     const nextFile = preference || next.files[0] || null;
     setSelected(nextFile);
     if (nextFile) await loadDiff(nextFile, cycle);
@@ -1373,8 +1387,12 @@ function App() {
     detailCache.current.clear();
   }
   async function refreshAll(preference, options) {
-    const cycle = `refresh-${Date.now()}-${++refreshSequence.current}`;
+    const sequence = ++refreshSequence.current;
+    const cycle = `refresh-${Date.now()}-${sequence}`;
     const next = await window.gitglass.getState();
+    // A newer refresh started while this one was in flight: its result would be
+    // stale, so drop it instead of letting an older snapshot win.
+    if (sequence !== refreshSequence.current) return { ok: false, stale: true };
     const resolved = resolveRepositoryRefresh(repo, next, options);
     if (!resolved.ok) {
       clearStaleRepositoryState(resolved);
@@ -1388,6 +1406,7 @@ function App() {
     }
     setRepo(next.path || repo);
     await applyState(next, preference, cycle);
+    if (sequence !== refreshSequence.current) return { ok: false, stale: true };
     const querySequence = ++historyQuerySequence.current;
     const [branchResult, commitResult, remoteResult] = await Promise.all([
       window.gitglass.getBranches(),

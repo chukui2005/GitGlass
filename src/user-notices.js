@@ -35,3 +35,23 @@ export function executionNotice(successText, execution) {
     ? { type: "success", text: successText }
     : { type: "error", text: GENERIC_GIT_FAILURE };
 }
+
+const OPERATION_LABELS = {
+  merge: "合并",
+  rebase: "变基",
+  "cherry-pick": "遴选提交",
+  revert: "回滚提交",
+};
+
+export function operationInProgressNotice(kind) {
+  if (!kind) return null;
+  const label = OPERATION_LABELS[kind] || "Git";
+  return {
+    type: "error",
+    text: `仓库正在进行${label}操作。请在终端完成或中止（git ${kind} --abort）后再继续。`,
+  };
+}
+
+export function operationFinishedNotice() {
+  return { type: "success", text: "仓库已回到正常状态。" };
+}
