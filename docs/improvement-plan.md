@@ -5,12 +5,14 @@
 
 ## P0 稳定性（会让应用卡死或数据难看）
 
+> 状态：**四项已实现**（超时与禁用凭据提示、默认脱敏、输出上限、空仓库取消暂存），覆盖测试见 `tests/unit/git-command-service.test.cjs` 与 `tests/integration/empty-repository.integration.test.cjs`。
+
 | # | 问题 | 位置 | 修法 |
 | --- | --- | --- | --- |
-| 1 | `git push/pull/fetch` **没有超时**，也没有禁用凭据交互提示，网络卡住会让进程永久挂起，并占住 `operationGate` | `electron/git-command-service.cjs:84` | `spawn` 增加 `timeout` 并在超时后 `kill`；`env` 注入 `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=`；记录里标记 `timedOut` 并给中文提示 |
-| 2 | 凭据脱敏只覆盖 `git remote get-url`，push/fetch 失败时的 stderr 可能带 `https://user:token@…` 进入账本与渲染层 | `repository-service.cjs:267`、`git-command-service.cjs:66-69` | 把脱敏做进 `GitCommandService.run()` 的默认路径（正则剥离 `://[^@/\s]+@`、`[?&](token|access_token|auth)=`） |
-| 3 | 账本最多 300 条，但每条保留完整 stdout/stderr；只有 3 处 diff 有 1 MiB 上限，`repo:ledger` 每次整体 IPC | `git-command-service.cjs:34,73-75`、`main.cjs:82` | 每条记录默认截到 64 KiB 并标 `outputTruncated`；`repo:ledger` 分页/按需取单条 |
-| 4 | 空仓库（无提交）里"取消暂存单个文件"必失败：`git restore --staged` 需要 HEAD | `repository-service.cjs:111`（实测 `fatal: could not resolve HEAD`） | 先探测 `git rev-parse --verify HEAD`，空仓库改用 `git reset -- <path>`；补一条 integration 测试 |
+| 1 | `git push/pull/fetch` **没有超时**，也没有禁用凭据交互提示，网络卡住会让进程永久挂起，并占住 `operationGate` | `electron/git-command-service.cjs:84` | `spawn` 增加 `timeout` 并在超时后 `kill`；`env` 注入 `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=`；记录里标记 `timedOut` 并给中文提示 | ✅
+| 2 | 凭据脱敏只覆盖 `git remote get-url`，push/fetch 失败时的 stderr 可能带 `https://user:token@…` 进入账本与渲染层 | `repository-service.cjs:267`、`git-command-service.cjs:66-69` | 把脱敏做进 `GitCommandService.run()` 的默认路径（正则剥离 `://[^@/\s]+@`、`[?&](token|access_token|auth)=`） | ✅
+| 3 | 账本最多 300 条，但每条保留完整 stdout/stderr；只有 3 处 diff 有 1 MiB 上限，`repo:ledger` 每次整体 IPC | `git-command-service.cjs:34,73-75`、`main.cjs:82` | 每条记录默认截到 64 KiB 并标 `outputTruncated`；`repo:ledger` 分页/按需取单条 | ✅
+| 4 | 空仓库（无提交）里"取消暂存单个文件"必失败：`git restore --staged` 需要 HEAD | `repository-service.cjs:111`（实测 `fatal: could not resolve HEAD`） | 先探测 `git rev-parse --verify HEAD`，空仓库改用 `git reset -- <path>`；补一条 integration 测试 | ✅
 
 ## P1 日常可用性（决定能不能当主力）
 
