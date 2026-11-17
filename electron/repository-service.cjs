@@ -1,4 +1,5 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('./git-parsers.cjs')
+const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 
 function isPath(value) { return typeof value === 'string' && value.length > 0 && !value.includes('\0') }
 function isBranchInput(value) { return typeof value === 'string' && value.length > 0 && value.length <= 255 && !value.includes('\0') }
@@ -89,7 +90,7 @@ function parseAheadBehind(value) {
 class RepositoryService {
   constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
   get cwd() { return this.getRepoPath() }
-  run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes }) }
+  run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes, timeoutMs) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes, timeoutMs }) }
   plan(argv, intent, operationId) { return this.commands.plan({ argv, intent, cwd: this.cwd, operationId }) }
 
   async state() {
@@ -108,7 +109,15 @@ class RepositoryService {
     return this.run(file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path], 'Read file diff')
   }
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
-  unstage(path) { return isPath(path) ? this.run(['restore', '--staged', '--', path], 'Unstage file', 'user') : Promise.resolve(this.invalid('Unstage file', 'Invalid file path.')) }
+  async unstage(path) {
+    if (!isPath(path)) return this.invalid('Unstage file', 'Invalid file path.')
+    // A repository with no commit yet has no HEAD, so `git restore --staged`
+    // fails with "could not resolve HEAD". Git is the authority for which form
+    // works, so probe HEAD instead of guessing from repository state.
+    const head = await this.run(['rev-parse', '--verify', '--quiet', 'HEAD'], 'Check HEAD for unstage')
+    const argv = head.ok ? ['restore', '--staged', '--', path] : ['reset', '--', path]
+    return this.run(argv, 'Unstage file', 'user')
+  }
   stageAll() { return this.run(['add', '-A'], 'Stage all changes', 'user') }
   // 批量暂存：一次 git add -- 传入全部所选路径（-- 必须存在，以正确处理
   // 以连字符开头的文件名）。执行前先读取一次工作区状态，做服务端白名单校验：
@@ -298,7 +307,8 @@ class RepositoryService {
   async executeRemote(kind, operationId) {
     const prepared = await this.prepareRemote(kind, operationId)
     if (!prepared.ok) return { execution: null, ...prepared }
-    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
+    // fetch/push/pull talk to a remote: allow a longer deadline than local reads.
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId, null, null, NETWORK_TIMEOUT_MS)
     return { execution, ...prepared, overview: await this.remoteOverview() }
   }
 
