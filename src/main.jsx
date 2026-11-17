@@ -49,6 +49,7 @@ import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcu
 import { commandAvailability } from "./command-palette-model.js";
 import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
 import "./styles.css";
+import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
 const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
@@ -1130,6 +1131,7 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
 }
 
 function App() {
+  const updates = useAppUpdates();
   const [historyMode, setHistoryMode] = useState(false);
   const [historySelected, setHistorySelected] = useState(null);
   const [historyDetail, setHistoryDetail] = useState(null);
@@ -1279,7 +1281,15 @@ function App() {
           ? "git add -A"
           : "git status --porcelain=v1 -z --untracked-files=all";
   useEffect(() => {
-    refreshAll();
+    (async () => {
+      const resume = await window.gitglass.getUpdateResume();
+      if (resume) {
+        setMessage(resume.commitMessage);
+        setHistoryMode(resume.historyMode);
+      }
+      await refreshAll();
+      if (resume) await window.gitglass.consumeUpdateResume();
+    })().catch(() => setNotice({ type: "error", text: "无法恢复工作区，请重新打开仓库。" }));
   }, []);
   const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
@@ -1821,7 +1831,7 @@ function App() {
     remotePlan,
     recoveryOpen,
   });
-  const blockingContextOpen = modalOpen;
+  const blockingContextOpen = modalOpen || updates.open;
   function openCommandPalette(trigger = document.activeElement) {
     paletteReturnFocusRef.current = trigger instanceof HTMLElement ? trigger : paletteTriggerRef.current;
     setPaletteOpen(true);
@@ -2012,6 +2022,7 @@ function App() {
           )}
         </div>
         <div className="top-actions">
+          <UpdateButton updates={updates} disabled={modalOpen} />
           <button
             type="button"
             className="top-action"
@@ -2660,6 +2671,13 @@ function App() {
           )}
         </div>
       </section>
+      {updates.open && (
+        <UpdateDialog
+          updates={updates}
+          blockedReason={loading ? "Git 操作尚未完成，请完成后再更新。" : modalOpen ? "请先完成或关闭当前操作。" : ""}
+          onInstall={() => updates.install({ commitMessage: message, historyMode })}
+        />
+      )}
       {paletteOpen && (
         <CommandPalette
           commands={paletteCommands}
