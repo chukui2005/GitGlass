@@ -24,7 +24,7 @@ describe('Windows beta packaging configuration', () => {
     expect(build.directories.output).toBe('release')
     expect(build.files).toEqual([
       'dist/**', 'electron/**', 'public/**', 'package.json', 'LICENSE',
-      '!node_modules/**', '!tests/**', '!output/**', '!.env', '!.env.*',
+      '!tests/**', '!output/**', '!.env', '!.env.*',
       '!.screenshots/**', '!.trae-html-share-packages/**',
     ])
     expect(build.win.target).toEqual([
@@ -52,5 +52,13 @@ describe('Windows beta packaging configuration', () => {
     const configuration = JSON.stringify(packageJson.build)
     expect(configuration).not.toMatch(/gh[pous]_[A-Za-z0-9_]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|certificatePassword/i)
     expect(packageJson.build.files.filter((pattern) => pattern.includes('.env'))).toEqual(['!.env', '!.env.*'])
+  })
+
+  it('packages runtime updater dependencies and uses a fixed public release feed', () => {
+    expect(packageJson.dependencies['electron-updater']).toBeTruthy()
+    expect(packageJson.dependencies.semver).toBeTruthy()
+    expect(packageJson.build.files).not.toContain('!node_modules/**')
+    expect(packageJson.build.publish).toEqual({ provider: 'github', owner: 'chukui2005', repo: 'GitGlass' })
+    expect(packageJson.build.nsis.include).toBe('build/installer.nsh')
   })
 })

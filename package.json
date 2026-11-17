@@ -37,7 +37,6 @@
       "public/**",
       "package.json",
       "LICENSE",
-      "!node_modules/**",
       "!tests/**",
       "!output/**",
       "!.env",
@@ -46,6 +45,11 @@
       "!.trae-html-share-packages/**"
     ],
     "artifactName": "GitGlass-${version}-win-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "chukui2005",
+      "repo": "GitGlass"
+    },
     "win": {
       "target": [
         {
@@ -63,6 +67,7 @@
       ]
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "artifactName": "GitGlass-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -73,7 +78,9 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
+    "electron-updater": "6.8.11",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "semver": "7.8.3"
   }
 }
