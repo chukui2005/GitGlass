@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.1-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.0-beta.1...v0.6.1-beta.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* restore release please tag creation ([03036c2](https://github.com/chukui2005/GitGlass/commit/03036c2a77c2ee37f51402d630b3cac8c1618eaa))
+* restore Release Please tag creation ([e9d71af](https://github.com/chukui2005/GitGlass/commit/e9d71afbf922022f28c64c34129a1219f722c91d))
+* verify Windows packaging before release ([1aa496a](https://github.com/chukui2005/GitGlass/commit/1aa496a84c2b1af9489f6ca7ef8a752a4c073b19))
+* verify Windows packaging before release ([ef365b8](https://github.com/chukui2005/GitGlass/commit/ef365b85a4ec3205e0617fa0b90b5548260dd591))
+
 ## [0.6.0-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.5.6-beta.1...v0.6.0-beta.1) (2026-11-17)
 
 
