@@ -2013,7 +2013,7 @@ function App() {
           : "";
   return (
     <main
-      className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"} ${isDarwin ? "platform-darwin" : ""}`}
+      className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"} ${isDarwin ? "platform-darwin" : ""} ${workspaceBanner ? "has-banner" : ""}`}
     >
       <a className="skip-link" href="#workspace-main">
         跳至主工作区
