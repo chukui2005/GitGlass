@@ -23,6 +23,19 @@
 | 7 | `refreshAll` 生成了 `refresh-*` 序号却从不比较，只有历史查询序号生效；快速连点会出现旧响应覆盖新状态 | `src/main.jsx:1376,1391-1398` | 与 `historyQuerySequence` 同款：响应返回时比对序号，丢过期结果 | ✅（序号已比较；loading 兜底未做）
 | 8 | 处于 merge / rebase / cherry-pick 中途的仓库没有识别，用户在应用里看到的"脏工作区"提示会误导 | 全局（`.git/MERGE_HEAD` 等均未读取） | `state()` 增加 `operation: 'merge' \| 'rebase' \| null`，UI 明确提示"请在终端完成或中止该操作" | ✅
 
+## P1.5 自动刷新（未实现，已评估）
+
+GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机，**没有任何自动刷新**（无 `setInterval`、无 `fs.watch`、无 focus 监听）。在终端里执行 `git merge --abort`、`git commit` 之后，界面不会自己更新 —— 这是与 GitHub Desktop（文件监视 + 静默重读）最明显的体验差距。
+
+推荐方案（按性价比）：
+
+| 方案 | 效果 | 成本 |
+| --- | --- | --- |
+| A 窗口聚焦时刷新 | 终端改完切回窗口自动更新 | 极低：`window.focus` + 复用 `refreshAll` |
+| B 监视 `.git` 关键文件（`HEAD`、`index`、`MERGE_HEAD`、`refs/**`、`logs/HEAD`） | 终端提交/切分支在 0.5–1 秒内反映到界面 | 中：主进程 `fs.watch` + 800ms 去抖 + 新增 `repo:changed` 推送；必须处理 `git status` 写 index 缓存导致的自触发（刷新进行中忽略 + 刷新后 1 秒静默窗） |
+| C 定时轮询 | 兜底 | 建议默认关闭，仅作为设置项 |
+
+`RefreshGroup` 已经把同一轮的多条读取折叠成一行，自动刷新写入账本的噪音可控。**决策：0.6.2 之前不做，先把现有验收走完。**
 ## P2 工程质量（决定改得动不动）
 
 | # | 问题 | 现状 | 修法 |
