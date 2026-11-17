@@ -5,12 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const releaseDirectory = path.join(rootDirectory, 'release')
-const expectedArtifacts = [
-  'GitGlass-Setup-0.5.6-beta.1-x64.exe',
-  'GitGlass-0.5.6-beta.1-win-x64.zip',
-]
+const { version: packageVersion } = JSON.parse(fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8'))
 
-export function writeReleaseChecksums(directory = releaseDirectory) {
+export function writeReleaseChecksums(directory = releaseDirectory, version = packageVersion) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('发布版本号无效。')
+  const expectedArtifacts = [`GitGlass-Setup-${version}-x64.exe`, `GitGlass-${version}-win-x64.zip`]
   const artifacts = expectedArtifacts.map((name) => ({ name, path: path.join(directory, name) }))
   const missing = artifacts.filter(({ path: artifactPath }) => !fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile())
 

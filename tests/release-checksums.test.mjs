@@ -22,6 +22,13 @@ afterEach(() => {
 })
 
 describe('Windows release checksum writer', () => {
+  it('uses the requested next release version instead of a hard-coded beta filename', () => {
+    const directory = makeReleaseDirectory()
+    fs.writeFileSync(path.join(directory, 'GitGlass-Setup-1.2.0-x64.exe'), 'next installer')
+    fs.writeFileSync(path.join(directory, 'GitGlass-1.2.0-win-x64.zip'), 'next zip')
+    expect(writeReleaseChecksums(directory, '1.2.0')).toContain('GitGlass-Setup-1.2.0-x64.exe')
+    expect(() => writeReleaseChecksums(directory, '../outside')).toThrow('发布版本号无效')
+  })
   it('writes SHA-256 entries for exactly the expected installer and zip names', () => {
     const directory = makeReleaseDirectory()
     fs.writeFileSync(path.join(directory, expectedFiles[0]), 'installer')
