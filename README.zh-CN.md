@@ -4,7 +4,9 @@
 
 <h1 align="center">GitGlass</h1>
 
-<p align="center">让每一次 Git 操作都可见、可审阅、可追溯的桌面工作台。</p>
+<p align="center"><strong>每一次 Git 改变仓库前，都值得先看清它。</strong></p>
+
+<p align="center">GitGlass 是本地优先的桌面 Git 工作台：审阅真实命令、检查改动，再安心提交。</p>
 
 <p align="center"><a href="README.md">English</a> | 简体中文</p>
 
@@ -12,9 +14,9 @@
 
 <!-- section:hero -->
 
-![GitGlass 工作区与真实 Git 命令账本](docs/assets/readme/workspace-light.png)
+![GitGlass 工作区正在审阅未暂存改动](docs/assets/readme/workspace-light.png)
 
-GitGlass 让本机 Git 工作过程清晰可见：在操作改变仓库之前，先审阅命令、结果与安全边界。
+从熟悉的审阅流程开始：选中改动文件、查看真实 Git Diff，再决定是否暂存。
 
 <!-- section:why-gitglass -->
 
@@ -91,15 +93,11 @@ git --version
 
 <!-- section:screenshots -->
 
-## 截图
+## 命令账本
 
-![GitGlass 工作区与真实 Git 命令账本](docs/assets/readme/workspace-light.png)
+![GitGlass 命令账本显示一次成功的 git add 操作](docs/assets/readme/command-ledger.png)
 
-工作区展示文件状态、真实 Git Diff，以及收起的命令账本。
-
-![GitGlass 历史审阅，显示已应用筛选与提交详情](docs/assets/readme/history-review.png)
-
-历史审阅集中展示已应用的筛选、选中的提交、改动文件和真实审阅操作。
+一次用户操作完成后，命令账本会保留真实命令、操作来源、工作目录、结果和退出状态，随时可审阅；只有在需要时才展开技术输出。
 
 <!-- section:development -->
 
