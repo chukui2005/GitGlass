@@ -83,3 +83,5 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .update-preference small{display:block;margin-top:3px;color:#667085;font-size:11px}
 .update-footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:14px 22px 18px;border-top:1px solid var(--line)}
 .update-footer button{padding:8px 12px;font-size:12px}
+
+/* 应用级提示条：发生在标题栏下方的常驻通知（合并/变基进行中等）。 */.app-notice{display:flex;align-items:center;gap:7px;padding:7px 14px;border-bottom:1px solid;font-size:12px}.app-notice.success{background:#f0fdf4;border-color:#bbe5c8;color:var(--green)}.app-notice.error{background:var(--red-soft);border-color:#f3c6c8;color:var(--red)}.app-notice span{flex:1}.app-notice-dismiss{background:none;border:0;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}

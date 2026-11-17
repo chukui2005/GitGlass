@@ -1331,17 +1331,6 @@ function App() {
   }
   async function applyState(next, preference, cycle) {
     setState(next);
-    // An in-progress merge/rebase/cherry-pick/revert explains the dirty tree, so
-    // say it once instead of letting the user guess why every action is blocked.
-    const operation = next.operation || null;
-    if (operation && operation !== operationNoticeRef.current) {
-      operationNoticeRef.current = operation;
-      const notice = operationInProgressNotice(operation);
-      if (notice) setNotice(notice);
-    } else if (!operation && operationNoticeRef.current) {
-      operationNoticeRef.current = null;
-      setNotice(operationFinishedNotice());
-    }
     const nextFile = preference || next.files[0] || null;
     setSelected(nextFile);
     if (nextFile) await loadDiff(nextFile, cycle);
@@ -1854,6 +1843,22 @@ function App() {
     recoveryOpen,
   });
   const blockingContextOpen = modalOpen || updates.open;
+  // A merge/rebase in progress is state, not a transient message: keep it
+  // visible until the user resolves it, even if a notice is dismissed.
+  const operationBanner = state?.operation ? operationInProgressNotice(state.operation) : null;
+  const workspaceBanner = operationBanner || notice;
+  // Announce the end of a merge/rebase once, after the banner disappears.
+  useEffect(() => {
+    const operation = state?.operation ?? null;
+    if (operation) {
+      operationNoticeRef.current = operation;
+      return;
+    }
+    if (operationNoticeRef.current) {
+      operationNoticeRef.current = null;
+      setNotice(operationFinishedNotice());
+    }
+  }, [state?.operation]);
   function openCommandPalette(trigger = document.activeElement) {
     paletteReturnFocusRef.current = trigger instanceof HTMLElement ? trigger : paletteTriggerRef.current;
     setPaletteOpen(true);
@@ -2095,6 +2100,19 @@ function App() {
           </button>
         </div>
       </header>
+      {workspaceBanner && (
+        <div className={`app-notice ${workspaceBanner.type}`} role="status" aria-live="polite">
+          {workspaceBanner.type === "success" ? (
+            <CheckCircle size={15} weight="fill" />
+          ) : (
+            <WarningCircle size={15} weight="fill" />
+          )}
+          <span>{workspaceBanner.text}</span>
+          {!operationBanner && (
+            <button type="button" className="app-notice-dismiss" onClick={() => setNotice(null)} aria-label="关闭提示">×</button>
+          )}
+        </div>
+      )}
       {historyMode ? <div ref={workspaceRef} id="workspace-main" className="workspace history-workspace" style={{ "--left-panel-width": `${panelWidths.left}px`, "--right-panel-width": `${panelWidths.right}px` }} tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading"><h2>历史审查</h2></div>
@@ -2656,20 +2674,6 @@ function App() {
               <p className="ledger-note">
                 用户操作与系统读取均会记录实际执行的 Git 命令；系统读取仅用于同步界面状态，不修改仓库。
               </p>
-              {notice && (
-                <div
-                  className={`notice ${notice.type}`}
-                  role="status"
-                  aria-live="polite"
-                >
-                  {notice.type === "success" ? (
-                    <CheckCircle size={16} weight="fill" />
-                  ) : (
-                    <WarningCircle size={16} weight="fill" />
-                  )}
-                  {notice.text}
-                </div>
-              )}
               <div className="ledger-list">
                 {ledgerGroups.length ? (
                   ledgerGroups.map((group, index) =>
