@@ -11,21 +11,14 @@ const NETWORK_TIMEOUT_MS = 300_000
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 const KILL_GRACE_MS = 2_000
 
-const CREDENTIAL_PATTERNS = [
-  // scheme://user:password@host -> scheme://host
-  [/[a-z][a-z0-9+.-]*:\/\/[^/\s@"']+@/gi, (match) => match.replace(/\/\/[^/\s@"']+@/, '//')],
-  // ?token=... / &access_token=... in a URL or a message
-  [/([?&](?:access_token|auth|key|password|passwd|pwd|secret|token)=)[^&\s"']+/gi, (_match, prefix) => `${prefix}<redacted>`],
-]
-
-function quoteForDisplay(value) {
-  const text = String(value)
-  return /[\s"']/.test(text) ? JSON.stringify(text) : text
-}
-
-function displayGitCommand(argv) {
-  return ['git', ...argv].map(quoteForDisplay).join(' ')
-}
+// Cheap pre-check: most output has neither a URL nor a token parameter, and
+// running the patterns over a large diff without this guard costs seconds
+// (the scheme pattern can consume the whole string before failing).
+const CREDENTIAL_HINTS = /:\/\/|[?&](?:access_token|auth|key|password|passwd|pwd|secret|token)=/i
+// Bounded quantifiers keep the patterns linear on long output; a Git remote URL
+// is far shorter than these limits.
+const URL_CREDENTIALS = /[a-z][a-z0-9+.-]{0,31}:\/\/[^/\s@"']{1,512}@/gi
+const URL_QUERY_SECRETS = /([?&](?:access_token|auth|key|password|passwd|pwd|secret|token)=)[^&\s"']+/gi
 
 /**
  * Strips credentials from Git output before it is retained or sent to the UI.
@@ -34,9 +27,20 @@ function displayGitCommand(argv) {
  * `git remote get-url`.
  */
 function redactCredentials(value) {
-  let text = String(value ?? '')
-  for (const [pattern, replacement] of CREDENTIAL_PATTERNS) text = text.replace(pattern, replacement)
+  const text = String(value ?? '')
+  if (!CREDENTIAL_HINTS.test(text)) return text
   return text
+    .replace(URL_CREDENTIALS, (match) => match.replace(/\/\/[^/\s@"']{1,512}@/, '//'))
+    .replace(URL_QUERY_SECRETS, (_match, prefix) => `${prefix}<redacted>`)
+}
+
+function quoteForDisplay(value) {
+  const text = String(value)
+  return /[\s"']/.test(text) ? JSON.stringify(text) : text
+}
+
+function displayGitCommand(argv) {
+  return ['git', ...argv].map(quoteForDisplay).join(' ')
 }
 
 /**
