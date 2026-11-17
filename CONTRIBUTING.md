@@ -33,6 +33,7 @@
 ## PR、审批与自动合并
 
 - 合并 PR 前必须同时满足 GitHub CI 的 `GitGlass CI / Quality (test and build)` 检查通过，以及至少一位维护者人工审批。
+- 同一个必需检查还会在 Windows 实际执行 `npm run dist:win` 和 `npm run verify:release`，确保安装包与更新元数据可用于发布。
 - 作者或维护者可在 PR 页面**主动**开启 GitHub 原生 Auto-merge；它不会由机器人绕过审查、状态检查或分支保护。
 - 启用 Auto-merge 后，GitHub 只会在审批和必需 CI 均满足时自动合并。未开启时仍需人工合并。
 - 分支保护和 Auto-merge 是仓库管理员在 GitHub 网页完成的一次性设置，具体步骤见 [docs/CI_CD.md](docs/CI_CD.md)。
@@ -106,9 +107,12 @@ git push -u origin <当前分支>
   ```powershell
   npm ci
   npm run dist:win
+  npm run verify:release
   ```
 
   预期在忽略的 `release/` 目录得到 EXE、ZIP 和 `SHA256SUMS.txt`。
+
+- Electron 使用延迟下载。`npm test` 和 `npm run pack:win` 的前置脚本会先执行 `install-electron`；仅执行 `npm ci` 不保证 Electron 二进制已经下载。
 
 - 发版完整流程、所需管理员配置及故障排查见 [docs/RELEASING.md](docs/RELEASING.md)。
 

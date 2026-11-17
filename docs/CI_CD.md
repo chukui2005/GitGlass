@@ -8,7 +8,7 @@ In **Settings → Branches** (or **Settings → Rules → Rulesets**), create a 
 
 1. Requires a pull request before merging.
 2. Requires at least **one approving review** from a maintainer. To make this enforceable, list the maintainers in `CODEOWNERS` and enable **Require review from Code Owners** for the protected paths.
-3. Requires the status check **`GitGlass CI / Quality (test and build)`** and requires it to be up to date before merging.
+3. Requires **`GitGlass CI / Quality (test and build)`**, with the branch up to date before merging. The same check tests the app, builds EXE/ZIP and verifies checksums and updater metadata on every PR; no additional required-check name is needed for packaging.
 4. Blocks direct pushes to `main`. If the UI offers it, restrict pushes so no ordinary contributor can push directly, and apply the rule to administrators / disallow bypassing.
 5. Optionally requires resolved conversations; this is recommended for reviewable changes.
 

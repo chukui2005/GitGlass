@@ -8,16 +8,21 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build": "vite build",
     "start": "electron .",
+    "prepare:electron": "install-electron",
+    "pretest": "npm run prepare:electron",
     "test": "vitest run",
+    "prepack:win": "npm run prepare:electron",
     "pack:win": "electron-builder --win --x64 --publish never",
     "checksum:win": "node scripts/write-release-checksums.mjs",
-    "dist:win": "npm run build && npm run pack:win && npm run checksum:win"
+    "dist:win": "npm run build && npm run pack:win && npm run checksum:win",
+    "verify:release": "node scripts/verify-release.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "6.3.0",
     "concurrently": "10.0.7",
     "electron": "45.2.3",
     "electron-builder": "^26.0.12",
+    "js-yaml": "4.3.2",
     "vite": "8.3.7",
     "vitest": "5.1.0",
     "wait-on": "9.5.1"
