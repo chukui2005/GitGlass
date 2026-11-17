@@ -61,7 +61,7 @@
   chore: pin development dependencies
   ```
 
-- 继续使用上述 Conventional Commits。Release Please 依此计算版本和生成 `CHANGELOG.md`；普通功能或修复 PR **不要手动修改版本号或 CHANGELOG**。
+- 继续使用上述 Conventional Commits，`npm run release` 会据此生成 `CHANGELOG.md` 段落；普通功能或修复 PR **不要手动修改版本号或 CHANGELOG**。
 
 - 不提交密钥、令牌、个人配置、真实仓库路径、用户日志或屏幕录制中的敏感内容。
 
@@ -100,8 +100,9 @@ git push -u origin <当前分支>
 
 ## 发版协作
 
-- 普通 PR 合并到 `main` 后，Release Please 会创建或更新单独的发版 PR；普通 PR 本身不会发布。
-- 维护者审阅并合并发版 PR 后，CI 会在对应 `v*` tag 上构建 Windows 安装包并创建 GitHub Release。
+- 普通 PR 合并到 `main` **不会**发布任何东西；发版是维护者的显式动作。
+- 版本号由维护者手写：在干净的 `main` 上执行 `npm run release -- 0.6.2`（Beta 用 `--beta`），脚本会更新 `package.json`/`package-lock.json`、写入 `CHANGELOG.md` 段落、提交 `chore(release): 0.6.2` 并打 tag。
+- 执行 `git push origin main --follow-tags` 推送 tag，CI 会在该 `v*` tag 上构建 Windows 安装包并创建 GitHub Release。
 - 本地仍可用以下命令验证 Windows 安装包；它保留 `--publish never`，不会上传任何内容：
 
   ```powershell

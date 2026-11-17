@@ -12,19 +12,19 @@
 | `README.md` / `README.zh-CN.md` | GitHub 仓库首页，双语成对 |
 | `CONTRIBUTING.md` | GitHub 会在新建 Issue/PR 时自动展示 |
 | `LICENSE` | GitHub 许可证识别 |
-| `CHANGELOG.md` | Release Please 生成，**禁止手改** |
+| `CHANGELOG.md` | 发版脚本生成，**禁止手改**（要改措辞就改提交信息或发版前手改段落） |
 | `package.json` / `package-lock.json` | npm 入口 |
 | `.node-version` | CI 与本地统一 Node 版本 |
 | `.gitignore` | — |
 | `index.html` / `vite.config.mjs` | Vite 入口 |
-| `release-please-config.json` / `.release-please-manifest.json` | Release Please 配置与清单，版本由它维护 |
+| （无）版本号只写在 `package.json`，由 `npm run release` 维护 |
 
 其他任何 `*.md` 一律进 `docs/`，不要再往根目录丢。
 
 ## 2. 目录职责
 
 ```
-.github/workflows/   CI：ci.yml（PR 校验）、release-please.yml（发版 PR）、publish-release.yml（tag → Release）
+.github/workflows/   CI：ci.yml（PR 校验）、publish-release.yml（tag → Release）
 build/               electron-builder 的 NSIS 资源（installer.nsh），名称由 electron-builder 约定，不要改
 docs/                除根目录白名单外的全部文档
   architecture.md      架构与模块边界
@@ -68,7 +68,7 @@ tests/
 - **命名**：`<area>.<kind>.test.{cjs,mjs}`，`kind` 只在 `integration` 层出现（如 `remote-sync.integration.test.cjs`）。
 - **路径约定**：子目录里的测试引用仓库根用 `path.join(__dirname, '..', '..')`，引用共用探针用 `path.join(__dirname, '..', 'support', ...)`，引用脚本用 `../../scripts/xxx.mjs`。
 - **禁止固定延时**：UI 探针统一用轮询（参考 `tests/support/update-ui.cjs` 里的 `waitUntil`），超时信息里带最后观测值——CI 冷启动比本地慢，`pause(250)` 一定会翻车。
-- **禁止版本硬编码**：测试不得写死当前版本号。需要版本时从 `package.json` 读（`tests/release/release-checksums.test.mjs` 是范例）——Release Please 一改版本，硬编码的测试必红。
+- **禁止版本硬编码**：测试不得写死当前版本号。需要版本时从 `package.json` 读（`tests/release/release-checksums.test.mjs` 是范例）——版本一改，硬编码的测试必红。
 - **不访问外网**：需要网络的逻辑用本地 `http://127.0.0.1:<port>` 假服务或 mock。
 
 ## 5. 源码规范（摘要）
@@ -91,14 +91,14 @@ tests/
 | `.screenshots/`、`.trae-html-share-packages/` | 截图与 IDE 分享缓存 |
 | `coverage/`、`.vitest/` | 测试覆盖率与缓存 |
 
-必须提交（即使看起来像生成物）：`CHANGELOG.md`、`.release-please-manifest.json`、`build/installer.nsh`、`docs/assets/readme/*`、`public/*`。
+必须提交（即使看起来像生成物）：`CHANGELOG.md`、`build/installer.nsh`、`docs/assets/readme/*`、`public/*`。
 
 ## 7. 分支、提交与 PR
 
 - 分支：`feat/…`、`fix/…`、`chore/…`、`docs/…`、`ci/…`；合并后立即删除。
-- 提交/PR 标题必须符合 Conventional Commits，因为 Release Please 靠它算版本。**禁止**用 `feat!:` / `BREAKING CHANGE`，除非确实要跳到下一个大版本（0.x 上会直接变 1.0.0）。
+- 提交/PR 标题必须符合 Conventional Commits：`CHANGELOG.md` 按它分组，`feat!:` / `BREAKING CHANGE` 才会被标成破坏性变更。
 - 一个 PR 只做一件事；文档改动与行为改动分开提交。
-- 合并方式：`Rebase and merge` 或 `Squash and merge`（标题即 conventional）。避免普通 merge commit —— 它的 body 会被 Release Please 二次解析，导致 CHANGELOG 出现重复条目。
+- 合并方式：`Rebase and merge`（保留逐条提交）或 `Squash and merge`（一个 PR 一条，标题必须是 conventional）。避免普通 merge commit：历史变非线性，且 CHANGELOG 容易重复。
 
 ## 8. 发版
 
@@ -106,10 +106,10 @@ tests/
 
 1. **版本号只能有一处来源**：`package.json`。任何脚本/测试写死版本号都是定时炸弹。
 2. **CI 上的 Electron 二进制**：`npm ci` 后必须 `npm run prepare:electron`（`pretest`/`prepack:win` 已挂好钩子），否则 `dist:win` 在 runner 上直接失败。
-3. **tag 与 Release 必须一一对应**：Release Please 打 tag，`publish-release.yml` 建 Release；发版 PR 合并后先确认 tag 出现、再确认 Release 出现。曾出现过"只有 tag 没有 Release"的孤儿版本。
+3. **tag 与 Release 必须一一对应**：`npm run release` 打 tag、`push --follow-tags` 触发 `publish-release.yml` 建 Release；推完后先确认 tag 出现、再确认 Release 出现。曾出现过"只有 tag 没有 Release"的孤儿版本。
 4. **发布前本地跑一次** `npm run dist:win`；`verify-release` 会校验 tag/版本/5 个产物/latest.yml 的 sha512。
-5. **版本号只在 `0.x` 里慢慢走**：`feat`/`fix` 只加 patch（`0.6.9 → 0.6.10`），`feat!` 才加 minor（`0.7.0`），永远不自动到 `1.0.0`。对应 `release-please-config.json` 的 `bump-patch-for-minor-pre-major` / `bump-minor-pre-major`，详见 [releasing.md](releasing.md#version-policy)。
-6. **`prerelease` 必须是 `false`**：GitHub 的 **Latest** 徽标与仓库侧栏 Releases 卡片只认"最新的非 prerelease release"。所有版本都标 prerelease 会让首页看不到任何正式版本；Beta 只用带 `-beta.N` 的 tag 单独发。
+5. **版本号只在 `0.x` 里慢慢走**：手写 `0.6.9 → 0.6.10`，`0.7.0` 留给破坏性变更，`1.0.0` 必须手动决定。详见 [releasing.md](releasing.md#version-policy)。
+6. **正式版不要标 prerelease**：GitHub 的 **Latest** 徽标与仓库侧栏 Releases 卡片只认"最新的非 prerelease release"。Beta 只用带 `-beta.<日期>.<序号>` 的 tag 单独发。
 
 ## 9. 清理规范（容易忘）
 

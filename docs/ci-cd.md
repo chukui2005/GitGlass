@@ -12,23 +12,19 @@ In **Settings → Branches** (or **Settings → Rules → Rulesets**), create a 
 4. Blocks direct pushes to `main`. If the UI offers it, restrict pushes so no ordinary contributor can push directly, and apply the rule to administrators / disallow bypassing.
 5. Optionally requires resolved conversations; this is recommended for reviewable changes.
 
+One consequence to plan for: the manual release step commits `chore(release): <version>` on `main`. Either allow that specific commit through a bypass you control, or push the release commit through a short-lived PR (the commit and tag can be pushed together, and the tag stays the publishing trigger). Document whichever you choose before the first release.
+
 Do not configure a bot account to bypass this rule. The repository workflow files cannot enforce these GitHub settings on their own.
 
 ## Enable native Auto-merge
 
 In **Settings → General → Pull Requests**, enable **Allow auto-merge**. Then an author or maintainer can select Auto-merge on an individual PR. GitHub merges it only after the required approval and CI check pass; it does not force a merge or bypass the branch rule.
 
-## Enable Release Please and publishing
+## Enable publishing
 
-In **Settings → Secrets and variables → Actions**, add the repository secret `RELEASE_PLEASE_TOKEN`:
+Publishing needs no repository secret. A maintainer runs `npm run release -- <version>` and pushes the tag (`git push origin main --follow-tags`); a tag pushed by a real user starts `Publish Release` like any other push event. This is deliberate: a tag created by the built-in `GITHUB_TOKEN` does not trigger another workflow, which is why bot-driven releases needed a personal token and this flow does not.
 
-- Create a **fine-grained personal access token**. Do not use a GitHub App installation token directly: it expires after one hour, while this workflow expects a saved repository secret.
-- Limit it to this repository with **Contents: read/write** and **Pull requests: read/write** only.
-- Do not use a token in source files, workflow logs, command lines, or documentation examples.
-
-The token is necessary so Release Please can create the draft prerelease and its matching `v*` tag after a merged release PR. The tag triggers `Publish Release`, which uploads the Windows assets and publishes that draft. The built-in `GITHUB_TOKEN` intentionally does not trigger follow-on workflows from its own events.
-
-Under **Settings → Actions → General**, allow repository Actions to run and do not grant broad default write permissions. The workflows request their own minimal permissions: CI reads contents, Release Please can write release PRs/tags, the Windows build job reads contents, and only the final GitHub Release job gets `contents: write`.
+Under **Settings → Actions → General**, allow repository Actions to run and do not grant broad default write permissions. The workflows request their own minimal permissions: CI reads contents, the Windows build job reads contents, and only the final GitHub Release job gets `contents: write`.
 
 ## Optional Windows signing
 
