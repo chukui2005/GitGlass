@@ -1467,6 +1467,9 @@ function App() {
       setDiffMessage("无法读取此文件的差异。请刷新工作区后重试；诊断信息已保留在命令账本。");
     } else if (binaryDiffPattern.test(result.stdout || "")) {
       setDiffMessage("这是二进制文件，Git 无法显示文本差异。请在命令账本查看诊断信息。");
+    } else if (result.outputTruncated) {
+      setDiff(result.stdout || "");
+      setDiffMessage("Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。");
     } else if (!result.stdout) {
       setDiffMessage("没有可显示的文本差异。文件状态可能已变化，请刷新工作区后重试。");
     } else {

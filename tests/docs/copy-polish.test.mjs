@@ -86,6 +86,7 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(mainProcess).toContain('此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。')
     expect(renderer).toContain('工作区干净，没有待暂存的改动。')
     expect(renderer).toContain('没有已暂存的改动。')
+    expect(renderer).toContain('Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。')
     expect(renderer).toContain('disabled={loading}')
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     expect(renderer).toContain('onClick={refreshFromUser}')
