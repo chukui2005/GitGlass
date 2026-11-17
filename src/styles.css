@@ -56,3 +56,30 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 
 /* Diff 审阅坐标：左右标尺分别指向旧版与新版，方便直接定位改动。 */
 .diff-line{display:grid;grid-template-columns:46px 46px 24px max-content}.diff-line>.diff-line-number{width:auto;padding-right:10px;color:#98a2b3;text-align:right;user-select:none}.diff-line>.diff-marker{width:auto;padding-right:0;color:#98a2b3;text-align:center;user-select:none}.diff-line.plus .diff-line-number,.diff-line.plus .diff-marker{background:#e0f1e5;color:var(--green)}.diff-line.minus .diff-line-number,.diff-line.minus .diff-marker{background:#fbe2e3;color:var(--red)}.diff-line.hunk{color:#285ea8}.diff-line.file,.diff-line.file-path,.diff-line.metadata,.diff-line.binary{grid-template-columns:112px max-content;margin-top:2px;padding:3px 28px 3px 20px;color:#475467;font-size:11px}.diff-line.file{margin-top:8px;background:#f4f6f8;color:#17202a;font-weight:650}.diff-line.file-path.old{color:#a6313b}.diff-line.file-path.new{color:#176b35}.diff-line.binary{background:#fff7ed;color:#9a5400}.diff-label{padding-right:10px;color:#667085;font-weight:600;text-align:right}.diff-line.file .diff-label{color:#344054}
+/* Application updates use a native modal so focus and repository interaction
+   stay contained while a user explicitly prepares a restart. */
+.update-trigger{position:relative;min-width:30px;justify-content:center}
+.update-dot{position:absolute;right:3px;top:4px;width:6px;height:6px;border-radius:50%;background:#d92d20;box-shadow:0 0 0 2px var(--surface)}
+.update-dialog{width:min(480px,calc(100vw - 40px));max-height:calc(100vh - 64px);padding:0;border:1px solid #d0d5dd;border-radius:10px;background:var(--surface,#fff);color:var(--text,#17202a);box-shadow:0 20px 64px #10182826;overflow:auto}
+.update-dialog::backdrop{background:#10182840}
+.update-heading{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line)}
+.update-heading span{font-size:11px;color:var(--muted)}
+.update-heading h2{margin:3px 0 0;font-size:17px;font-weight:650}
+.update-body{display:grid;gap:14px;padding:20px 22px}
+.update-body p{margin:0;font-size:12px;line-height:1.7}
+.update-version{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
+.update-version span{flex:none;padding:3px 8px;border-radius:4px;background:#f2f4f7;color:#667085;font-size:10px}
+.update-body .update-latest{font-size:15px;font-weight:650;color:#175cd3}
+.update-status{color:#667085}
+.update-progress{display:flex;align-items:center;gap:12px;font-size:11px;color:#667085}
+.update-progress progress{flex:1;min-width:0;height:8px;accent-color:#2563eb}
+.update-notes{padding:12px;border:1px solid #e4e7ec;border-radius:5px;font-size:12px}
+.update-notes summary{cursor:pointer;font-weight:600}
+.update-notes pre{max-height:180px;overflow:auto;margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#475467;font:12px/1.65 var(--font,sans-serif)}
+.update-body .update-error{color:#b42318}
+.update-body .update-warning{color:#93370d}
+.update-preference{display:flex;align-items:flex-start;gap:9px;padding-top:6px;font-size:12px;line-height:1.6;cursor:pointer}
+.update-preference input{margin-top:3px;accent-color:#2563eb}
+.update-preference small{display:block;margin-top:3px;color:#667085;font-size:11px}
+.update-footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:14px 22px 18px;border-top:1px solid var(--line)}
+.update-footer button{padding:8px 12px;font-size:12px}

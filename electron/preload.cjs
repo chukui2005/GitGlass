@@ -1,6 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('gitglass', {
+  getUpdateState: () => ipcRenderer.invoke('update:state'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  setAutomaticUpdates: (value) => ipcRenderer.invoke('update:automatic', value),
+  installUpdate: (session) => ipcRenderer.invoke('update:install', session),
+  getUpdateResume: () => ipcRenderer.invoke('update:resume'),
+  consumeUpdateResume: () => ipcRenderer.invoke('update:resume-consumed'),
+  onUpdateState: (callback) => {
+    const listener = (_event, state) => callback(state)
+    ipcRenderer.on('update:changed', listener)
+    return () => ipcRenderer.removeListener('update:changed', listener)
+  },
   chooseRepository: () => ipcRenderer.invoke('repo:choose'),
   getState: () => ipcRenderer.invoke('repo:state'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),
