@@ -8,15 +8,21 @@ GitGlass uses a reviewed, two-stage release process. Maintainers do not manually
 2. After the PR is approved and merged, Release Please parses the Conventional Commits and creates or updates a separate release PR. It maintains the version, `package-lock.json`, and `CHANGELOG.md`; do not edit those release-managed files in normal PRs.
 3. A maintainer reviews the release PR. Merging it is the explicit confirmation to release. A normal feature PR never publishes a release by itself.
 4. Release Please creates the corresponding `v<version>` tag. The tag starts `Publish Release` on a Windows runner.
-5. The publishing workflow runs `npm ci` and `npm run dist:win`, verifies the three expected files, then creates the GitHub Release for that tag and uploads the assets.
+5. The publishing workflow runs `npm ci` and `npm run dist:win`, verifies the expected files, uploads them to a draft GitHub Release, then publishes the complete release. Tags containing a prerelease suffix are marked as GitHub prereleases.
 
 The published assets are:
 
 - `GitGlass-Setup-<version>-x64.exe`
 - `GitGlass-<version>-win-x64.zip`
+- `GitGlass-Setup-<version>-x64.exe.blockmap`
+- `latest.yml`
 - `SHA256SUMS.txt`
 
 The package command retains `--publish never`; electron-builder never uploads artifacts directly.
+
+`latest.yml` and the EXE must come from the same build. The Windows NSIS updater reads the manifest and checks SHA-512 before offering installation. Keep the blockmap with the release so differential downloads work; the updater can fall back to a full download. GitHub provider prereleases use the GitHub release flag; `latest.yml` is intentionally also included in Beta releases (the provider supports this fallback). Do not change the installed application ID, owner/repository or artifact naming without planning compatibility for existing clients.
+
+The first version with an updater must be installed manually once. Previous builds have no update code. Windows ZIP builds remain manual downloads; only NSIS installs receive the `resources/gitglass-installed` marker required to enable in-app updates. See [in-app updates and acceptance](UPDATES.md).
 
 ## One-time administrator checklist
 
