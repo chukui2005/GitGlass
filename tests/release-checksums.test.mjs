@@ -2,13 +2,18 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeReleaseChecksums } from '../scripts/write-release-checksums.mjs'
 
 const temporaryDirectories = []
+// The writer defaults to the package version, which Release Please owns. Deriving the
+// expected names from the same source keeps this test green in release pull requests.
+const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const { version: packageVersion } = JSON.parse(fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8'))
 const expectedFiles = [
-  'GitGlass-Setup-0.5.6-beta.1-x64.exe',
-  'GitGlass-0.5.6-beta.1-win-x64.zip',
+  `GitGlass-Setup-${packageVersion}-x64.exe`,
+  `GitGlass-${packageVersion}-win-x64.zip`,
 ]
 
 function makeReleaseDirectory() {
