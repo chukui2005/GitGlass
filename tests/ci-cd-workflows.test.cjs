@@ -34,6 +34,7 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(releasePlease).toContain('token: ${{ secrets.RELEASE_PLEASE_TOKEN }}')
     expect(releasePlease).toContain('googleapis/release-please-action@')
     expect(releaseConfig['release-type']).toBe('node')
+    expect(releaseConfig['include-component-in-tag']).toBe(false)
     expect(releaseConfig['include-v-in-tag']).toBe(true)
     expect(releaseConfig['skip-github-release']).toBe(true)
     expect(releaseConfig.packages['.']['changelog-path']).toBe('CHANGELOG.md')
