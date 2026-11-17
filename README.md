@@ -108,7 +108,7 @@ npm install
 npm run dev
 ```
 
-For deeper material, see [Architecture](ARCHITECTURE.md), [Design v2](DESIGN_V2.md), [QA report](QA_REPORT.md), [release instructions](docs/RELEASING.md), and [contributing](CONTRIBUTING.md).
+For deeper material, see [Architecture](docs/architecture.md), [Design](docs/design.md), [QA report](docs/archive/qa-v0.4.md), [release instructions](docs/releasing.md), and [contributing](CONTRIBUTING.md).
 
 <!-- section:security -->
 
