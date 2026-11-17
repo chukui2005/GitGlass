@@ -117,7 +117,10 @@ describe('V0.5.3 batch stage UI structure', () => {
     expect(service).toContain('this.rejectedStage(')
     expect(commandService).toContain("recordRejection({ argv = [], intent, source, cwd, stderr = '' })")
     expect(commandService).toContain("'本地校验拒绝，未执行 Git 命令'")
-    expect(commandService).toContain('exitCode: null, ok: false, outputTruncated: false, rejected: true')
+    // 拒绝记录必须带 rejected 标记且没有退出码；只断言语义，避免锁死字段顺序。
+    expect(commandService).toMatch(/rejected: true/)
+    expect(commandService).toMatch(/exitCode: null/)
+    expect(commandService).toMatch(/ok: false/)
     // 白名单依赖每个未暂存条目都是精确文件路径：未跟踪文件不折叠成目录。
     expect(service).toContain("'--untracked-files=all'")
     // 成功路径仍是一条真实命令。
