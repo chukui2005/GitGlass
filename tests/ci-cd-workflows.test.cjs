@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { load } = require('js-yaml')
 
 const root = path.join(__dirname, '..')
 const read = (...segments) => fs.readFileSync(path.join(root, ...segments), 'utf8')
@@ -9,6 +10,18 @@ describe('GitHub CI/CD workflow configuration', () => {
   const releasePlease = read('.github', 'workflows', 'release-please.yml')
   const publish = read('.github', 'workflows', 'publish-release.yml')
   const releaseConfig = JSON.parse(read('release-please-config.json'))
+
+  it('keeps actual package builds in read-only PR CI and gates publishing on them', () => {
+    const checks = load(ci)
+    const release = load(publish)
+    expect(checks.permissions).toEqual({ contents: 'read' })
+    expect(checks.jobs.quality.permissions).toBeUndefined()
+    expect(checks.jobs.quality.steps.filter((step) => step.run).map((step) => step.run))
+      .toEqual(['npm ci', 'npm test', 'npm run build', 'npm run dist:win', 'npm run verify:release'])
+    expect(release.jobs['build-windows-release'].steps.find((step) => step.run === 'npm run verify:release').env)
+      .toEqual({ TAG_NAME: '${{ github.ref_name }}' })
+    expect(release.jobs['create-github-release'].needs).toBe('build-windows-release')
+  })
 
   it('runs a stable, read-only quality check for main PRs and pushes', () => {
     expect(ci).toContain('name: GitGlass CI')
@@ -53,10 +66,13 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(publish).toMatch(/create-github-release:[\s\S]*?permissions:\s*\n\s*contents: write/)
     expect(publish).toMatch(/build-windows-release:[\s\S]*?uses: actions\/upload-artifact@/)
     expect(publish).toMatch(/create-github-release:[\s\S]*?uses: actions\/download-artifact@/)
-    expect(publish).toContain('release/GitGlass-Setup-$version-x64.exe')
-    expect(publish).toContain('release/GitGlass-$version-win-x64.zip')
+    expect(publish).toContain('run: npm run verify:release')
+    expect(ci).toContain('run: npm run dist:win')
+    expect(ci).toContain('run: npm run verify:release')
+    expect(publish).toContain('release/GitGlass-Setup-*-x64.exe')
+    expect(publish).toContain('release/GitGlass-*-win-x64.zip')
     expect(publish).toContain('release/SHA256SUMS.txt')
-    expect(publish).toContain('release/GitGlass-Setup-$version-x64.exe.blockmap')
+    expect(publish).toContain('release/GitGlass-Setup-*-x64.exe.blockmap')
     expect(publish).toContain('release/latest.yml')
     expect(publish).toContain("prerelease: ${{ contains(github.ref_name, '-') }}")
     expect(publish).toContain('draft: true')

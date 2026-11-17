@@ -13,6 +13,8 @@ describe('Windows beta packaging configuration', () => {
     expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/)
     expect(packageJson.private).toBe(true)
     expect(packageJson.devDependencies['electron-builder']).toBeTruthy()
+    expect(packageJson.scripts['prepare:electron']).toBe('install-electron')
+    expect(packageJson.scripts['prepack:win']).toBe('npm run prepare:electron')
     expect(packageJson.scripts['pack:win']).toContain('--win --x64 --publish never')
     expect(packageJson.scripts['checksum:win']).toBe('node scripts/write-release-checksums.mjs')
     expect(packageJson.scripts['dist:win']).toBe('npm run build && npm run pack:win && npm run checksum:win')

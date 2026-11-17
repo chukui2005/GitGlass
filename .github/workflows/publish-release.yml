@@ -29,26 +29,9 @@ jobs:
       - name: Build Windows artifacts
         run: npm run dist:win
       - name: Verify release artifacts
-        shell: pwsh
         env:
           TAG_NAME: ${{ github.ref_name }}
-        run: |
-          $version = (node -p "require('./package.json').version").Trim()
-          if ($env:TAG_NAME -ne "v$version") {
-            throw "Tag $env:TAG_NAME does not match package version v$version."
-          }
-
-          $requiredFiles = @(
-            "release/GitGlass-Setup-$version-x64.exe",
-            "release/GitGlass-$version-win-x64.zip",
-            "release/GitGlass-Setup-$version-x64.exe.blockmap",
-            'release/latest.yml',
-            'release/SHA256SUMS.txt'
-          )
-          $missingFiles = $requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }
-          if ($missingFiles) {
-            throw "Missing release artifact(s): $($missingFiles -join ', ')"
-          }
+        run: npm run verify:release
       - name: Store verified release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
