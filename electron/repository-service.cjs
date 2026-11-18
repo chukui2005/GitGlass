@@ -21,6 +21,7 @@ const DIFF_OUTPUT_BYTES = 1024 * 1024
 const HISTORY_QUERY_LIMIT = 200
 const HISTORY_DEFAULT_LIMIT = 80
 const HISTORY_PRETTY = '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'
+// eslint-disable-next-line no-control-regex -- strips control characters from git output on purpose
 const controlCharacter = /[\u0000-\u001f\u007f]/
 
 // A merge, rebase, cherry-pick or revert left in progress is not a dirty

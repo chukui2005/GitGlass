@@ -61,6 +61,9 @@ export function intentLabel(record) {
 // 这里只在展示时转换；命令记录中的原始 stdout 仍原样保留，审计不受影响。
 export function formatLedgerOutput(value) {
   if (typeof value !== 'string' || !value) return ''
+  // Matching control characters is this function's whole job; the rule exists to
+  // stop them appearing in ordinary patterns, so it is disabled for the block.
+  /* eslint-disable no-control-regex */
   return value
     .replace(/\r\n?/g, '\n')
     .replace(/\u001e/g, '\n') // 记录分隔符 → 换行
@@ -71,6 +74,7 @@ export function formatLedgerOutput(value) {
     .replace(/\n{3,}/g, '\n\n')
     // 只裁掉首尾空行；porcelain 状态码前导空格是有意义的数据，不能 trim 掉。
     .replace(/^\n+|\n+$/g, '')
+  /* eslint-enable no-control-regex */
 }
 
 export function recordTypeLabel(source) {

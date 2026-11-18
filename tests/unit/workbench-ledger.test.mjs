@@ -88,6 +88,7 @@ describe('V0.5.2 ledger output formatting', () => {
     const raw = `a${String.fromCharCode(7)}b${String.fromCharCode(27)}c\ufffdd\r\ne`
     const text = formatLedgerOutput(raw)
     expect(text).toBe('abcd\ne')
+    // eslint-disable-next-line no-control-regex -- the assertion is about control characters
     expect(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\ufffd]/.test(text)).toBe(false)
   })
 

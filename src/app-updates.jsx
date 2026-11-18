@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DownloadSimple, X } from '@phosphor-icons/react';
 
 export function useAppUpdates() {

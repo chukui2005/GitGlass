@@ -66,7 +66,7 @@ function describeRecent(paths, exists = fs.existsSync) {
     try {
       present = exists(entry)
     } catch {
-      present = false
+      // A path we cannot stat is reported as missing rather than crashing the list.
     }
     return { path: entry, name: path.basename(entry) || entry, exists: present }
   })

@@ -2,7 +2,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { GitCommandService } = require('../../electron/git-command-service.cjs')
-const { RepositoryService, HISTORY_QUERY_LIMIT } = require('../../electron/repository-service.cjs')
+const { RepositoryService } = require('../../electron/repository-service.cjs')
 
 async function fixture() {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-history-query-'))

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CaretDown, Trash } from "@phosphor-icons/react";
 
 const RECENT_LIMIT = 5;
