@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
@@ -7,7 +7,6 @@ import {
   CheckCircle,
   CircleNotch,
   Copy,
-  DownloadSimple,
   File,
   FolderOpen,
   GitBranch,
@@ -18,7 +17,6 @@ import {
   Plus,
   TerminalWindow,
   Trash,
-  UploadSimple,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
@@ -1158,7 +1156,8 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
             </button>
           )) : <p className="palette-empty">没有匹配的操作。</p>}
         </div>
-        <p className="palette-hint">↑↓ 选择　Enter 执行　Esc 关闭</p>
+        {/* U+3000 keeps the full-width gap between the three shortcuts. */}
+        <p className="palette-hint">↑↓ 选择{"\u3000"}Enter 执行{"\u3000"}Esc 关闭</p>
       </section>
     </div>
   );
