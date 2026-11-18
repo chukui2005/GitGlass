@@ -45,6 +45,7 @@ import { BrandMark } from "./brand-mark.jsx";
 import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
+import { AUTO_DISMISS_MS, createNoticeTimer, syncNoticeTimer } from "./notice-lifecycle.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
@@ -1160,6 +1161,10 @@ function App() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
+  // 悬停或聚焦在横幅内（含 × / 钉住按钮）时暂停自动收起，离开后重新计时。
+  // 拆成两个标志，避免"鼠标离开但焦点还在横幅里"被误判成可以继续计时。
+  const [noticeHovered, setNoticeHovered] = useState(false);
+  const [noticeFocused, setNoticeFocused] = useState(false);
   const [branchPlan, setBranchPlan] = useState(null);
   const [remotePlan, setRemotePlan] = useState(null);
   const [safetyPlan, setSafetyPlan] = useState(null);
@@ -1183,6 +1188,14 @@ function App() {
   // Last merge/rebase/cherry-pick/revert state we already told the user about,
   // so a background refresh does not repeat the same banner every cycle.
   const operationNoticeRef = useRef(null);
+  // 瞬时通知（成功/失败）的自动收起计时器。只创建一次，onExpire 里再把通知置空；
+  // 「仓库处于合并/变基中」的状态横幅永远不进入这个计时器（见 notice-lifecycle.js）。
+  const noticeTimerRef = useRef(null);
+  if (!noticeTimerRef.current) {
+    noticeTimerRef.current = createNoticeTimer({
+      onExpire: () => setNotice((current) => (current && !current.pinned ? null : current)),
+    });
+  }
   const refreshCycles = useRef(new Map());
   const historySearchRef = useRef(null);
   const historyQuerySequence = useRef(0);
@@ -1913,6 +1926,25 @@ function App() {
   // visible until the user resolves it, even if a notice is dismissed.
   const operationBanner = state?.operation ? operationInProgressNotice(state.operation) : null;
   const workspaceBanner = operationBanner || notice;
+  const noticeWaiting = noticeHovered || noticeFocused;
+  // 瞬时通知出现（或被新内容替换）就开始计时；文案变化会重新计满整段时间。
+  // 依赖只放 notice 对象和 state.operation 原始值：operationBanner 每次渲染都是
+  // 新对象，放进依赖会让计时器被无限重启，6 秒永远走不完。
+  useEffect(() => {
+    syncNoticeTimer(noticeTimerRef.current, { notice, operationBanner });
+  }, [notice, state?.operation]);
+  // 悬停/聚焦暂停；离开后重新计满整段时间，所以不会"鼠标一离开就消失"。
+  useEffect(() => {
+    if (noticeWaiting) noticeTimerRef.current.pause();
+    else noticeTimerRef.current.resume();
+  }, [noticeWaiting, notice, state?.operation]);
+  // 横幅被 × 或自动收起时不会有 mouseleave，暂停标志必须在新通知出现时归零，
+  // 否则下一条通知会一出现就处于暂停状态，再也不自动收起。
+  useEffect(() => {
+    setNoticeHovered(false);
+    setNoticeFocused(false);
+  }, [notice]);
+  useEffect(() => () => noticeTimerRef.current.cancel(), []);
   // Announce the end of a merge/rebase once, after the banner disappears.
   useEffect(() => {
     const operation = state?.operation ?? null;
@@ -2174,7 +2206,17 @@ function App() {
         </div>
       </header>
       {workspaceBanner && (
-        <div className={`app-notice ${workspaceBanner.type}`} role="status" aria-live="polite">
+        <div
+          className={`app-notice ${workspaceBanner.type}`}
+          role="status"
+          aria-live="polite"
+          onMouseEnter={() => setNoticeHovered(true)}
+          onMouseLeave={() => setNoticeHovered(false)}
+          onFocus={() => setNoticeFocused(true)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setNoticeFocused(false);
+          }}
+        >
           {workspaceBanner.type === "success" ? (
             <CheckCircle size={15} weight="fill" />
           ) : (
@@ -2182,7 +2224,18 @@ function App() {
           )}
           <span>{workspaceBanner.text}</span>
           {!operationBanner && (
-            <button type="button" className="app-notice-dismiss" onClick={() => setNotice(null)} aria-label="关闭提示">×</button>
+            <>
+              <button
+                type="button"
+                className="app-notice-pin"
+                aria-pressed={Boolean(notice?.pinned)}
+                title={notice?.pinned ? "取消钉住：恢复自动收起" : `钉住提示：不再自动收起（默认 ${AUTO_DISMISS_MS / 1000} 秒后收起）`}
+                onClick={() => setNotice((current) => (current ? { ...current, pinned: !current.pinned } : current))}
+              >
+                {notice?.pinned ? "已钉住" : "钉住"}
+              </button>
+              <button type="button" className="app-notice-dismiss" onClick={() => setNotice(null)} aria-label="关闭提示">×</button>
+            </>
           )}
         </div>
       )}
