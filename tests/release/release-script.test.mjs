@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextBetaVersion, parseConventionalSubject, renderChangelogSection } from '../../scripts/release.mjs'
+import { nextBetaVersion, parseConventionalSubject, renderChangelogSection, selectPreviousTag } from '../../scripts/release.mjs'
 
 function commit(subject, hash = 'a'.repeat(40)) {
   const parsed = parseConventionalSubject(subject)
@@ -61,5 +61,22 @@ describe('manual release helpers', () => {
       .toBe('0.6.2-beta.20261118.4')
     // A withdrawn beta leaves its number behind: never reuse a lower sequence.
     expect(nextBetaVersion('0.6.2', ['v0.6.2-beta.20261118.7'], '20261118')).toBe('0.6.2-beta.20261118.8')
+  })
+})
+
+describe('previous release selection', () => {
+  it('counts prerelease tags so the changelog does not start from the first commit', () => {
+    expect(selectPreviousTag(['v0.5.6-beta.1', 'v0.6.0-beta.1', 'v0.6.1-beta.1'], '0.6.1')).toBe('v0.6.1-beta.1')
+  })
+
+  it('picks the highest tag at or below the current version', () => {
+    expect(selectPreviousTag(['v0.6.1', 'v0.6.2', 'v0.6.10'], '0.6.2')).toBe('v0.6.2')
+    expect(selectPreviousTag(['v0.6.9', 'v0.6.10'], '0.6.10')).toBe('v0.6.10')
+  })
+
+  it('ignores noise and reports no previous release for a fresh repository', () => {
+    expect(selectPreviousTag([], '0.6.1')).toBeNull()
+    expect(selectPreviousTag(['nightly', 'not-a-tag'], '0.6.1')).toBeNull()
+    expect(selectPreviousTag(['nightly', 'v0.6.1-beta.1'], '0.6.1')).toBe('v0.6.1-beta.1')
   })
 })
