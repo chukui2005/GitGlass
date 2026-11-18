@@ -1336,10 +1336,11 @@ function App() {
     automaticRefresh.current.hasRepository = Boolean(repo);
   });
   // 窗口重新获得焦点、或主进程在 .git 上看到变化（终端里 commit / 切换分支）
-  // 时静默刷新一次：不弹通知、不打开账本。loading、静默刷新进行中、以及刷新
-  // 结束后 1 秒内的事件一律丢弃，与主进程静默窗一起掐断自触发循环。
+  // 时静默刷新一次：不弹通知、不打开账本。loading、静默刷新进行中一律丢弃；
+  // 刷新结束后 1 秒内的事件也丢弃，但与 index 无关的 HEAD / refs 变化可以穿过
+  // 静默窗（见 src/auto-refresh.js），这样"终端里连续 add + commit"不会漏掉。
   useEffect(() => {
-    const triggerAutomaticRefresh = async () => {
+    const triggerAutomaticRefresh = async (reason = "") => {
       const guard = automaticRefresh.current;
       if (
         !shouldRefreshOnChange({
@@ -1347,6 +1348,7 @@ function App() {
           refreshing: guard.refreshing,
           hasRepository: guard.hasRepository,
           lastRefreshAt: guard.lastRefreshAt,
+          reason,
         })
       )
         return;
@@ -1360,13 +1362,18 @@ function App() {
         guard.lastRefreshAt = Date.now();
       }
     };
-    const unsubscribe = window.gitglass.onRepositoryChanged?.(() => {
-      triggerAutomaticRefresh();
-    });
-    window.addEventListener("focus", triggerAutomaticRefresh);
+    const onRepositoryChanged = (payload) => {
+      triggerAutomaticRefresh(payload?.reason || "");
+    };
+    // 聚焦事件必须显式传空串，否则 FocusEvent 会被当成 reason 传进策略函数。
+    const onWindowFocus = () => {
+      triggerAutomaticRefresh("");
+    };
+    const unsubscribe = window.gitglass.onRepositoryChanged?.(onRepositoryChanged);
+    window.addEventListener("focus", onWindowFocus);
     return () => {
       if (typeof unsubscribe === "function") unsubscribe();
-      window.removeEventListener("focus", triggerAutomaticRefresh);
+      window.removeEventListener("focus", onWindowFocus);
     };
   }, []);
   const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
