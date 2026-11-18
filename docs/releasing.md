@@ -6,23 +6,35 @@ GitGlass ships from `main` with a manual, two-command release. A human chooses t
 
 1. Contributors open normal PRs against `main` and use Conventional Commits (`feat:`, `fix:`, …). The read-only `GitGlass CI / Quality (test and build)` check runs `npm ci`, `npm test`, `npm run build`, `npm run dist:win` and `npm run verify:release`.
 2. Merge the PRs you want in the release. Nothing publishes automatically — merging a normal PR never creates a tag.
-3. On a clean `main`, run the release helper:
+3. Release from a branch: `main` is protected, so the release commit cannot be pushed directly. On a clean branch run:
 
    ```powershell
-   npm run release -- 0.6.2          # 稳定版
-   npm run release -- 0.6.2 --beta   # Beta：tag 变成 v0.6.2-beta.20261118.1
+   git switch -c chore/release-0.6.2 origin/main
+   npm run release -- 0.6.2 --no-tag     # 稳定版
+   npm run release -- 0.6.2 --beta --no-tag
    npm run release -- 0.6.2 --dry-run
    ```
 
-   The script refuses to run unless you are on `main` with a clean worktree, the new version is higher than `package.json`, and the tag does not exist yet. It then writes `package.json`, `package-lock.json` and the `CHANGELOG.md` section, commits `chore(release): <version>`, and creates the annotated tag.
-4. Push the commit and the tag:
+   `--no-tag` writes `package.json`, `package-lock.json` and the `CHANGELOG.md` section, commits `chore(release): <version>`, and prints the PR and tagging steps. The helper refuses to run unless the worktree is clean, the new version is higher than `package.json`, and the tag does not exist yet.
+4. Push the branch and merge the release pull request with **Rebase and merge**:
 
    ```powershell
-   git push origin main --follow-tags
+   git push -u origin chore/release-0.6.2
    ```
 
-   The locally pushed tag starts `Publish Release`. This is the one reason the flow does not need a personal access token: a tag pushed by a real user triggers workflows, while a tag created by the built-in `GITHUB_TOKEN` does not.
-5. `Publish Release` runs `npm ci`, `npm run dist:win` and `npm run verify:release` on a Windows runner. Verification checks all five non-empty assets, the tag/package version, EXE/ZIP SHA-256, and the installer's version, size and SHA-512 in `latest.yml`. It uploads them to a draft release and only then publishes it. Tags containing a prerelease suffix are published as GitHub prereleases.
+5. Tag the merged commit. Never tag a commit from before the merge: its `package.json` still holds the previous version.
+
+   ```powershell
+   git fetch origin main
+   git show origin/main:package.json | Select-String '"version"'   # 必须等于要打的 tag
+   git tag -a v0.6.2 -m "GitGlass v0.6.2" origin/main
+   git push origin v0.6.2
+   ```
+
+   The pushed tag starts `Publish Release`. This is why the flow needs no personal access token: a tag pushed by a person triggers workflows, while a tag created by the built-in `GITHUB_TOKEN` does not.
+
+   On an unprotected repository the branch is optional: run `npm run release -- 0.6.2` on `main`, then `git push origin main --follow-tags`. Keep the tag/version verification either way.
+6. `Publish Release` runs `npm ci`, `npm run dist:win` and `npm run verify:release` on a Windows runner. Verification checks all five non-empty assets, the tag/package version, EXE/ZIP SHA-256, and the installer's version, size and SHA-512 in `latest.yml`. It uploads them to a draft release and only then publishes it. Tags containing a prerelease suffix are published as GitHub prereleases.
 
 The published assets are:
 
@@ -54,7 +66,7 @@ Rules:
 
 Complete the repository settings in [CI/CD setup](ci-cd.md) before relying on this flow. In particular:
 
-- Protect `main`, require `GitGlass CI / Quality (test and build)`, and PR-only merges.
+- Protect `main`, require `GitGlass CI / Quality (test and build)`, and PR-only merges. With PR-only merges the release commit itself must travel through a pull request; steps 3-5 above cover that flow.
 - Enable GitHub native Auto-merge if you want it per PR.
 - No release token is required. The tag is pushed from a developer machine, so `Publish Release` is triggered by a normal push event.
 - Keep Actions workflow permissions limited. The publishing workflow is read-only by default: its Windows build job has read-only access, and only the final job that creates the GitHub Release gets `contents: write`.
@@ -82,6 +94,7 @@ Unsigned Windows builds remain supported. Code signing is an optional future enh
 - **A normal PR did not publish:** expected. Publishing only happens when a `v*` tag is pushed.
 - **`npm run release` refuses to run:** it requires clean `main`; commit or stash your work, switch to `main`, pull, then retry. It also refuses versions at or below the current `package.json` version.
 - **Tag exists but no GitHub Release:** inspect the `Publish Release` run for that tag. The workflow refuses to continue when the tag and `package.json` version differ.
+- **The tag points at the wrong commit:** `git rev-parse 'v0.6.2^{commit}'` must equal `git rev-parse origin/main`. A tag created before the release PR merged still carries the previous `package.json` version, so `Publish Release` fails the version check. Delete the tag (`git tag -d v0.6.2`, `git push origin --delete v0.6.2`) and retag the merged commit.
 - **A tag's build failed:** inspect the failed step. Tags are immutable — fix through a PR and release the next version. Re-running an old tag rebuilds the old source.
 - **Release creation is forbidden:** verify the job-level `contents: write` permission and the repository Actions policy. Do not broaden permissions for the PR CI workflow.
 - **electron.exe is missing:** check the `prepare:electron` / `prepack:win` logs. Run `npm run prepare:electron` before packaging; do not assume `npm ci` downloaded it.
