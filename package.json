@@ -59,7 +59,16 @@
       "!.env",
       "!.env.*",
       "!.screenshots/**",
-      "!.trae-html-share-packages/**"
+      "!.trae-html-share-packages/**",
+      "!node_modules/@phosphor-icons/**",
+      "!node_modules/react/**",
+      "!node_modules/react-dom/**",
+      "!node_modules/scheduler/**",
+      "!**/*.map"
+    ],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
     ],
     "artifactName": "GitGlass-${version}-win-${arch}.${ext}",
     "publish": {

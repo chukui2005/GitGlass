@@ -30,7 +30,13 @@ describe('Windows beta packaging configuration', () => {
       'dist/**', 'electron/**', 'public/**', 'package.json', 'LICENSE',
       '!tests/**', '!output/**', '!.env', '!.env.*',
       '!.screenshots/**', '!.trae-html-share-packages/**',
+      // 渲染层的依赖由 Vite 打进 dist/，node_modules 里的副本只占体积不参与运行。
+      '!node_modules/@phosphor-icons/**', '!node_modules/react/**', '!node_modules/react-dom/**', '!node_modules/scheduler/**',
+      // sourcemap 只在调试时用，运行期不读（包里的 1 MB .map 全来自 electron-updater 的依赖）。
+      '!**/*.map',
     ])
+    // 界面只有中文，Electron 自带 55 个语言包（48.8 MB）纯属浪费。
+    expect(build.electronLanguages).toEqual(['zh-CN', 'en-US'])
     expect(build.win.target).toEqual([
       { target: 'nsis', arch: ['x64'] },
       { target: 'zip', arch: ['x64'] },
