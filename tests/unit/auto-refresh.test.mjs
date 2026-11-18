@@ -25,4 +25,19 @@ describe('automatic refresh policy', () => {
   it('does nothing when no repository is open', () => {
     expect(shouldRefreshOnChange({ hasRepository: false, lastRefreshAt: 0, now: 10_000 })).toBe(false)
   })
+
+  it('lets HEAD and refs changes through the quiet window but keeps index changes quiet', () => {
+    // 终端里先 add 再 commit：commit 写 HEAD/refs，必须立刻反映，不能等到窗口聚焦。
+    expect(shouldRefreshOnChange({ lastRefreshAt: 10_000, now: 10_100, reason: 'head' })).toBe(true)
+    expect(shouldRefreshOnChange({ lastRefreshAt: 10_000, now: 10_100, reason: 'refs' })).toBe(true)
+    // index 的变化可能来自我们自己刚跑完的 `git status`，仍要压住以掐断自触发。
+    expect(shouldRefreshOnChange({ lastRefreshAt: 10_000, now: 10_100, reason: 'index' })).toBe(false)
+    // 窗口聚焦没有 reason，也走静默窗。
+    expect(shouldRefreshOnChange({ lastRefreshAt: 10_000, now: 10_100, reason: '' })).toBe(false)
+  })
+
+  it('still refuses bypassing events while a refresh or an operation is running', () => {
+    expect(shouldRefreshOnChange({ loading: true, lastRefreshAt: 10_000, now: 10_100, reason: 'head' })).toBe(false)
+    expect(shouldRefreshOnChange({ refreshing: true, lastRefreshAt: 10_000, now: 10_100, reason: 'refs' })).toBe(false)
+  })
 })
