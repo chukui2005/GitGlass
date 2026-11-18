@@ -81,16 +81,9 @@ function fontSizesBelow(styles, minimum) {
   return found
 }
 
-// 截掉 `.recent-repositories` 这一段：它由另一个分支维护，本 PR 不碰它的样式。
-function withoutRecentRepositories(styles) {
-  const start = styles.indexOf('/* 最近仓库切换器')
-  return start < 0 ? styles : styles.slice(0, start)
-}
-
 module.exports = {
   readStyles,
   declarations,
   fontSize,
   fontSizesBelow,
-  withoutRecentRepositories,
 }

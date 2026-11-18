@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
-const { declarations, fontSizesBelow, withoutRecentRepositories } = require('../support/css-inspect.cjs')
+const { declarations, fontSizesBelow } = require('../support/css-inspect.cjs')
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const styles = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8')
@@ -66,9 +66,52 @@ describe('Design tokens: dbx 中性色板', () => {
     expect(styles).toContain('辅助 11px/1.4')
   })
 
-  it('leaves no 10px text behind in the rules this PR owns', () => {
-    // `.recent-repositories` 菜单由另一个 PR 维护，本 PR 不改动它，因此不纳入这条断言。
-    expect(fontSizesBelow(withoutRecentRepositories(styles), 11)).toEqual([])
+  it('leaves no 10px text behind anywhere in the stylesheet', () => {
+    // 通知条与最近仓库菜单现在也走 token，所以整份 styles.css 都不允许再出现 10px 正文。
+    expect(fontSizesBelow(styles, 11)).toEqual([])
+  })
+
+  it('keeps the notice banner and the recent-repository menu on the same tokens', () => {
+    expect(declarations(styles, '.app-notice')).toMatchObject({ 'font-size': 'var(--font-secondary)' })
+    // 横幅正文与 pin 都是 12/11px 小字：浅色底上用同色 ink（#16a34a on #e8f7ee 约 3.2:1 → ink 约 4.6:1）。
+    expect(declarations(styles, '.app-notice.success')).toMatchObject({
+      background: 'var(--green-soft)',
+      'border-color': 'color-mix(in srgb,var(--green) 30%,#fff)',
+      color: 'var(--green-ink)',
+    })
+    expect(declarations(styles, '.app-notice.error')).toMatchObject({
+      background: 'var(--red-soft)',
+      'border-color': 'color-mix(in srgb,var(--red) 30%,#fff)',
+      color: 'var(--red-ink)',
+    })
+    expect(declarations(styles, '.app-notice-pin')).toMatchObject({
+      'font-size': 'var(--font-aux)',
+      'line-height': 'var(--line-aux)',
+      'border-radius': 'var(--radius-sm)',
+      color: 'inherit',
+    })
+    expect(declarations(styles, '.app-notice-pin[aria-pressed="true"]')).toMatchObject({
+      background: 'color-mix(in srgb,var(--text) 10%,transparent)',
+    })
+
+    expect(declarations(styles, '.recent-repositories-menu')).toMatchObject({
+      border: '1px solid var(--line)',
+      'border-radius': 'var(--radius-lg)',
+      'box-shadow': 'var(--shadow-modal)',
+    })
+    // hover 中性浅底；蓝色只保留给「当前仓库」标记与徽标。
+    expect(declarations(styles, '.recent-repository:hover,.recent-repository:focus,.recent-repository:focus-visible')).toMatchObject({
+      background: 'var(--hover)',
+    })
+    expect(declarations(styles, '.recent-repository.current')['box-shadow']).toBe('inset 2px 0 var(--blue)')
+    expect(declarations(styles, '.recent-repository-badge')).toMatchObject({ color: 'var(--blue)' })
+    // 路径/失效提示统一到 11px，失效项用 --faint（只做装饰性弱化）。
+    expect(declarations(styles, '.recent-repository-path')['font']).toBe('var(--font-aux) var(--mono)')
+    expect(declarations(styles, '.recent-repository-missing')).toMatchObject({ 'font-size': 'var(--font-aux)' })
+    expect(declarations(styles, '.recent-repository.missing')).toMatchObject({ color: 'var(--faint)' })
+    expect(declarations(styles, '.recent-repository.missing .recent-repository-path')).toMatchObject({
+      color: 'var(--faint)',
+    })
   })
 
   it('never uses the disabled grey for text that has to be read', () => {
