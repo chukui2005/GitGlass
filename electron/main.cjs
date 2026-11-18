@@ -10,6 +10,10 @@ const { UpdateService } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
 const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
 const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
+// 启动探针（scripts/report-startup.mjs 用）：GITGLASS_STARTUP_PROBE 未设置时是空函数，
+// 下面的 startupProbe() 调用在正常运行与打包产物里都不产生任何副作用。
+const { createStartupProbe } = require('./startup-probe.cjs')
+const startupProbe = createStartupProbe()
 
 // Git commands that write the repository get a silent window in the watcher so
 // GitGlass does not report its own writes back to the renderer as an external
@@ -171,6 +175,7 @@ handleRepository('git:operate', async (_event, action, payload = {}) => {
 })
 
 if (primaryInstance) app.whenReady().then(async () => {
+  startupProbe('whenReady')
   // Windows gives every window a native menu bar (File/Edit/View/Window) by
   // default. GitGlass ships its own UI, so remove it only there and keep the
   // native window controls intact.
@@ -202,6 +207,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:changed', state)
   })
   await updates.initialize()
+  startupProbe('updates-ready')
   // Windows: the 48px renderer top bar doubles as the title bar while the
   // system keeps drawing native minimize/maximize/close through the Window
   // Controls Overlay (Snap Layouts included). macOS keeps its traffic lights.
@@ -211,6 +217,14 @@ if (primaryInstance) app.whenReady().then(async () => {
     : { titleBarStyle: 'hiddenInset' }
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'
   mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', iconFile), ...titleBarOptions, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  startupProbe('window-created')
+  // ready-to-show 是 BrowserWindow 的事件（不是 webContents 的）；did-finish-load 更稳定，
+  // 两者都记，脚本优先用 ready-to-show，缺失时退到 did-finish-load。
+  if (process.env.GITGLASS_STARTUP_PROBE) {
+    const markRendered = (mark) => () => startupProbe(mark, { memory: app.getAppMetrics().map((metric) => ({ type: metric.type, workingSetKb: metric.memory.workingSetSize })) })
+    mainWindow.once('ready-to-show', markRendered('ready-to-show'))
+    mainWindow.webContents.once('did-finish-load', markRendered('did-finish-load'))
+  }
   mainWindow.on('closed', () => stopWatching())
   const devUrl = process.env.VITE_DEV_SERVER_URL
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
