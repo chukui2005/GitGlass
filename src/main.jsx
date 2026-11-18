@@ -53,6 +53,17 @@ import { shouldRefreshOnChange } from "./auto-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
 import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
+import {
+  PANEL_BOUNDS,
+  PANEL_WIDTH_STORAGE_KEY,
+  clampPanelWidth,
+  constrainPanelWidths,
+  defaultPanelWidths,
+  keyboardPanelWidth,
+  panelLimits,
+  parsePanelWidths,
+  serializePanelWidths,
+} from "./panel-resize.js";
 import "./styles.css";
 import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 
@@ -84,27 +95,16 @@ const rescueName = (entry) =>
   }-${entry.shortHash}`;
 // 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
 const stageSelectionKey = (path) => `unstaged:${path}`;
-const panelWidthStorageKey = "gitglass:workspace-panel-widths";
-const panelBounds = {
-  left: { min: 190, max: 420, default: 224 },
-  right: { min: 240, max: 420, default: 296 },
-};
-const workspaceGutterWidth = 16;
-const workspaceMainMinimum = 360;
 
 function readPanelWidths() {
   try {
-    const saved = JSON.parse(localStorage.getItem(panelWidthStorageKey));
-    return {
-      left: Number.isFinite(saved?.left) ? Math.max(panelBounds.left.min, Math.min(panelBounds.left.max, saved.left)) : panelBounds.left.default,
-      right: Number.isFinite(saved?.right) ? Math.max(panelBounds.right.min, Math.min(panelBounds.right.max, saved.right)) : panelBounds.right.default,
-    };
+    return parsePanelWidths(localStorage.getItem(PANEL_WIDTH_STORAGE_KEY));
   } catch {
-    return { left: panelBounds.left.default, right: panelBounds.right.default };
+    return defaultPanelWidths();
   }
 }
 
-function PanelSplitter({ side, value, limits, onPointerDown, onPointerMove, onPointerUp, onKeyDown }) {
+function PanelSplitter({ side, value, limits, onPointerDown, onDoubleClick, onKeyDown }) {
   const label = side === "left" ? "调整工作区边栏宽度" : "调整文件详情面板宽度";
   return (
     <div
@@ -117,13 +117,9 @@ function PanelSplitter({ side, value, limits, onPointerDown, onPointerMove, onPo
       aria-valuenow={value}
       tabIndex="0"
       onPointerDown={(event) => onPointerDown(side, event)}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onDoubleClick={() => onDoubleClick(side)}
       onKeyDown={(event) => onKeyDown(side, event)}
-    >
-      <span aria-hidden="true" />
-    </div>
+    />
   );
 }
 
@@ -1242,70 +1238,110 @@ function App() {
   const paletteTriggerRef = useRef(null);
   const paletteReturnFocusRef = useRef(null);
   const detailCache = useRef(new Map());
-  const getPanelLimits = (side, widths = panelWidths) => {
-    const { min, max } = panelBounds[side];
-    const otherSide = side === "left" ? "right" : "left";
-    const workspaceWidth = workspaceRef.current?.clientWidth || window.innerWidth;
-    const layoutMaximum = workspaceWidth - widths[otherSide] - workspaceMainMinimum - workspaceGutterWidth;
-    return { min, max: Math.max(min, Math.min(max, layoutMaximum)) };
-  };
+  const getPanelLimits = (side, widths = panelWidths) =>
+    panelLimits(side, widths, workspaceRef.current?.clientWidth || window.innerWidth);
   const setPanelWidth = (side, requestedWidth) => {
     setPanelWidths((current) => {
-      const limits = getPanelLimits(side, current);
-      return { ...current, [side]: Math.round(Math.max(limits.min, Math.min(limits.max, requestedWidth))) };
+      const width = clampPanelWidth(side, requestedWidth, getPanelLimits(side, current));
+      return current[side] === width ? current : { ...current, [side]: width };
     });
   };
+  const resetPanelWidth = (side) => setPanelWidth(side, PANEL_BOUNDS[side].default);
+  // 拖拽期间：捕获指针 + 铺一层全屏 overlay（避免 hover 抖动）+ rAF 节流，
+  // pointerup / pointercancel / 窗口失焦都会收尾，绝不留下半截拖拽状态。
   const startPanelResize = (side, event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || panelResize.current) return;
     event.preventDefault();
-    panelResize.current = { side, startX: event.clientX, startWidth: panelWidths[side] };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    handle.setPointerCapture?.(pointerId);
+    const startX = event.clientX;
+    const startWidth = panelWidths[side];
+    const overlay = document.createElement("div");
+    overlay.className = "panel-resize-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    document.body.append(overlay);
     document.body.classList.add("is-resizing-panels");
-  };
-  const movePanelResize = (event) => {
-    const resizing = panelResize.current;
-    if (!resizing) return;
-    const movement = event.clientX - resizing.startX;
-    setPanelWidth(resizing.side, resizing.startWidth + (resizing.side === "left" ? movement : -movement));
-  };
-  const stopPanelResize = () => {
-    panelResize.current = null;
-    document.body.classList.remove("is-resizing-panels");
+    let pendingX = startX;
+    let frame = null;
+
+    const apply = () => {
+      frame = null;
+      const movement = pendingX - startX;
+      setPanelWidth(side, startWidth + (side === "left" ? movement : -movement));
+    };
+    const onPointerMove = (moveEvent) => {
+      pendingX = moveEvent.clientX;
+      if (frame !== null) return;
+      frame = requestAnimationFrame(apply);
+    };
+    const finish = () => {
+      if (!panelResize.current) return;
+      panelResize.current = null;
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        frame = null;
+      }
+      apply();
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
+      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+      overlay.remove();
+      document.body.classList.remove("is-resizing-panels");
+    };
+
+    panelResize.current = { side, finish };
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish, { once: true });
   };
   const resizePanelWithKeyboard = (side, event) => {
-    const directions = { ArrowLeft: -16, ArrowRight: 16 };
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      const limits = getPanelLimits(side);
-      setPanelWidth(side, event.key === "Home" ? limits.min : limits.max);
-    } else if (directions[event.key]) {
-      event.preventDefault();
-      const movement = directions[event.key];
-      setPanelWidth(side, panelWidths[side] + (side === "left" ? movement : -movement));
-    }
+    const next = keyboardPanelWidth(side, panelWidths[side], event.key, getPanelLimits(side));
+    if (next === null) return;
+    event.preventDefault();
+    setPanelWidth(side, next);
   };
   useEffect(() => {
     try {
-      localStorage.setItem(panelWidthStorageKey, JSON.stringify(panelWidths));
+      localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, serializePanelWidths(panelWidths));
     } catch {
       // 存储不可用时继续使用当前会话的宽度。
     }
   }, [panelWidths]);
+  // 窗口/工作区变窄时把两侧宽度夹回可行范围。挂载后先同步夹紧一次，
+  // 再用 rAF 节流监听 window resize 与工作区自身的尺寸变化（冷启动时
+  // clientWidth 可能还没稳定，rAF 会再补一次）。
   useEffect(() => {
+    let frame = null;
     const constrainPanels = () => {
+      frame = null;
+      const workspaceWidth = workspaceRef.current?.clientWidth || window.innerWidth;
       setPanelWidths((current) => {
-        const workspaceWidth = workspaceRef.current?.clientWidth || window.innerWidth;
-        const leftMaximum = Math.max(panelBounds.left.min, Math.min(panelBounds.left.max, workspaceWidth - panelBounds.right.min - workspaceMainMinimum - workspaceGutterWidth));
-        const left = Math.min(current.left, leftMaximum);
-        const rightMaximum = Math.max(panelBounds.right.min, Math.min(panelBounds.right.max, workspaceWidth - left - workspaceMainMinimum - workspaceGutterWidth));
-        const right = Math.min(current.right, rightMaximum);
-        return left === current.left && right === current.right ? current : { left, right };
+        const next = constrainPanelWidths(current, workspaceWidth);
+        return next.left === current.left && next.right === current.right ? current : next;
       });
     };
-    window.addEventListener("resize", constrainPanels);
+    const scheduleConstrain = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(constrainPanels);
+    };
+    const workspace = workspaceRef.current;
+    const observer = typeof ResizeObserver === "function" && workspace ? new ResizeObserver(scheduleConstrain) : null;
+    observer?.observe(workspace);
+    window.addEventListener("resize", scheduleConstrain);
     constrainPanels();
-    return () => window.removeEventListener("resize", constrainPanels);
+    frame = requestAnimationFrame(constrainPanels);
+    return () => {
+      window.removeEventListener("resize", scheduleConstrain);
+      observer?.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, []);
+  // 组件卸载（或仓库上下文切换导致工作区重建）时收尾仍在进行的拖拽。
+  useEffect(() => () => panelResize.current?.finish?.(), []);
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
     [state.files],
@@ -2406,7 +2442,7 @@ function App() {
             )}
           </section>
         </aside>
-        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
+        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />
         <section className="main-panel">
           <div className="main-toolbar">
             <div>
@@ -2514,7 +2550,7 @@ function App() {
             </div>
           </div>
         </section>
-        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
+        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />
         <aside className="context-panel">
           {historyFile ? (
             <div className="inspector-flow">
@@ -2770,7 +2806,7 @@ function App() {
             </div>
           )}
         </aside>
-        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
+        <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />
         <section className="main-panel">
           <div className="main-toolbar">
             <div>
@@ -2812,7 +2848,7 @@ function App() {
             <CommitGraph commits={commits} />
           )}
         </section>
-        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize} onKeyDown={resizePanelWithKeyboard} />
+        <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />
         <aside className="context-panel">{inspector}</aside>
       </div>}
       <section className="command-ledger" aria-label="命令账本">
