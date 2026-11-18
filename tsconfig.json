@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "electron/**/*.cjs",
+    "src/workbench-ledger.js",
+    "src/auto-refresh.js",
+    "src/notice-lifecycle.js",
+    "src/panel-resize.js",
+    "src/plan-risk.js",
+    "src/repository-refresh.js",
+    "src/user-notices.js",
+    "src/diff-presentation.js",
+    "src/shortcut-policy.js",
+    "src/command-palette-model.js",
+    "src/history-*.js"
+  ]
+}

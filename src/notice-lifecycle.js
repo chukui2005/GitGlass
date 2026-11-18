@@ -30,9 +30,18 @@ export function shouldAutoDismiss(notice, operationBanner) {
   return noticeTimerKey(notice) !== null;
 }
 
+/**
+ * @typedef {object} NoticeTimerDependencies
+ * @property {(callback: () => void, ms: number) => any} [setTimeout] injected scheduler (defaults to the global one)
+ * @property {(handle: any) => void} [clearTimeout] injected canceller (defaults to the global one)
+ * @property {() => void} [onExpire] called once the visible time is up
+ * @property {number} [duration] visible milliseconds before `onExpire`
+ */
+
 // 注入式的小定时器对象：主流程只调 start / pause / resume / cancel。
 // 暂停时直接清掉底层定时器、恢复时重新计满整段时间——这样"鼠标离开后重新计时"
 // 不会退化成"离开即立刻消失"，实现也不用维护剩余毫秒。
+/** @param {NoticeTimerDependencies} [dependencies] */
 export function createNoticeTimer({
   setTimeout: scheduleTimeout,
   clearTimeout: clearScheduled,
@@ -106,8 +115,19 @@ export function createNoticeTimer({
   };
 }
 
+/**
+ * @typedef {object} NoticeTimerState
+ * @property {{ type?: string, text?: string, pinned?: boolean } | null} [notice] transient success/failure banner
+ * @property {boolean} [operationBanner] true while the repository is mid-merge/rebase
+ */
+
 // React 接线用的一步：该计时就（重新）启动，不该计时就取消。
 // 返回值只用于测试和调试，不参与渲染。
+/**
+ * @param {ReturnType<typeof createNoticeTimer>} timer
+ * @param {NoticeTimerState} [state]
+ * @returns {boolean}
+ */
 export function syncNoticeTimer(timer, { notice, operationBanner } = {}) {
   if (!shouldAutoDismiss(notice, operationBanner)) {
     timer.cancel();
