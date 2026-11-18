@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeChangelog, nextBetaVersion, parseConventionalSubject, renderChangelogSection, selectPreviousTag } from '../../scripts/release.mjs'
+import { mergeChangelog, nextBetaVersion, parseConventionalSubject, renderChangelogSection, resolveReleaseVersion, selectPreviousTag } from '../../scripts/release.mjs'
 
 function commit(subject, hash = 'a'.repeat(40)) {
   const parsed = parseConventionalSubject(subject)
@@ -78,6 +78,27 @@ describe('previous release selection', () => {
     expect(selectPreviousTag([], '0.6.1')).toBeNull()
     expect(selectPreviousTag(['nightly', 'not-a-tag'], '0.6.1')).toBeNull()
     expect(selectPreviousTag(['nightly', 'v0.6.1-beta.1'], '0.6.1')).toBe('v0.6.1-beta.1')
+  })
+})
+
+describe('release version resolution', () => {
+  it('accepts a plain stable version unchanged', () => {
+    expect(resolveReleaseVersion({ requested: '0.6.4', existingTags: [] })).toBe('0.6.4')
+    expect(resolveReleaseVersion({ requested: 'v0.6.4', existingTags: [] })).toBe('0.6.4')
+  })
+
+  it('accepts an explicit prerelease so the roadmap can name the build', () => {
+    expect(resolveReleaseVersion({ requested: '0.6.4-beta.1', existingTags: ['v0.6.3'] })).toBe('0.6.4-beta.1')
+    expect(resolveReleaseVersion({ requested: 'v0.6.5-beta.1', existingTags: [] })).toBe('0.6.5-beta.1')
+  })
+
+  it('still derives a dated beta when --beta is used with a plain version', () => {
+    expect(resolveReleaseVersion({
+      requested: '0.6.4',
+      beta: true,
+      existingTags: ['v0.6.4-beta.20261118.1'],
+      date: '20261118',
+    })).toBe('0.6.4-beta.20261118.2')
   })
 })
 

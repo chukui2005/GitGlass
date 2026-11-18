@@ -3,7 +3,8 @@
  * Manual release helper.
  *
  *   npm run release -- 0.6.2              # stable release: bump, changelog, commit, tag
- *   npm run release -- 0.6.2 --beta       # beta tag v0.6.2-beta.20261118.1
+ *   npm run release -- 0.6.4-beta.1       # explicit prerelease (the roadmap names it)
+ *   npm run release -- 0.6.2 --beta       # derived beta tag v0.6.2-beta.20261118.1
  *   npm run release -- 0.6.2 --dry-run    # print the plan, change nothing
  *
  * The version number is chosen by a human. This script only removes the
@@ -73,6 +74,29 @@ export function selectPreviousTag(existingTags, currentVersion) {
     .at(-1)?.tag ?? null
 }
 
+/**
+ * Resolves the version to release.
+ *
+ * Two ways to ship a prerelease:
+ * - an explicit version (`0.6.4-beta.1`), which is what the release notes and
+ *   the roadmap refer to, and what a maintainer types when they mean exactly
+ *   that build;
+ * - `--beta` with a plain `X.Y.Z`, which derives `X.Y.Z-beta.<date>.<n>` so a
+ *   day of repeated betas never collides.
+ *
+ * Mixing the two is a mistake worth failing on: the derived name would silently
+ * ignore the number the caller asked for.
+ */
+export function resolveReleaseVersion({ requested, beta = false, existingTags = [], date }) {
+  const base = String(requested ?? '').trim().replace(/^v/, '')
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(base)) {
+    fail(`版本号必须是 X.Y.Z 或 X.Y.Z-<预发布标识> 形式，收到：${base}`)
+  }
+  if (!beta) return base
+  if (base.includes('-')) fail(`--beta 与显式预发布版本号不能同时使用（收到 ${base}）`)
+  return nextBetaVersion(base, existingTags, date)
+}
+
 export function nextBetaVersion(baseVersion, existingTags, date) {
   const prefix = `v${baseVersion}-beta.${date}.`
   const highest = existingTags
@@ -107,9 +131,9 @@ function parseArguments(argv) {
   const flags = new Set(argv.filter((entry) => entry.startsWith('--')))
   const positional = argv.filter((entry) => !entry.startsWith('--'))
   if (positional.length !== 1) fail('用法：npm run release -- <版本号> [--beta] [--no-tag] [--dry-run]')
-  const base = positional[0].replace(/^v/, '')
-  if (!/^\d+\.\d+\.\d+$/.test(base)) fail(`版本号必须是 X.Y.Z 形式，收到：${base}`)
-  return { base, beta: flags.has('--beta'), dryRun: flags.has('--dry-run'), noTag: flags.has('--no-tag') }
+  // Validation (including the optional prerelease suffix) lives in
+  // resolveReleaseVersion so it can be unit tested without a git repository.
+  return { requested: positional[0].replace(/^v/, ''), beta: flags.has('--beta'), dryRun: flags.has('--dry-run'), noTag: flags.has('--no-tag') }
 }
 
 function collectCommits(previousTag) {
@@ -155,12 +179,12 @@ function prependChangelog(section, fileName = 'CHANGELOG.md') {
 }
 
 function main() {
-  const { base, beta, dryRun, noTag } = parseArguments(process.argv.slice(2))
+  const { requested, beta, dryRun, noTag } = parseArguments(process.argv.slice(2))
   const packageJson = readJson('package.json')
   const current = packageJson.version
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const existingTags = git(['tag', '--list', 'v*']).split('\n').filter(Boolean)
-  const version = beta ? nextBetaVersion(base, existingTags, date) : base
+  const version = resolveReleaseVersion({ requested, beta, existingTags, date })
 
   if (!semver.valid(version)) fail(`生成的版本号无效：${version}`)
   if (!semver.gt(version, current)) fail(`新版本 ${version} 必须高于当前 package.json 版本 ${current}`)

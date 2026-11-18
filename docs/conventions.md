@@ -109,7 +109,7 @@ tests/
 3. **tag 与 Release 必须一一对应**：`npm run release` 打 tag、`push --follow-tags` 触发 `publish-release.yml` 建 Release；推完后先确认 tag 出现、再确认 Release 出现。曾出现过"只有 tag 没有 Release"的孤儿版本。
 4. **发布前本地跑一次** `npm run dist:win`；`verify-release` 会校验 tag/版本/5 个产物/latest.yml 的 sha512。
 5. **版本号只在 `0.x` 里慢慢走**：手写 `0.6.9 → 0.6.10`，`0.7.0` 留给破坏性变更，`1.0.0` 必须手动决定。详见 [releasing.md](releasing.md#version-policy)。
-6. **正式版不要标 prerelease**：GitHub 的 **Latest** 徽标与仓库侧栏 Releases 卡片只认"最新的非 prerelease release"。Beta 只用带 `-beta.<日期>.<序号>` 的 tag 单独发。
+6. **正式版不要标 prerelease**：GitHub 的 **Latest** 徽标与仓库侧栏 Releases 卡片只认"最新的非 prerelease release"。Beta 用带 `-` 的 tag 单独发，两种写法：路线图点名的 `v0.6.4-beta.1`，或 `--beta` 自动生成的 `-beta.<日期>.<序号>`。
 
 ## 9. 清理规范（容易忘）
 
