@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.4-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.3...v0.6.4-beta.1) (2026-11-18)
+
+### Features
+
+* accept an explicit prerelease version ([8dcf16e](https://github.com/chukui2005/GitGlass/commit/8dcf16ef0ae1a63fdd0b1b11c5cde99168f11d17))
+
+### Bug Fixes
+
+* replace the legacy greys in the notice and recent-repository surfaces ([f753cb3](https://github.com/chukui2005/GitGlass/commit/f753cb3a51781e5c7e747c9938246247f0499c1b))
+* stop labelling ordinary plans as rescue operations ([57b5c88](https://github.com/chukui2005/GitGlass/commit/57b5c882116efee0a123017aad94073f8fd17bf6))
+
+### Refactors
+
+* rebuild the panel splitters as thin draggable lines ([11cf204](https://github.com/chukui2005/GitGlass/commit/11cf2045c891699a5ab9c3755d94de56b835473e))
+* rebuild the visual system on dbx neutral tokens ([3e5bd49](https://github.com/chukui2005/GitGlass/commit/3e5bd49cce4979c1c5d5da37db861d85dda060a6))
+* tighten the sidebar, list and ledger density to match dbx ([72e4e60](https://github.com/chukui2005/GitGlass/commit/72e4e60009f45938f49f4c128b76f2c99fdbac51))
+
 ## [0.6.3](https://github.com/chukui2005/GitGlass/compare/v0.6.2...v0.6.3) (2026-11-18)
 
 ### Features
