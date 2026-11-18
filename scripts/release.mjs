@@ -59,6 +59,20 @@ export function renderChangelogSection(commits, { version, previousTag, date }) 
   return blocks.join('\n')
 }
 
+/**
+ * The previous release is the highest tag at or below the current version.
+ * Prerelease tags count: a project that only shipped v0.6.1-beta.1 must not
+ * generate a changelog from the very first commit.
+ */
+export function selectPreviousTag(existingTags, currentVersion) {
+  return existingTags
+    .filter((tag) => typeof tag === 'string' && /^v\d+\.\d+\.\d+/.test(tag) && semver.valid(tag.slice(1)))
+    .map((tag) => ({ tag, version: tag.slice(1) }))
+    .filter(({ version }) => semver.lte(version, currentVersion))
+    .sort((left, right) => semver.compare(left.version, right.version))
+    .at(-1)?.tag ?? null
+}
+
 export function nextBetaVersion(baseVersion, existingTags, date) {
   const prefix = `v${baseVersion}-beta.${date}.`
   const highest = existingTags
@@ -140,10 +154,7 @@ function main() {
   const dirty = git(['status', '--porcelain'])
   if (dirty) fail(`工作区有未提交改动：\n${dirty}\n请先提交或还原后再发版。`)
 
-  const previousTag = existingTags
-    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag))
-    .sort((left, right) => semver.compare(left.slice(1), right.slice(1)))
-    .at(-1) ?? null
+  const previousTag = selectPreviousTag(existingTags, current)
   const commits = collectCommits(previousTag)
   const section = renderChangelogSection(commits, { version, previousTag: previousTag ?? 'HEAD', date: new Date().toISOString().slice(0, 10) })
 
