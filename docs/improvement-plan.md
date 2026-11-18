@@ -70,21 +70,14 @@
 
 分割条参考 dbx `apps/desktop/src/composables/usePanelResize.ts`：`setPointerCapture` + 拖拽期间铺一层全屏 overlay（避免 hover 抖动）+ `requestAnimationFrame` 节流 + 最小宽度 240 + 宽度持久化 + `blur` 兜底收尾。视觉上 dbx 是**一条 1px 分隔线**，命中区藏在两侧留白里；GitGlass 现在是 8px 宽的灰条 + 蓝色发光，需要重做。
 
-### 包体积与性能（后续 backlog，尚未排期）
+### 包体积与性能（已测量，清单见 [size-and-performance.md](size-and-performance.md)）
 
-现状：安装包 113.6 MB、ZIP 151.2 MB；解压安装后约 500 MB 量级（Electron 运行时占大头）。
+2026-11-18 完成了一次完整测量：**基线 → 现状** 为安装包 113.6 MB → **102.1 MB**、ZIP 151.2 MB → **135.4 MB**、解压后 384.5 MB → **310.9 MB**（−73.6 MB）。其中 309.1 MB（99.4%）是 Electron 运行时，我们的代码与资源只有 1.8 MB。启动（模拟安装版）到渲染层就绪 **724 ms**：Electron 自身引导 163 ms、更新服务 36 ms、建窗 108 ms、首屏 104 ms。
 
-- **打包**
-  - `electron-builder` 开 `compression: maximum`，确认 `asar` 已启用并检查 `app.asar` 内是否有 `docs/`、`tests/`、`.map`、示例资源；
-  - `build.files` 收紧成白名单（现在靠忽略规则），跑一次体积对比；
-  - 运行期依赖只有 `electron-updater`，定期确认没有把构建依赖打进包。
-- **启动**
-  - 更新服务（`electron-updater`）延迟到窗口 ready 之后再加载；
-  - `main.jsx` 拆分后把「历史审阅」相关组件按需加载。
-- **运行时**
-  - 超大仓库的 `.git` watcher 降噪（去抖可配 / 忽略 `objects/`）；
-  - 命令账本改虚拟列表（300 条记录全量渲染）；
-  - 加一个启动耗时 + 内存占用的测量脚本作为基线，改动前后对比。
+- **已落地（零风险）**：`electronLanguages` 只留 `zh-CN` + `en-US`（安装包 −8.1 MB）；`build.files` 排除 `@phosphor-icons` / `react` / `react-dom` / `scheduler`（安装包 −3.2 MB，`app.asar` 27.7 MB → 1.8 MB）；排除 `*.map`（−0.1 MB）。
+- **下一步（按收益排序，见新文档第 5 节）**：更新服务延后到窗口创建之后（首屏前省 36–48 ms）；运行期依赖归类（`react` 等移到 `devDependencies`，需同步 lockfile）；账本虚拟列表与 watcher 降噪（内存，属 0.6.5 结构债）。
+- **实测后不建议做**：`compression: maximum`（安装包 +455 B）、拆渲染层（`react-dom` 占 bundle 72.4%）、删 Electron 的 `dxcompiler`/`vk_swiftshader`（风险高）。
+- **复测**：`npm run report:size`、`npm run report:startup -- --installed`，对照数字写在新文档第 8 节。
 
 ## 0.6.3 交付（2026-11-18）
 
