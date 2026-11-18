@@ -8,6 +8,7 @@ const service = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 're
 const commandService = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'git-command-service.cjs'), 'utf8')
 const mainProcess = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'main.cjs'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
+const { declarations, fontSize } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
 // 从 main.jsx 中提取每个 FileSection 区块的源码片段，用于按区块断言。
 // split 会消耗 <FileSection 标记：parts[1] 是未暂存区，parts[2] 从已暂存区开始。
@@ -56,7 +57,13 @@ describe('V0.5.3 batch stage UI structure', () => {
     expect(source).toContain('batch-hint')
     // 可见提示与按钮 title 并存，但提示不依赖 disabled 按钮的 title。
     expect(source).toContain('{!count && !loading && (')
-    expect(styles).toContain('.batch-hint{margin:0;color:var(--muted);font-size:10px;line-height:1.4}')
+    // 语义断言：提示属于次级正文，字号不低于 11px、颜色走统一的 --muted、行高用 token。
+    expect(declarations(styles, '.batch-hint')).toMatchObject({
+      margin: '0',
+      color: 'var(--muted)',
+      'line-height': 'var(--line-secondary)',
+    })
+    expect(fontSize(styles, '.batch-hint')).toBeGreaterThanOrEqual(11)
   })
 
   it('provides a compact toolbar: select all, clear, live count, and a disabled-with-reason primary action', () => {

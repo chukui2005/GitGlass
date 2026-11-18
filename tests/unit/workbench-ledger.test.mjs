@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, recordStatusLabel, recordTypeLabel } from '../../src/workbench-ledger.js'
+import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, recordDurationLabel, recordStatusLabel, recordTypeLabel } from '../../src/workbench-ledger.js'
 
 // 用 String.fromCharCode 构造控制字符，避免测试源码里出现不可见字符。
 const RS = String.fromCharCode(30) // 0x1e 记录分隔符
@@ -43,6 +43,25 @@ describe('Workbench ledger presentation', () => {
     expect(recordStatusLabel({ ok: true, stderr: 'warning' })).toBe('警告')
     expect(intentLabel({ source: 'background' })).toBe('系统读取')
     expect(glanceSummary(null)).toBe('尚无命令记录')
+  })
+})
+
+describe('PR5 ledger row metadata: 耗时', () => {
+  it('formats the duration of a record from its own timestamps', () => {
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:00.000Z', endedAt: '2026-11-18T10:00:00.240Z' })).toBe('240ms')
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:00.000Z', endedAt: '2026-11-18T10:00:02.500Z' })).toBe('2.5s')
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:00.000Z', endedAt: '2026-11-18T10:00:42.000Z' })).toBe('42s')
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:00.000Z', endedAt: '2026-11-18T10:02:05.000Z' })).toBe('2m5s')
+  })
+
+  it('returns nothing instead of a fake number when the timestamps are missing or unusable', () => {
+    expect(recordDurationLabel(null)).toBe('')
+    expect(recordDurationLabel({})).toBe('')
+    expect(recordDurationLabel({ startedAt: 'not-a-date', endedAt: '2026-11-18T10:00:00.000Z' })).toBe('')
+    // 计划不是 CommandRecord：没有 endedAt 时不许编造耗时。
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:00.000Z' })).toBe('')
+    // 时钟回拨导致的负耗时同样不显示。
+    expect(recordDurationLabel({ startedAt: '2026-11-18T10:00:05.000Z', endedAt: '2026-11-18T10:00:00.000Z' })).toBe('')
   })
 })
 

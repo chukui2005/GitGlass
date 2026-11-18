@@ -29,6 +29,7 @@ import {
   glanceSummary,
   groupBackgroundRecords,
   intentLabel,
+  recordDurationLabel,
   recordStatusLabel,
   recordTypeLabel,
 } from "./workbench-ledger.js";
@@ -313,6 +314,7 @@ function LedgerEntry({ record }) {
   const command = record.displayCommand || record.command || "等待执行结果";
   const failure = record.ok === false;
   const warning = !failure && Boolean(record.stderr);
+  const duration = recordDurationLabel(record);
   async function copy() {
     await navigator.clipboard?.writeText(command);
     setCopied(true);
@@ -322,6 +324,7 @@ function LedgerEntry({ record }) {
     <article
       className={`ledger-entry ${failure ? "failure" : ""} ${record.source === "background" ? "background" : ""}`}
     >
+      {/* 两行结构：第一行意图 + 等宽命令（单行省略，title 提供全文），第二行结果 · 退出码 · 耗时/时间 · 来源。 */}
       <button
         type="button"
         className="ledger-summary"
@@ -335,9 +338,41 @@ function LedgerEntry({ record }) {
             <CheckCircle size={15} weight="fill" />
           )}
         </span>
-        <span className="ledger-intent">{intentLabel(record)}</span>
-        {!expanded && <code>{command}</code>}
-        <time>{time(record.startedAt)}</time>
+        <span className="ledger-entry-main">
+          <span className="ledger-entry-line">
+            <span className="ledger-intent">{intentLabel(record)}</span>
+            <code className="ledger-command" title={command}>
+              {command}
+            </code>
+          </span>
+          <span className="ledger-entry-meta">
+            <span className={failure ? "bad" : warning ? "warn" : "good"}>
+              {recordStatusLabel(record)}
+            </span>
+            <span className="ledger-sep" aria-hidden="true">
+              ·
+            </span>
+            <span>退出码 {record.exitCode ?? "—"}</span>
+            {duration && (
+              <>
+                <span className="ledger-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span>耗时 {duration}</span>
+              </>
+            )}
+            <span className="ledger-sep" aria-hidden="true">
+              ·
+            </span>
+            <time dateTime={record.startedAt || undefined}>
+              {time(record.startedAt)}
+            </time>
+            <span className="ledger-sep" aria-hidden="true">
+              ·
+            </span>
+            <span>{recordTypeLabel(record.source)}</span>
+          </span>
+        </span>
         <CaretDown size={14} className={expanded ? "open" : ""} />
       </button>
       {expanded && (
@@ -911,7 +946,7 @@ function HistoryFilters({ draft, branches, currentBranch, selectedFile, loading,
     <button type="button" className="text-action" disabled={!canUseSelected || loading} onClick={onUseSelected}>使用当前选中文件</button>
     {dirty && <p className="filter-dirty" role="status">筛选条件已修改，点击应用筛选后查询。</p>}
     <div className="filter-actions">
-      <button type="button" className="primary-action" disabled={loading} onClick={onApply}>应用筛选</button>
+      <button type="button" className="secondary-button" disabled={loading} onClick={onApply}>应用筛选</button>
       <button type="button" className="secondary-action" disabled={loading} onClick={onReset}>重置</button>
     </div>
   </section>
@@ -2217,7 +2252,7 @@ function App() {
           <UpdateButton updates={updates} disabled={modalOpen} />
           <button
             type="button"
-            className="top-action"
+            className="toolbar-button"
             ref={paletteTriggerRef}
             onClick={(event) => openCommandPalette(event.currentTarget)}
             aria-label="命令面板"
@@ -2229,17 +2264,17 @@ function App() {
             <MagnifyingGlass size={15} />
             <span className="top-action-label">命令</span>
           </button>
-          <button type="button" className="top-action" onClick={() => setHistoryMode(false)} aria-label="工作区" title="工作区" aria-pressed={!historyMode}>
+          <button type="button" className="toolbar-button" onClick={() => setHistoryMode(false)} aria-label="工作区" title="工作区" aria-pressed={!historyMode}>
             <File size={15} aria-hidden="true" />
             <span className="top-action-label">工作区</span>
           </button>
-          <button type="button" className="top-action" onClick={() => setHistoryMode(true)} aria-label="历史审查" title="历史审查" aria-pressed={historyMode}>
+          <button type="button" className="toolbar-button" onClick={() => setHistoryMode(true)} aria-label="历史审查" title="历史审查" aria-pressed={historyMode}>
             <GitCommit size={15} aria-hidden="true" />
             <span className="top-action-label">历史审查</span>
           </button>
           <button
             type="button"
-            className="top-action"
+            className="toolbar-button"
             aria-label="恢复"
             title="恢复"
             disabled={!repo || loading}
@@ -2248,7 +2283,8 @@ function App() {
             <Lifebuoy size={15} />
             <span className="top-action-label">恢复</span>
           </button>
-          <button type="button" className="top-action" onClick={chooseRepo} aria-label="打开仓库" title="打开仓库" disabled={loading}>
+          <span className="topbar-divider" aria-hidden="true" />
+          <button type="button" className="secondary-button" onClick={chooseRepo} aria-label="打开仓库" title="打开仓库" disabled={loading}>
             <FolderOpen size={15} />
             <span className="top-action-label">打开仓库</span>
           </button>
@@ -2261,7 +2297,7 @@ function App() {
           />
           <button
             type="button"
-            className="sync-action"
+            className="secondary-button"
             aria-label="获取远程更新（先查看计划）"
             title="获取远程更新（先查看计划，不会立即执行）"
             disabled={!repo || loading || !remote?.remotes?.length}
@@ -2550,7 +2586,7 @@ function App() {
                 <span className="section-label">完整提交说明</span>
                 <pre className="commit-message">{historyDetail?.message || detailSubject}</pre>
               </div>
-              <button type="button" className="primary-action" onClick={readHistoryDiff} disabled={loading}>
+              <button type="button" className="secondary-button" onClick={readHistoryDiff} disabled={loading}>
                 查看完整 Diff
               </button>
               <section className="history-files">
@@ -2607,6 +2643,7 @@ function App() {
                 className="icon-button"
                 onClick={refreshFromUser}
                 aria-label="刷新状态"
+                title="刷新状态"
                 disabled={loading}
               >
                 <ArrowClockwise size={15} />
@@ -2727,6 +2764,14 @@ function App() {
               <FolderOpen size={24} />
               <p>打开本地 Git 仓库</p>
               <span>查看改动、历史与真实命令记录。</span>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={chooseRepo}
+                disabled={loading}
+              >
+                打开仓库
+              </button>
             </div>
           )}
         </aside>
