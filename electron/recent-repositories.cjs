@@ -55,4 +55,21 @@ class RecentRepositories {
   }
 }
 
-module.exports = { RecentRepositories }
+/**
+ * IPC shape for the switcher: a path, the folder name shown as the title and
+ * whether the folder still exists. Existence is recomputed on every call, so a
+ * repository deleted outside GitGlass is reported instead of being opened.
+ */
+function describeRecent(paths, exists = fs.existsSync) {
+  return (Array.isArray(paths) ? paths : []).map((entry) => {
+    let present = false
+    try {
+      present = exists(entry)
+    } catch {
+      present = false
+    }
+    return { path: entry, name: path.basename(entry) || entry, exists: present }
+  })
+}
+
+module.exports = { RecentRepositories, describeRecent }

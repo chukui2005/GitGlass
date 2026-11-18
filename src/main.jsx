@@ -42,6 +42,7 @@ import {
   relativeTime,
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
+import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
@@ -1142,6 +1143,8 @@ function App() {
   const [historyApplied, setHistoryApplied] = useState(null);
   const [commitsReason, setCommitsReason] = useState("");
   const [repo, setRepo] = useState(null);
+  // 最近打开仓库：[{ path, name, exists }]，由主进程在每次读取时重算 exists。
+  const [recentRepositories, setRecentRepositories] = useState([]);
   const [state, setState] = useState({ branch: "", files: [], ok: true });
   const [selected, setSelected] = useState(null);
   // 批量暂存勾选集合：Set<stageSelectionKey>，独立于右侧 Diff 选中状态；
@@ -1293,6 +1296,9 @@ function App() {
       await refreshAll();
       if (resume) await window.gitglass.consumeUpdateResume();
     })().catch(() => setNotice({ type: "error", text: "无法恢复工作区，请重新打开仓库。" }));
+  }, []);
+  useEffect(() => {
+    loadRecentRepositories();
   }, []);
   const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
@@ -1590,6 +1596,57 @@ function App() {
     await refreshLedger();
     setLoading(false);
   }
+  async function loadRecentRepositories() {
+    try {
+      const list = await window.gitglass.getRecentRepositories();
+      setRecentRepositories(Array.isArray(list) ? list : []);
+    } catch {
+      // 最近仓库列表不可用时保持当前内容，不影响主工作区。
+    }
+  }
+  async function forgetRecentRepository(candidate, options = {}) {
+    try {
+      const list = await window.gitglass.forgetRecentRepository(candidate);
+      setRecentRepositories(Array.isArray(list) ? list : []);
+      if (!options.silent) {
+        setNotice({ type: "success", text: `已从最近仓库移除：${candidate}` });
+      }
+    } catch {
+      if (!options.silent) {
+        setNotice({ type: "error", text: "无法从最近仓库移除该路径。" });
+      }
+    }
+  }
+  // 打开仓库成功后的统一收尾：选目录与最近仓库切换都必须走这里，
+  // 避免出现第二份「清历史/清勾选」逻辑。
+  async function applyOpenedRepository(result) {
+    const opened = resolveRepositoryRefresh(repo, result.state, { notifyOnFailure: true });
+    if (!opened.ok) {
+      clearStaleRepositoryState(opened);
+      setLedgerOpen(true);
+      setLedgerFilter("background");
+      setNotice({ type: "error", text: opened.message });
+      await refreshLedger();
+      await loadRecentRepositories();
+      return { ok: false, message: opened.message };
+    }
+    setRepo(result.path);
+    // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
+    detailCache.current.clear();
+    setHistorySelected(null);
+    setHistoryDetail(null);
+    setHistoryResult(null);
+    setHistoryFile(null);
+    setHistoryCompare({ base: null, target: null });
+    setHistoryDraft(emptyHistoryFilters);
+    setHistoryApplied(null);
+    // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
+    setStageSelection(new Set());
+    const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
+    if (refreshed.ok) setNotice({ type: "success", text: `已打开仓库：${result.path}` });
+    await loadRecentRepositories();
+    return refreshed;
+  }
   async function chooseRepo() {
     if (!canStartRepositoryContextOperation(loading)) return;
     setLoading(true);
@@ -1603,29 +1660,33 @@ function App() {
         await refreshLedger();
         return;
       }
-      const opened = resolveRepositoryRefresh(repo, result.state, { notifyOnFailure: true });
-      if (!opened.ok) {
-        clearStaleRepositoryState(opened);
+      await applyOpenedRepository(result);
+    } catch {
+      setLedgerOpen(true);
+      setLedgerFilter("background");
+      setNotice({ type: "error", text: GENERIC_GIT_FAILURE });
+      await refreshLedger();
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function openRecentRepository(item) {
+    if (!item?.path || !canStartRepositoryContextOperation(loading)) return;
+    setLoading(true);
+    try {
+      const result = await window.gitglass.openRepository(item.path);
+      if (!result?.ok) {
         setLedgerOpen(true);
         setLedgerFilter("background");
-        setNotice({ type: "error", text: opened.message });
+        setNotice({ type: "error", text: result?.message || GENERIC_GIT_FAILURE });
         await refreshLedger();
+        // 路径已在磁盘上消失：给出中文原因并把它从最近列表移除，而不是静默失败。
+        if (result?.missing || item.exists === false) {
+          await forgetRecentRepository(item.path, { silent: true });
+        }
         return;
       }
-      setRepo(result.path);
-      // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
-      detailCache.current.clear();
-      setHistorySelected(null);
-      setHistoryDetail(null);
-      setHistoryResult(null);
-      setHistoryFile(null);
-      setHistoryCompare({ base: null, target: null });
-      setHistoryDraft(emptyHistoryFilters);
-      setHistoryApplied(null);
-      // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
-      setStageSelection(new Set());
-      const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
-      if (refreshed.ok) setNotice({ type: "success", text: `已打开仓库：${result.path}` });
+      await applyOpenedRepository(result);
     } catch {
       setLedgerOpen(true);
       setLedgerFilter("background");
@@ -2087,6 +2148,13 @@ function App() {
             <FolderOpen size={15} />
             <span className="top-action-label">打开仓库</span>
           </button>
+          <RecentRepositoriesMenu
+            repositories={recentRepositories}
+            currentPath={repo}
+            disabled={loading}
+            onOpen={openRecentRepository}
+            onForget={forgetRecentRepository}
+          />
           <button
             type="button"
             className="sync-action"

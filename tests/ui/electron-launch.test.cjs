@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const main = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'main.cjs'), 'utf8')
+const opener = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'repository-opener.cjs'), 'utf8')
 
 describe('Electron launch configuration', () => {
   it('removes the default application menu on Windows only', () => {
@@ -28,6 +29,8 @@ describe('Electron launch configuration', () => {
   })
 
   it('classifies repository location as a read-only system record', () => {
-    expect(main).toContain("argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background'")
+    // Moved into its own module so both the folder dialog and the recent-repository
+    // switcher validate a path through the same `rev-parse` record.
+    expect(opener).toContain("argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background'")
   })
 })
