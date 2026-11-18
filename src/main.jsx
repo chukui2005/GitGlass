@@ -555,6 +555,10 @@ function RemotePlanContext({ plan, onCancel, onConfirm, loading }) {
       loading={loading}
       action={labels[plan.kind]}
     >
+      <p className="inspector-copy">
+        <strong>这一步不会执行任何命令。</strong>
+        确认后才会运行下方「计划执行」里的 Git 命令。
+      </p>
       <p className="inspector-copy">{details}</p>
     </PlannedContext>
   );
@@ -810,7 +814,8 @@ function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
         <span>远程</span>
         <button
           type="button"
-          aria-label="获取远程状态"
+          aria-label="获取远程更新（先查看计划）"
+          title="获取远程更新（先查看计划，不会立即执行）"
           onClick={onFetch}
           disabled={loading}
         >
@@ -2090,13 +2095,13 @@ function App() {
           <button
             type="button"
             className="sync-action"
-            aria-label="同步远程状态"
-            title="同步远程状态"
+            aria-label="获取远程更新（先查看计划）"
+            title="获取远程更新（先查看计划，不会立即执行）"
             disabled={!repo || loading || !remote?.remotes?.length}
             onClick={() => requestRemote("fetch")}
           >
             <ArrowClockwise size={15} />
-            <span className="top-action-label">同步</span>
+            <span className="top-action-label">获取…</span>
           </button>
         </div>
       </header>
