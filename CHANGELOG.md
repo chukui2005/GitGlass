@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.4-beta.2](https://github.com/chukui2005/GitGlass/compare/v0.6.4-beta.1...v0.6.4-beta.2) (2026-11-18)
+
+### 工程与质量（不改产品行为）
+
+* **ESLint flat config**：`electron/`（Node/CJS）、`scripts/` 与 `tests/`（Node/ESM）、`src/`（浏览器 ESM）三组环境；`npm run lint` 0 error，仅剩 4 条 `react-hooks/exhaustive-deps` warning（`main.jsx` 里依赖是刻意收窄的，留给 0.6.5 拆 hook 时一并处理）
+* **类型检查**：`npm run typecheck`（`tsc --checkJs --noEmit`）覆盖 12 个主进程模块与 12 个有单测的渲染层纯逻辑模块，0 error；首轮 38 个报错全部真修，没有 `@ts-ignore`
+* **覆盖率门槛**：`npm run test:coverage`（v8）四项阈值各 50%，当前 statement 79.94% / branch 70.61% / function 79.12% / line 83.27%
+* **CI**：每个 PR 在原有 `test` + `build` 之外新增 `lint`、`typecheck`、`test:coverage` 三个步骤；`tests/release/ci-cd-workflows.test.cjs` 同步断言新步骤顺序
+* 三个 Electron 入口（`src/main.jsx`、`electron/main.cjs`、`electron/preload.cjs`）排除在类型检查与覆盖率之外——它们只在渲染进程或 main 子进程里求值，由 `tests/ui/` 的真实启动探针覆盖，扩大范围的路径写在 `docs/improvement-plan.md`
+* 新增 devDependencies：`eslint`、`@eslint/js`、`globals`、`eslint-plugin-react-hooks`、`typescript`、`@vitest/coverage-v8`、`@types/node`；`dependencies` 未变
+
 ## [0.6.4-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.3...v0.6.4-beta.1) (2026-11-18)
 
 ### Features
