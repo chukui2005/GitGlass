@@ -37,8 +37,12 @@ export function useAppUpdates() {
 
 export function UpdateButton({ updates, disabled }) {
   const ready = updates.state.phase === 'ready';
-  return <button type="button" className="top-action update-trigger" aria-label={ready ? '更新已就绪' : '软件更新'} title={ready ? `GitGlass ${updates.state.latestVersion} 已就绪，点击更新` : '软件更新'} aria-haspopup="dialog" disabled={disabled} onClick={() => updates.setOpen(true)}>
+  // dbx 顶栏语义：平时是一颗 30×30 的纯图标按钮（检查更新），只有真的下载完成、等待重启时
+  // 才展开成黑底白字的「更新」主按钮——既对齐 dbx，也把顶栏宽度还给其它动作。
+  const label = ready ? '更新' : '检查更新';
+  return <button type="button" className={`${ready ? 'primary-button' : 'icon-button'} update-trigger`} aria-label={ready ? '更新已就绪' : '检查更新'} title={ready ? `GitGlass ${updates.state.latestVersion} 已就绪，点击更新` : '检查更新'} aria-haspopup="dialog" disabled={disabled} onClick={() => updates.setOpen(true)}>
     <DownloadSimple size={15} aria-hidden="true" />
+    {ready && <span className="top-action-label">{label}</span>}
     {ready && <span className="update-dot" aria-hidden="true" />}
   </button>;
 }

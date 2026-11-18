@@ -44,13 +44,21 @@ describe('Workbench layout structure', () => {
   })
 
   it('turns the top bar into the drag region and reserves the overlay safe area', () => {
-    // The bar itself drags the window; interactive controls opt out.
-    expect(styles).toContain('.topbar{display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--line);-webkit-app-region:drag')
+    // 语义断言：顶栏是 flex 行、可拖拽、底部 1px 分隔线，具体间距/内边距不锁死。
+    const topbar = declarations(styles, '.topbar')
+    expect(topbar).toMatchObject({
+      display: 'flex',
+      'align-items': 'center',
+      background: 'var(--surface)',
+      'border-bottom': '1px solid var(--line)',
+      '-webkit-app-region': 'drag',
+    })
+    // 系统窗口控件在 Window Controls Overlay 安全区里，不写死宽度。
+    expect(topbar['padding-right']).toContain('env(titlebar-area-x,0px)')
+    expect(topbar['padding-right']).toContain('env(titlebar-area-width,100vw)')
+    // 交互控件退出拖拽区；macOS 保留左侧原生交通灯空间。
     expect(styles).toContain('.topbar button,.topbar input,.top-state{-webkit-app-region:no-drag}')
-    // The system window controls sit in the overlay safe area, not a fixed width.
-    expect(styles).toContain('padding-right:calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) + 16px)')
-    // macOS keeps native traffic lights on the left of the same bar.
-    expect(styles).toContain('.platform-darwin .topbar{padding-left:78px}')
+    expect(declarations(styles, '.platform-darwin .topbar')).toMatchObject({ 'padding-left': '78px' })
   })
 
   it('shows a Chinese information hierarchy and hides raw protocol fields in tech details', () => {

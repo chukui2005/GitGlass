@@ -9,6 +9,7 @@ import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from '..
 const require = createRequire(import.meta.url)
 const { GitCommandService } = require('../../electron/git-command-service.cjs')
 const { RepositoryService } = require('../../electron/repository-service.cjs')
+const { declarations } = require('../support/css-inspect.cjs')
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const renderer = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8')
@@ -97,6 +98,10 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     expect(renderer).toContain('onClick={refreshFromUser}')
     expect(styles).toContain('button:disabled{cursor:not-allowed;pointer-events:none}')
-    expect(styles).toContain('.row-action:disabled{color:#b6c0ca;opacity:.55}')
+    // 语义断言：行内动作禁用时用 --faint 文字 + 降低透明度，不再写死某个灰色。
+    expect(declarations(styles, '.row-action:disabled')).toMatchObject({
+      color: 'var(--faint)',
+      opacity: '.55',
+    })
   })
 })
