@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.3](https://github.com/chukui2005/GitGlass/compare/v0.6.2...v0.6.3) (2026-11-18)
+
+### Features
+
+* refresh automatically when the repository or the window changes ([e590b5b](https://github.com/chukui2005/GitGlass/commit/e590b5b8d9596c5f6b4eb4b1f7311838e1142cf5))
+* auto-dismiss transient notices after six seconds ([836df74](https://github.com/chukui2005/GitGlass/commit/836df7468ea4856c622bbef9d35340000f940ca9))
+* add a recent repositories switcher ([78eaabb](https://github.com/chukui2005/GitGlass/commit/78eaabbe106a78483c1f287fe8a70a120a3c0f72))
+
+### Bug Fixes
+
+* keep a single changelog title on Windows ([96097e9](https://github.com/chukui2005/GitGlass/commit/96097e943125600fda733d3c0076d9f5bf4d48cc))
+* keep the title bar on one line when window controls take space ([3903b8d](https://github.com/chukui2005/GitGlass/commit/3903b8dd6d3379a4795c2192885bfdc91d2ee419))
+* let head and refs changes through the renderer quiet window ([19fb0c0](https://github.com/chukui2005/GitGlass/commit/19fb0c0246ff690d92b957daa4d4aa07d79fb1ff))
+* make the remote entry point say it only opens a plan ([b8db667](https://github.com/chukui2005/GitGlass/commit/b8db667df5206d6a7c4e0f0f7253db58cfd02485))
+
+### Refactors
+
+* give small text and toolbar buttons a clear hierarchy ([e847e4a](https://github.com/chukui2005/GitGlass/commit/e847e4a6bee6cc30f085cfdd21a907e345655743))
+
 ## [0.6.2](https://github.com/chukui2005/GitGlass/compare/v0.6.1-beta.1...v0.6.2) (2026-11-18)
 
 ### Features
