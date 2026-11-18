@@ -10,10 +10,50 @@ const { declarations, fontSizesBelow, withoutRecentRepositories } = require('../
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const styles = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8')
 const renderer = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8')
+const updates = fs.readFileSync(path.join(root, 'src', 'app-updates.jsx'), 'utf8')
 
 // 读文件 + 正则的轻量断言：不启动 Electron，也不锁定规则的书写方式，只校验设计 token 与按钮体系存在。
-describe('Design tokens: 三档字号与颜色', () => {
-  it('defines the 13 / 12 / 11px type scale with matching line heights', () => {
+describe('Design tokens: dbx 中性色板', () => {
+  it('carries the dbx light-theme neutrals', () => {
+    expect(declarations(styles, ':root')).toMatchObject({
+      '--app': '#fff',
+      '--surface': '#fff',
+      '--sidebar': '#fafafa',
+      '--sunken': '#fafafa',
+      '--hover': '#f5f5f5',
+      '--active': '#f3f3f3',
+      '--code': '#f3f3f3',
+      '--text': '#0a0a0a',
+      '--muted': '#737373',
+      '--faint': '#a1a1a1',
+      '--line': '#e5e5e5',
+      '--line-strong': '#d4d4d4',
+      '--ring': '#a1a1a1',
+    })
+  })
+
+  it('keeps the status colours and the brand blue as an accent only', () => {
+    expect(declarations(styles, ':root')).toMatchObject({
+      '--green': '#16a34a',
+      '--orange': '#d97706',
+      '--red': '#e7000b',
+      '--blue': '#2563eb',
+      '--blue-soft': '#eff6ff',
+    })
+    // 品牌蓝不再当主按钮底色：主按钮是近黑。
+    expect(declarations(styles, '.primary-button,.primary-action').background).toBe('#171717')
+  })
+
+  it('uses the 4 / 6 / 10px radius scale and a single modal shadow token', () => {
+    expect(declarations(styles, ':root')).toMatchObject({
+      '--radius-sm': '4px',
+      '--radius': '6px',
+      '--radius-lg': '10px',
+      '--shadow-modal': '0 12px 32px rgba(0,0,0,.10)',
+    })
+  })
+
+  it('keeps the 13 / 12 / 11px type scale', () => {
     expect(declarations(styles, ':root')).toMatchObject({
       '--font-body': '13px',
       '--line-body': '1.5',
@@ -22,28 +62,16 @@ describe('Design tokens: 三档字号与颜色', () => {
       '--font-aux': '11px',
       '--line-aux': '1.4',
     })
-  })
-
-  it('keeps the existing radius token and adds the two smaller steps', () => {
-    expect(declarations(styles, ':root')).toMatchObject({
-      '--radius': '6px',
-      '--radius-sm': '4px',
-      '--radius-md': '8px',
-    })
-  })
-
-  it('keeps --muted at the 5.3:1 grey and documents the three tiers in a comment', () => {
-    expect(declarations(styles, ':root')['--muted']).toBe('#667085')
     expect(styles).toContain('正文 13px/1.5')
     expect(styles).toContain('辅助 11px/1.4')
   })
 
   it('leaves no 10px text behind in the rules this PR owns', () => {
-    // `.recent-repositories` 菜单由另一个分支维护，本 PR 不改动它，因此不纳入这条断言。
+    // `.recent-repositories` 菜单由另一个 PR 维护，本 PR 不改动它，因此不纳入这条断言。
     expect(fontSizesBelow(withoutRecentRepositories(styles), 11)).toEqual([])
   })
 
-  it('never uses a sub-4.5:1 grey for text that has to be read', () => {
+  it('never uses the disabled grey for text that has to be read', () => {
     const readable = [
       '.ledger-glance time',
       '.ledger-entry-meta',
@@ -57,31 +85,84 @@ describe('Design tokens: 三档字号与颜色', () => {
     for (const selector of readable) {
       const values = declarations(styles, selector)
       expect(values, selector).not.toBeNull()
-      expect(values.color, selector).not.toMatch(/#(98a2b3|b6c0ca|9aa4b2)/i)
+      expect(values.color, selector).not.toMatch(/#(a1a1a1|98a2b3|b6c0ca)/i)
     }
   })
 })
 
-describe('Design tokens: 按钮三档', () => {
-  it('defines the primary, secondary and icon button tiers with their own sizes', () => {
+describe('Design tokens: 按钮三档（dbx 度量）', () => {
+  it('makes the primary button near-black with dbx hover/active steps', () => {
     expect(declarations(styles, '.primary-button,.primary-action')).toMatchObject({
       height: '32px',
       'border-radius': 'var(--radius)',
+      background: '#171717',
+      color: '#fafafa',
       'font-size': 'var(--font-body)',
     })
+    expect(
+      declarations(styles, '.primary-button:not(:disabled):hover,.primary-action:not(:disabled):hover'),
+    ).toMatchObject({ background: '#262626' })
+    expect(
+      declarations(styles, '.primary-button:not(:disabled):active,.primary-action:not(:disabled):active'),
+    ).toMatchObject({ background: '#0a0a0a' })
+    // 禁用态回到中性灰底：页面上永远只有一个"看起来实心"的主按钮。
+    expect(declarations(styles, '.primary-button:disabled,.primary-action:disabled')).toMatchObject({
+      background: 'var(--hover)',
+      color: 'var(--faint)',
+    })
+  })
+
+  it('gives the secondary tier a 1px neutral border and a 32px height', () => {
     expect(declarations(styles, '.secondary-button,.secondary-action,.sync-action')).toMatchObject({
-      height: '28px',
-      'font-size': 'var(--font-secondary)',
+      height: '32px',
+      border: '1px solid var(--line)',
+      background: 'var(--surface)',
+      color: 'var(--text)',
+      'font-size': 'var(--font-body)',
+    })
+  })
+
+  it('uses 30px for the title-bar chrome and 28px for in-panel icon buttons', () => {
+    expect(declarations(styles, '.toolbar-button,.top-action')).toMatchObject({
+      height: '30px',
+      'border-radius': 'var(--radius)',
+      'font-size': 'var(--font-body)',
     })
     expect(declarations(styles, '.icon-button')).toMatchObject({
       width: '28px',
       height: '28px',
-      'border-radius': 'var(--radius-sm)',
+      'border-radius': 'var(--radius)',
     })
-    expect(declarations(styles, '.toolbar-button,.top-action')).toMatchObject({
-      height: '28px',
-      'font-size': 'var(--font-aux)',
+    // 顶栏里的按钮统一 30px（文字按钮与纯图标按钮都不例外）。
+    expect(styles).toMatch(/\.top-actions \.toolbar-button,\.top-actions \.top-action,\.top-actions \.icon-button\{height:30px\}/)
+    expect(styles).toMatch(/\.top-actions \.icon-button\{width:30px\}/)
+  })
+
+  it('sizes form controls to 30px with a neutral focus ring', () => {
+    expect(declarations(styles, '.inspector-flow input')).toMatchObject({
+      height: '30px',
+      border: '1px solid var(--line)',
+      'border-radius': 'var(--radius)',
     })
+    expect(declarations(styles, '.history-filters input,.history-filters select')).toMatchObject({
+      height: '30px',
+      border: '1px solid var(--line)',
+    })
+    expect(declarations(styles, '.context-panel textarea')).toMatchObject({ 'min-height': '96px' })
+    expect(
+      declarations(styles, 'button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible'),
+    ).toMatchObject({ outline: '2px solid var(--ring)' })
+  })
+
+  it('gives modals and plan cards the 10px radius and the light shadow', () => {
+    for (const selector of ['.update-dialog', '.command-palette']) {
+      expect(declarations(styles, selector), selector).toMatchObject({
+        'border-radius': 'var(--radius-lg)',
+        'box-shadow': 'var(--shadow-modal)',
+        border: '1px solid var(--line)',
+      })
+    }
+    expect(declarations(styles, '.planned-command')).toMatchObject({ 'border-radius': 'var(--radius-lg)' })
   })
 
   it('gives every tier hover, active and disabled states', () => {
@@ -97,12 +178,12 @@ describe('Design tokens: 按钮三档', () => {
     ]) {
       expect(declarations(styles, selector), selector).not.toBeNull()
     }
-    // 禁用只降透明度：不写 width/height/padding/margin/border，避免禁用态改变布局。
+    // 禁用只降透明度（dbx disabled:opacity-50）：不写 width/height/padding/margin/border，避免禁用态改变布局。
     const disabled = declarations(styles, 'button:disabled')
     expect(disabled).toMatchObject({
       cursor: 'not-allowed',
       'pointer-events': 'none',
-      opacity: '.55',
+      opacity: '.5',
     })
     for (const property of ['width', 'height', 'padding', 'margin', 'border']) {
       expect(disabled[property], property).toBeUndefined()
@@ -117,18 +198,31 @@ describe('Design tokens: 按钮三档', () => {
     expect(declarations(styles, '.danger-outline')).not.toBeNull()
   })
 
-  it('puts no solid primary button in the title bar and ranks the toolbar by weight', () => {
+  it('renders the brand mark and repo name at dbx sizes', () => {
+    expect(declarations(styles, '.brand h1')).toMatchObject({ 'font-size': '13px', 'font-weight': '650' })
+    expect(declarations(styles, '.brand strong')).toMatchObject({
+      'font-size': '12px',
+      color: 'var(--muted)',
+    })
+  })
+})
+
+describe('Design tokens: 顶栏层次', () => {
+  it('ranks the toolbar by weight and keeps the solid button for the update entry only', () => {
     const topbar = renderer.slice(
       renderer.indexOf('<div className="top-actions">'),
       renderer.indexOf('</header>'),
     )
-    expect(topbar).not.toContain('primary-button')
-    expect(topbar).not.toContain('primary-action')
     // 打开仓库 / 获取… 是次按钮（描边）。
     expect(topbar).toMatch(/className="secondary-button"[^>]*aria-label="打开仓库"/)
     expect(topbar).toMatch(/className="secondary-button"[^>]*aria-label="获取远程更新/)
     // 命令 / 工作区 / 历史审查 / 恢复 是图标 + 小字的低权重工具条。
     expect((topbar.match(/className="toolbar-button"/g) || []).length).toBe(4)
+    // 顶栏唯一的实心按钮是「更新」：平时是 30×30 的纯图标按钮，只有下载完成、等待重启时才展开成黑底「更新」。
+    expect(updates).toMatch(/\$\{ready \? 'primary-button' : 'icon-button'\} update-trigger/)
+    expect(updates).toContain("aria-label={ready ? '更新已就绪' : '检查更新'}")
+    expect(topbar).not.toContain('primary-button')
+    expect(topbar).not.toContain('primary-action')
   })
 
   it('requires title and aria-label on every icon-only button', () => {

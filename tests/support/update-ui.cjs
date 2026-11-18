@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
     assert.equal(restored.consumed, true)
     assert.equal(restored.overflow, false)
     assert.equal(await js(`Boolean(document.querySelector('.update-dot'))`), false)
-    await js(`document.querySelector('[aria-label="软件更新"]').click()`)
+    await js(`document.querySelector('[aria-label="检查更新"]').click()`)
     await waitUntil(() => js(`Boolean(document.querySelector('dialog')?.matches(':modal'))`), '更新面板以模态方式打开')
     await js(`window.gitglassUpdateTest.publish({ phase: 'downloading', progress: 42, latestVersion: '0.5.7-beta.1' })`)
     await waitUntil(() => js(`document.querySelector('progress')?.value === 42`), '下载进度渲染为 42')

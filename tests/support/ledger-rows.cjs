@@ -58,6 +58,7 @@ app.whenReady().then(async () => {
       return {
         toolbar: buttons.filter((button) => button.classList.contains('toolbar-button')).length,
         secondary: buttons.filter((button) => button.classList.contains('secondary-button')).length,
+        icons: buttons.filter((button) => button.classList.contains('icon-button')).length,
         primary: buttons.filter((button) => button.classList.contains('primary-button') || button.classList.contains('primary-action')).length,
         heights: buttons.map((button) => Math.round(button.getBoundingClientRect().height)),
         labels: buttons.map((button) => button.getAttribute('aria-label')),
@@ -65,8 +66,13 @@ app.whenReady().then(async () => {
     })()`)
     assert.equal(topbar.toolbar, 4, `顶栏应有 4 个图标 + 小字工具条：${JSON.stringify(topbar.labels)}`)
     assert.equal(topbar.secondary, 2, `顶栏应有「打开仓库」「获取…」两个次按钮：${JSON.stringify(topbar.labels)}`)
-    assert.equal(topbar.primary, 0, '顶栏不允许出现实心主按钮')
-    assert.ok(topbar.heights.every((height) => height <= 29), `顶栏按钮高度应统一为 28px：${JSON.stringify(topbar.heights)}`)
+    // 没有可用更新时「更新」是 30×30 的纯图标按钮（检查更新），不占文字宽度。
+    assert.equal(topbar.icons, 1, `顶栏应有一颗纯图标按钮（检查更新）：${JSON.stringify(topbar.labels)}`)
+    assert.equal(topbar.primary, 0, '没有可用更新时顶栏不允许出现实心主按钮')
+    assert.ok(
+      topbar.heights.every((height) => height === 30),
+      `顶栏按钮高度应统一为 dbx 的 30px：${JSON.stringify(topbar.heights)}`,
+    )
 
     // 工作区 + 文件详情里的主动作：页面同一时刻最多一个"可点"的主按钮。
     const primeButton = await js(`(() => {
@@ -196,7 +202,7 @@ app.whenReady().then(async () => {
     })()`)
 
     console.log('[LEDGER-ROWS] ' + JSON.stringify({
-      topbar: { toolbar: topbar.toolbar, secondary: topbar.secondary, primary: topbar.primary },
+      topbar: { toolbar: topbar.toolbar, secondary: topbar.secondary, icons: topbar.icons, primary: topbar.primary },
       rows: rows.map((row) => ({ intentFont: row.intentFont, commandFont: row.commandFont, metaFont: row.metaFont })),
       emptyPrimary: empty.text,
       density,

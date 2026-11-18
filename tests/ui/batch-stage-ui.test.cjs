@@ -146,16 +146,31 @@ describe('V0.5.3 batch stage UI structure', () => {
   })
 
   it('styles the toolbar and checkboxes with the restrained GitGlass visual language', () => {
-    // 紧凑工具栏：单行按钮不换行，主按钮蓝色、禁用态灰色。
-    expect(styles).toContain('.batch-toolbar{display:grid;gap:4px')
-    expect(styles).toContain('.batch-tools-row{display:flex;gap:4px}')
-    expect(styles).toContain('.batch-tool{flex:1;min-width:0;overflow:hidden')
-    expect(styles).toContain('.batch-stage{flex:none;display:inline-flex;align-items:center;justify-content:center;min-height:24px')
-    expect(styles).toContain('.batch-stage:not(:disabled):hover{background:#2659BE}')
-    expect(styles).toContain('.batch-stage:disabled{background:#f3f5f7;color:#98a2b3}')
-    // 复选框可见焦点与蓝色 accent。
-    expect(styles).toContain('.stage-check{flex:none;margin:0 0 0 7px;width:13px;height:13px;accent-color:var(--blue)')
-    expect(styles).toContain('.stage-check:focus-visible{outline:2px solid var(--blue);outline-offset:1px}')
+    // 紧凑工具栏：单行按钮不换行；「暂存所选」是次按钮（描边），页面主按钮留给 Inspector 的暂存/提交。
+    expect(declarations(styles, '.batch-toolbar')).toMatchObject({ display: 'grid', gap: '4px' })
+    expect(declarations(styles, '.batch-tools-row')).toMatchObject({ display: 'flex', gap: '4px' })
+    expect(declarations(styles, '.batch-tool')).toMatchObject({ flex: '1', 'min-width': '0', overflow: 'hidden' })
+    expect(declarations(styles, '.batch-stage')).toMatchObject({
+      display: 'inline-flex',
+      'min-height': '24px',
+      border: '1px solid var(--line)',
+      background: 'var(--surface)',
+      color: 'var(--text)',
+    })
+    // 三态：hover 浅底、禁用灰、焦点用中性环（不用品牌蓝外发光）。
+    expect(declarations(styles, '.batch-stage:not(:disabled):hover')).toMatchObject({ background: 'var(--hover)' })
+    expect(declarations(styles, '.batch-stage:disabled')).toMatchObject({
+      background: 'var(--hover)',
+      color: 'var(--faint)',
+    })
+    expect(declarations(styles, '.batch-stage:focus-visible')['outline']).toBe('2px solid var(--ring)')
+    // 复选框保留可见焦点与蓝色 accent（与 dbx 表格里的勾选一致）。
+    expect(declarations(styles, '.stage-check')).toMatchObject({
+      width: '13px',
+      height: '13px',
+      'accent-color': 'var(--blue)',
+    })
+    expect(declarations(styles, '.stage-check:focus-visible')['outline']).toBe('2px solid var(--ring)')
     // 不引入深色终端风或渐变。
     expect(styles).not.toContain('linear-gradient')
   })
