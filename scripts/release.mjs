@@ -129,12 +129,29 @@ function collectCommits(previousTag) {
   })
 }
 
+/**
+ * Puts the new section under a single `# Changelog` heading.
+ *
+ * The file is checked out with CRLF on Windows, so the previous implementation
+ * (`existing.startsWith('# Changelog\n')`) never matched there and every release
+ * appended a second heading. Normalising the line endings and dropping *all*
+ * heading lines keeps one title no matter what the working copy uses.
+ */
+export function mergeChangelog(existing, section) {
+  const header = '# Changelog'
+  const normalized = String(existing ?? '').replace(/\r\n/g, '\n')
+  const body = normalized
+    .split('\n')
+    .filter((line) => line.trim() !== header)
+    .join('\n')
+    .replace(/^\n+/, '')
+  return `${header}\n\n${section}\n${body ? `\n${body}` : ''}`
+}
+
 function prependChangelog(section, fileName = 'CHANGELOG.md') {
   const filePath = path.join(rootDirectory, fileName)
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '# Changelog\n'
-  const header = '# Changelog\n'
-  const body = existing.startsWith(header) ? existing.slice(header.length).replace(/^\n+/, '') : existing
-  fs.writeFileSync(filePath, `${header}\n${section}\n${body ? `\n${body}` : ''}`, 'utf8')
+  fs.writeFileSync(filePath, mergeChangelog(existing, section), 'utf8')
 }
 
 function main() {

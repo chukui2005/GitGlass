@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextBetaVersion, parseConventionalSubject, renderChangelogSection, selectPreviousTag } from '../../scripts/release.mjs'
+import { mergeChangelog, nextBetaVersion, parseConventionalSubject, renderChangelogSection, selectPreviousTag } from '../../scripts/release.mjs'
 
 function commit(subject, hash = 'a'.repeat(40)) {
   const parsed = parseConventionalSubject(subject)
@@ -78,5 +78,35 @@ describe('previous release selection', () => {
     expect(selectPreviousTag([], '0.6.1')).toBeNull()
     expect(selectPreviousTag(['nightly', 'not-a-tag'], '0.6.1')).toBeNull()
     expect(selectPreviousTag(['nightly', 'v0.6.1-beta.1'], '0.6.1')).toBe('v0.6.1-beta.1')
+  })
+})
+
+describe('changelog merging', () => {
+  const section = '## [0.6.3](link) (2026-11-18)\n\n### Features\n\n* a change'
+
+  it('keeps exactly one title when the file uses LF', () => {
+    const merged = mergeChangelog('# Changelog\n\n## [0.6.2](link) (2026-11-18)\n', section)
+    expect(merged.match(/^# Changelog$/gm)).toHaveLength(1)
+    expect(merged).toBe(`# Changelog\n\n${section}\n\n## [0.6.2](link) (2026-11-18)\n`)
+  })
+
+  it('keeps exactly one title when the Windows working copy uses CRLF', () => {
+    // Regression: the old check compared against '# Changelog\n', which never
+    // matched a CRLF file, so every Windows release appended a second title.
+    const merged = mergeChangelog('# Changelog\r\n\r\n## [0.6.2](link) (2026-11-18)\r\n', section)
+    expect(merged.match(/^# Changelog$/gm)).toHaveLength(1)
+    expect(merged).not.toContain('\r')
+    expect(merged).toContain('## [0.6.2](link) (2026-11-18)')
+  })
+
+  it('collapses titles a previous run already duplicated', () => {
+    const merged = mergeChangelog('# Changelog\n\n## [0.6.2](link)\n\n# Changelog\n\n## [0.6.1](link)\n', section)
+    expect(merged.match(/^# Changelog$/gm)).toHaveLength(1)
+    expect(merged).toContain('## [0.6.2](link)')
+    expect(merged).toContain('## [0.6.1](link)')
+  })
+
+  it('starts a changelog when the file does not exist yet', () => {
+    expect(mergeChangelog('', section)).toBe(`# Changelog\n\n${section}\n`)
   })
 })
