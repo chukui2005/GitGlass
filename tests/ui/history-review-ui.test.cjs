@@ -5,6 +5,7 @@ const diffPresentation = fs.readFileSync(path.join(__dirname, '..', '..', 'src',
 const ledger = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'workbench-ledger.js'), 'utf8')
 const service = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'repository-service.cjs'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
+const { declarations } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
 describe('V0.5.2 history review polish UI structure', () => {
   it('keeps a server-side query input with result count and Ctrl/Cmd+F hint', () => {
@@ -83,8 +84,11 @@ describe('V0.5.2 history review polish UI structure', () => {
       expect(match[1]).toContain('grid-template-columns:minmax(0,1fr) auto')
     }
     expect(styles).toContain('.compare-pin{align-self:center;justify-self:end;white-space:nowrap')
-    // 选中态覆盖整条提交行，而不是只覆盖左侧按钮。
-    expect(styles).toContain('.history-row.selected{background:var(--blue-soft);box-shadow:inset 3px 0 var(--blue)}')
+    // 选中态覆盖整条提交行，而不是只覆盖左侧按钮：整行浅底 + 左侧 2px 强调条。
+    const selected = declarations(styles, '.history-row.selected')
+    expect(selected).toMatchObject({ 'box-shadow': 'inset 2px 0 var(--blue)' })
+    expect(selected.background).toContain('color-mix')
+    expect(selected.background).toContain('var(--blue)')
   })
   it('formats ledger stdout through a single reusable helper before rendering', () => {
     // P1 回归点：结构化提交详情的 0x1e/0x1f 不能以方框出现在“命令结果”里。

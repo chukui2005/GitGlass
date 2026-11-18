@@ -178,10 +178,28 @@ app.whenReady().then(async () => {
     assert.equal(empty.topbarToolbar, 4, '空状态顶栏同样保留 4 个低权重工具条')
     assert.ok(empty.overflow <= 1, `空状态不允许横向溢出，实际 ${empty.overflow}px`)
 
+    // 密度（对齐 dbx）：列表行 26px、分组标题 28px、账本单行 32px、Diff 行 20–21px。
+    const density = await js(`(() => {
+      const height = (selector) => {
+        const element = document.querySelector(selector)
+        return element ? Math.round(element.getBoundingClientRect().height) : null
+      }
+      const sidebar = document.querySelector('.status-panel')
+      return {
+        fileRow: height('.file-row'),
+        branchRow: height('.branch-row'),
+        sectionLabel: height('.status-panel .section-label'),
+        ledgerRow: height('.ledger-summary'),
+        diffLine: height('.diff-line:not(.file):not(.file-path):not(.metadata):not(.hunk)'),
+        sidebarOverflowX: sidebar ? sidebar.scrollWidth - sidebar.clientWidth : null,
+      }
+    })()`)
+
     console.log('[LEDGER-ROWS] ' + JSON.stringify({
       topbar: { toolbar: topbar.toolbar, secondary: topbar.secondary, primary: topbar.primary },
       rows: rows.map((row) => ({ intentFont: row.intentFont, commandFont: row.commandFont, metaFont: row.metaFont })),
       emptyPrimary: empty.text,
+      density,
     }))
     app.exit(0)
   } catch (error) {

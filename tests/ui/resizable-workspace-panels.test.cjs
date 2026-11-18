@@ -3,6 +3,7 @@ const path = require("node:path");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "..", "src", "main.jsx"), "utf8");
 const styles = fs.readFileSync(path.join(__dirname, "..", "..", "src", "styles.css"), "utf8");
+const { declarations } = require(path.join(__dirname, "..", "support", "css-inspect.cjs"));
 
 describe("Resizable workbench panels", () => {
   it("provides pointer and keyboard accessible separators for both side panels", () => {
@@ -29,9 +30,17 @@ describe("Resizable workbench panels", () => {
   });
 
   it("prioritizes legible file and branch names in the workspace sidebar", () => {
-    expect(styles).toContain('.status-panel .file-select,.status-panel .branch-row{font-size:13px}');
-    expect(styles).toContain('.status-panel .section-label{font-size:12px}');
-    expect(styles).toContain('.status-panel .file-select{padding:8px 6px}');
-    expect(styles).toContain('.status-panel .branch-list,.status-panel .remote-summary{margin-top:20px;padding-top:16px}');
+    // 按选择器读取生效声明，而不是锁定某一条规则的写法：
+    // 13px 主字号 + 26px 列表行 + 10px 分组留白（dbx 密度）。
+    const rows = declarations(styles, ".status-panel .file-select,.status-panel .branch-row");
+    expect(rows).toMatchObject({ "font-size": "13px", height: "26px", padding: "0 6px" });
+    expect(declarations(styles, ".status-panel .section-label")).toMatchObject({
+      "font-size": "12px",
+      color: "var(--text)",
+    });
+    expect(declarations(styles, ".status-panel .branch-list,.status-panel .remote-summary")).toMatchObject({
+      "margin-top": "10px",
+      "padding-top": "10px",
+    });
   });
 });

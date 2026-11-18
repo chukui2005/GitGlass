@@ -6,6 +6,7 @@ const electronPath = require('electron')
 const probe = path.join(__dirname, '..', 'support', 'history-row-layout.cjs')
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
+const { declarations } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
 let layout
 
@@ -31,8 +32,15 @@ describe('V0.5.2 commit row layout', () => {
     // 行内只有两列：提交按钮 + 比较按钮，顺序固定。
     expect(source).toContain('<div className={`history-row ${selected ? "selected" : ""}`}>')
     expect(source).toContain('className="compare-pin"')
-    // 选中态覆盖整行，而不是只覆盖左侧按钮。
-    expect(styles).toContain('.history-row.selected{background:var(--blue-soft);box-shadow:inset 3px 0 var(--blue)}')
+    // 选中态覆盖整行，而不是只覆盖左侧按钮：整行浅底 + 左侧 2px 强调条。
+    const selected = declarations(styles, '.history-row.selected')
+    expect(selected).toMatchObject({ 'box-shadow': 'inset 2px 0 var(--blue)' })
+    expect(selected.background).toContain('color-mix')
+    // 密度对齐 dbx：单行高度由 .commit-select 的 min-height 决定。
+    expect(declarations(styles, '.commit-select')['min-height']).toBe('38px')
+    // 两行字号：标题 13px 正文、元信息 11px 辅助。
+    expect(declarations(styles, '.commit-title')['font-size']).toBe('var(--font-body)')
+    expect(declarations(styles, '.commit-meta')['font-size']).toBe('var(--font-aux)')
   })
 
   it('computes a grid row with the compare button inside the row at 1024, 1280 and 1440', () => {
@@ -53,9 +61,9 @@ describe('V0.5.2 commit row layout', () => {
         expect(row.pin.top, label).toBeGreaterThanOrEqual(row.row.top - 0.5)
         expect(row.pin.bottom, label).toBeLessThanOrEqual(row.row.bottom + 0.5)
         expect(row.pin.left, label).toBeGreaterThanOrEqual(row.select.right - 0.5)
-        // 单行高度（约 44px），换行会让行高翻倍。
-        expect(row.row.height, label).toBeGreaterThanOrEqual(40)
-        expect(row.row.height, label).toBeLessThanOrEqual(56)
+        // 单行高度 38px（dbx 密度）；换行会让行高翻倍，所以上下界都要卡住。
+        expect(row.row.height, label).toBeGreaterThanOrEqual(36)
+        expect(row.row.height, label).toBeLessThanOrEqual(40)
         // 两行信息结构保持：标题、元信息各自单行且占可用宽度。
         expect(row.title.height, label).toBeLessThanOrEqual(22)
         expect(row.meta.height, label).toBeLessThanOrEqual(20)
