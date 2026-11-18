@@ -106,10 +106,10 @@ function writeJson(fileName, value) {
 function parseArguments(argv) {
   const flags = new Set(argv.filter((entry) => entry.startsWith('--')))
   const positional = argv.filter((entry) => !entry.startsWith('--'))
-  if (positional.length !== 1) fail('用法：npm run release -- <版本号> [--beta] [--dry-run]')
+  if (positional.length !== 1) fail('用法：npm run release -- <版本号> [--beta] [--no-tag] [--dry-run]')
   const base = positional[0].replace(/^v/, '')
   if (!/^\d+\.\d+\.\d+$/.test(base)) fail(`版本号必须是 X.Y.Z 形式，收到：${base}`)
-  return { base, beta: flags.has('--beta'), dryRun: flags.has('--dry-run') }
+  return { base, beta: flags.has('--beta'), dryRun: flags.has('--dry-run'), noTag: flags.has('--no-tag') }
 }
 
 function collectCommits(previousTag) {
@@ -138,7 +138,7 @@ function prependChangelog(section, fileName = 'CHANGELOG.md') {
 }
 
 function main() {
-  const { base, beta, dryRun } = parseArguments(process.argv.slice(2))
+  const { base, beta, dryRun, noTag } = parseArguments(process.argv.slice(2))
   const packageJson = readJson('package.json')
   const current = packageJson.version
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
@@ -150,7 +150,9 @@ function main() {
   if (git(['tag', '--list', `v${version}`])) fail(`tag v${version} 已存在`)
 
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (branch !== 'main') fail(`请在 main 分支上发版（当前是 ${branch}）；先合并 PR 并同步 main。`)
+  // A protected main cannot receive the version commit directly; --no-tag
+  // produces the commit on a branch so it can travel through a pull request.
+  if (branch !== 'main' && !noTag) fail(`请在 main 分支上发版（当前是 ${branch}）；若 main 受保护，请加 --no-tag，合并 PR 后再手动打 tag。`)
   const dirty = git(['status', '--porcelain'])
   if (dirty) fail(`工作区有未提交改动：\n${dirty}\n请先提交或还原后再发版。`)
 
@@ -178,6 +180,16 @@ function main() {
 
   git(['add', 'package.json', 'package-lock.json', 'CHANGELOG.md'])
   git(['commit', '-m', `chore(release): ${version}`])
+
+  if (noTag) {
+    console.log('已提交版本号与 CHANGELOG（未打 tag）。')
+    console.log('下一步：')
+    console.log(`  git push -u origin ${branch}`)
+    console.log('  在网页上开 PR，用 Rebase and merge 合并后执行：')
+    console.log(`  git fetch origin main && git tag -a v${version} -m "GitGlass v${version}" origin/main && git push origin v${version}`)
+    return
+  }
+
   git(['tag', '-a', `v${version}`, '-m', `GitGlass v${version}`])
 
   console.log(`已提交并打 tag v${version}。`)
