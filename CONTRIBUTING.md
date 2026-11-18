@@ -82,11 +82,16 @@
 
 ```powershell
 npm test
+npm run lint
+npm run typecheck
+npm run test:coverage
 npm run build
 git status --short
 git diff --cached --check
 git diff --cached
 ```
+
+四个质量门槛的命令、配置与当前阈值见 [docs/conventions.md](docs/conventions.md#5-提交前必须通过-lint--typecheck--coverage)。
 
 提交后、推送前再确认：
 
