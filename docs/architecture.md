@@ -65,6 +65,10 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `getRemoteOverview()` | `{ remote, upstream, ahead, behind, reason, suggestion, state }` | background records for remote/upstream URL/count reads |
 | `prepareRemote(kind)` | `{ ok, blocked, reason, plan, overview }` | background remote safety reads; plan is not a ledger entry |
 | `executeRemote(kind, operationId)` | `{ execution, ok, blocked, reason, plan, overview }` | repeats safety reads, then appends one user record with the planned operation ID |
+| `openRepository(path)` | `{ ok, path, state, execution }` or `{ ok: false, message }` | one `background` `rev-parse --show-toplevel` record |
+| `getRecentRepositories()` | `[{ path, name, exists }]` newest first, at most five | read-only, no record |
+| `forgetRecentRepository(path)` | same list after removal | read-only, no record |
+| `onRepositoryChanged(listener)` | subscription; callback receives `{ reason: 'head' \| 'refs' \| 'index' }` | none (watcher never writes the repository) |
 
 `file` is `{ path, area: 'staged' | 'unstaged' }`. `branches` contains `{ name, current, hash }`; `commits` contains `{ hash, parents, subject, author, authoredAt }`. A plan's `argv` is the exact Git argument array (for example `['switch', 'feature/report']`); `displayCommand` includes the executable. The renderer must display a planned branch command as a proposal until `executeBranch` returns an `execution` record; it must never add a plan to the ledger.
 
@@ -101,5 +105,27 @@ The recovery reader uses `git reflog -20 --date=iso --pretty=format:%H%x1f%h%x1f
 ## Startup and workspace state
 
 `RecentRepositories` (`electron/recent-repositories.cjs`) keeps the last five opened repository roots in `userData/recent-repos.json`; only local paths are stored. Startup order is: `GITGLASS_REPOSITORY`, then an update restart draft, then the most recent path that still exists on disk. A missing, oversized or damaged list is ignored rather than blocking launch. `chooseRepository` records the resolved worktree root, not the folder the user picked.
+
+## 0.6.3 additions
+
+### Recent repositories switcher
+
+`electron/repository-opener.cjs` holds the single "resolve a folder to a worktree root" routine: `path.resolve` → `git rev-parse --show-toplevel` → set the current repository and remember the resolved root. Both the folder dialog (`repo:choose`) and the top-bar switcher (`repo:open`) go through it, so the renderer-supplied string is never trusted as a repository root, and there is exactly one `rev-parse` record shape.
+
+`repo:recent` and `repo:recent:forget` are registered outside the operation gate: the list must be readable before any repository is open and while a long network operation is running. `forget` rejects non-strings, NUL characters and oversized paths with a Chinese error. `describeRecent()` recomputes `exists` on every call (never cached), so a repository deleted outside GitGlass is shown as missing instead of being opened. Selecting a missing entry reports the reason and removes it.
+
+### Automatic refresh
+
+`electron/repository-watcher.cjs` watches the resolved git directory, `refs`, `refs/heads` and `logs` with `fs.watch({ persistent: false })`. Filenames are classified into three reasons: `head` (HEAD/ORIG_HEAD/MERGE_HEAD/rebase-merge/…), `refs` (refs, packed-refs, logs) and `index`. Events are coalesced with an 800 ms debounce and pushed to the renderer as `repo:changed`. `notifyIgnored(1500)` opens a silent window around the six channels that write the repository, so GitGlass never reports its own writes as an external change. The watcher follows every `openRepository()` success and is closed on repository switch, window close and quit.
+
+The renderer subscribes once and reads the latest `refreshAll` from a ref, then performs a silent refresh (no notice, no ledger open) on `repo:changed` and on window focus. A one-second quiet window after each refresh suppresses self-triggered loops; `head` and `refs` events bypass it because only `git status`-style reads rewrite `.git/index`, while HEAD/refs writes always come from outside the app (our own writes are already silenced in the main process).
+
+### Notice lifecycle
+
+`src/notice-lifecycle.js` owns the banner rules, `src/main.jsx` only wires them up: transient success/error notices auto-dismiss after `AUTO_DISMISS_MS` (6 s), the timer restarts when the text changes, hover and focus pause it, `×` closes immediately and a pin toggle disables auto-dismiss. The `state.operation` banner (merge/rebase in progress) is repository state, so it never times out and has no dismiss button. When the banner disappears the `has-banner` class is removed with it, which returns `.app-shell` to its three-row grid.
+
+### Remote entry semantics
+
+The top-bar entry reads `获取…` and its plan panel starts with 「这一步不会执行任何命令。」; the only execution point is the confirm button in the plan. The ellipsis is intentional and documented in `docs/design.md`.
 
 `RepositoryService.state()` also reports `operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null`, derived from the marker files (`MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) inside the resolved git directory, so the renderer can explain an in-progress operation instead of blaming uncommitted changes. `refreshAll` compares its refresh sequence before and after each await and drops a snapshot that a newer refresh has superseded.
