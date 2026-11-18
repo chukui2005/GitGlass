@@ -46,6 +46,7 @@ import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
+import { shouldRefreshOnChange } from "./auto-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
 import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
@@ -1180,6 +1181,15 @@ function App() {
   const workspaceRef = useRef(null);
   const panelResize = useRef(null);
   const refreshSequence = useRef(0);
+  // 自动刷新（窗口重新聚焦 / 主进程看到 .git 变化）用的最新闭包与订阅状态：
+  // 订阅只建立一次，所以 refreshAll 必须通过 ref 取用，不能闭包住首帧的仓库。
+  const refreshAllRef = useRef(null);
+  const automaticRefresh = useRef({
+    loading: false,
+    hasRepository: false,
+    refreshing: false,
+    lastRefreshAt: Date.now(),
+  });
   // Last merge/rebase/cherry-pick/revert state we already told the user about,
   // so a background refresh does not repeat the same banner every cycle.
   const operationNoticeRef = useRef(null);
@@ -1305,6 +1315,47 @@ function App() {
   useEffect(() => {
     loadRecentRepositories();
   }, []);
+  // 自动刷新订阅只建立一次：每次渲染把最新的 refreshAll 与仓库 / loading 状态
+  // 放进 ref，事件回调永远用到最新一份，不重新订阅。
+  useEffect(() => {
+    refreshAllRef.current = refreshAll;
+    automaticRefresh.current.loading = loading;
+    automaticRefresh.current.hasRepository = Boolean(repo);
+  });
+  // 窗口重新获得焦点、或主进程在 .git 上看到变化（终端里 commit / 切换分支）
+  // 时静默刷新一次：不弹通知、不打开账本。loading、静默刷新进行中、以及刷新
+  // 结束后 1 秒内的事件一律丢弃，与主进程静默窗一起掐断自触发循环。
+  useEffect(() => {
+    const triggerAutomaticRefresh = async () => {
+      const guard = automaticRefresh.current;
+      if (
+        !shouldRefreshOnChange({
+          loading: guard.loading,
+          refreshing: guard.refreshing,
+          hasRepository: guard.hasRepository,
+          lastRefreshAt: guard.lastRefreshAt,
+        })
+      )
+        return;
+      guard.refreshing = true;
+      try {
+        await refreshAllRef.current?.();
+      } catch {
+        // 静默刷新失败不打扰用户：下一次事件或窗口聚焦会再试一次。
+      } finally {
+        guard.refreshing = false;
+        guard.lastRefreshAt = Date.now();
+      }
+    };
+    const unsubscribe = window.gitglass.onRepositoryChanged?.(() => {
+      triggerAutomaticRefresh();
+    });
+    window.addEventListener("focus", triggerAutomaticRefresh);
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+      window.removeEventListener("focus", triggerAutomaticRefresh);
+    };
+  }, []);
   const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
@@ -1386,7 +1437,7 @@ function App() {
     setHistoryCompare({ base: null, target: null });
     detailCache.current.clear();
   }
-  async function refreshAll(preference, options) {
+  async function runRefresh(preference, options) {
     const sequence = ++refreshSequence.current;
     const cycle = `refresh-${Date.now()}-${sequence}`;
     const next = await window.gitglass.getState();
@@ -1418,6 +1469,15 @@ function App() {
     setRemote(remoteResult);
     await refreshLedger(cycle);
     return resolved;
+  }
+  // 所有刷新（启动、手动、切换仓库、操作成功后、自动刷新）都经这里：结束时
+  // 记录时间戳，作为自动刷新 1 秒静默窗的起点。
+  async function refreshAll(preference, options) {
+    try {
+      return await runRefresh(preference, options);
+    } finally {
+      automaticRefresh.current.lastRefreshAt = Date.now();
+    }
   }
   async function refreshFromUser() {
     if (!canStartRepositoryContextOperation(loading)) return;

@@ -13,6 +13,16 @@ contextBridge.exposeInMainWorld('gitglass', {
     ipcRenderer.on('update:changed', listener)
     return () => ipcRenderer.removeListener('update:changed', listener)
   },
+  // The main process watches the repository's .git directory. The renderer only
+  // ever receives { reason } (a short Git-side label), never a path or handle.
+  onRepositoryChanged: (callback) => {
+    const listener = (_event, payload) => {
+      if (typeof callback !== 'function') return
+      callback({ reason: typeof payload?.reason === 'string' ? payload.reason : '' })
+    }
+    ipcRenderer.on('repo:changed', listener)
+    return () => ipcRenderer.removeListener('repo:changed', listener)
+  },
   chooseRepository: () => ipcRenderer.invoke('repo:choose'),
   openRepository: (repositoryPath) => ipcRenderer.invoke('repo:open', repositoryPath),
   getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),
