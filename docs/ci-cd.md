@@ -12,7 +12,7 @@ In **Settings → Branches** (or **Settings → Rules → Rulesets**), create a 
 4. Blocks direct pushes to `main`. If the UI offers it, restrict pushes so no ordinary contributor can push directly, and apply the rule to administrators / disallow bypassing.
 5. Optionally requires resolved conversations; this is recommended for reviewable changes.
 
-One consequence to plan for: the manual release step commits `chore(release): <version>` on `main`. Either allow that specific commit through a bypass you control, or push the release commit through a short-lived PR (the commit and tag can be pushed together, and the tag stays the publishing trigger). Document whichever you choose before the first release.
+Consequence to plan for: the manual release step commits `chore(release): <version>`, and this repository keeps `main` PR-only. The release commit therefore travels through a short-lived `chore/release-<version>` pull request (`npm run release -- <version> --no-tag`), and the tag is placed on the merged `main` commit afterwards. See [release steps](releasing.md#end-to-end-flow).
 
 Do not configure a bot account to bypass this rule. The repository workflow files cannot enforce these GitHub settings on their own.
 

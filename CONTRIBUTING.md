@@ -101,8 +101,8 @@ git push -u origin <当前分支>
 ## 发版协作
 
 - 普通 PR 合并到 `main` **不会**发布任何东西；发版是维护者的显式动作。
-- 版本号由维护者手写：在干净的 `main` 上执行 `npm run release -- 0.6.2`（Beta 用 `--beta`），脚本会更新 `package.json`/`package-lock.json`、写入 `CHANGELOG.md` 段落、提交 `chore(release): 0.6.2` 并打 tag。
-- 执行 `git push origin main --follow-tags` 推送 tag，CI 会在该 `v*` tag 上构建 Windows 安装包并创建 GitHub Release。
+- 版本号由维护者手写，且 `main` 只接受 PR：在 `chore/release-<版本>` 分支上执行 `npm run release -- 0.6.2 --no-tag`（Beta 用 `--beta`），脚本会更新 `package.json`/`package-lock.json`、写入 `CHANGELOG.md` 段落并提交 `chore(release): 0.6.2`。
+- 合并该 PR（Rebase and merge）后，把 tag 打在 `origin/main` 上：`git fetch origin main && git tag -a v0.6.2 -m "GitGlass v0.6.2" origin/main && git push origin v0.6.2`。CI 会在该 `v*` tag 上构建 Windows 安装包并创建 GitHub Release。
 - 本地仍可用以下命令验证 Windows 安装包；它保留 `--publish never`，不会上传任何内容：
 
   ```powershell
