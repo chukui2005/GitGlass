@@ -46,6 +46,7 @@ import { BrandMark } from "./brand-mark.jsx";
 import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
+import { riskLabel } from "./plan-risk.js";
 import { AUTO_DISMISS_MS, createNoticeTimer, syncNoticeTimer } from "./notice-lifecycle.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { shouldRefreshOnChange } from "./auto-refresh.js";
@@ -522,13 +523,7 @@ function PlannedContext({
         </div>
       ) : (
         <>
-          <div className={`risk-label ${tone}`}>
-            {tone === "high"
-              ? "高风险：不可直接撤销"
-              : tone === "caution"
-                ? "谨慎：删除已合并本地分支"
-                : "安全：创建救援分支"}
-          </div>
+          {riskLabel(tone) && <div className={`risk-label ${tone}`}>{riskLabel(tone)}</div>}
           {children}
           <div className="planned-command">
             <span>计划执行（尚未运行）</span>
