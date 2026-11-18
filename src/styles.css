@@ -133,3 +133,14 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .recent-repository-missing{color:var(--orange);font-size:10px}
 .recent-repository-remove{display:grid;place-items:center;flex:none;padding:4px;border-radius:4px;background:transparent;color:var(--muted)}
 .recent-repository-remove:hover{background:var(--red-soft);color:var(--red)}
+
+/* PR5：顶栏宽度预算。Windows 的 Window Controls Overlay 会在右侧占掉约 154px，
+   1280 窗口真正可用的顶栏宽度只有约 1110px：1280 以上收窄间距但保留文字标签，
+   1240 以下折叠为图标（title / aria-label 仍在），避免状态文字换行或压住窗口按钮。 */
+@media(max-width:1320px){.topbar{gap:12px}.top-state>span{padding:0 9px}.top-actions{gap:5px}}
+@media(max-width:1240px){.top-action-label{display:none}}
+/* 状态组永远单行：空间不够时省略，而不是换成第二行把 48px 顶栏撑高。 */
+.top-state{min-width:0;overflow:hidden}
+.top-state>span{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap}
+.top-state code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
