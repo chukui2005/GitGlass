@@ -24,13 +24,32 @@ function metadataRow(line) {
   return { type: 'metadata', label: 'Git 信息', content: line }
 }
 
+/**
+ * One rendered diff row. Metadata rows only carry `type`/`label`/`content`;
+ * hunk and line rows add the review locators (`oldLine`/`newLine`/`marker`).
+ * @typedef {object} DiffRow
+ * @property {string} type
+ * @property {string} [label]
+ * @property {number | null} [oldLine]
+ * @property {number | null} [newLine]
+ * @property {string} [marker]
+ * @property {string} content
+ */
+
 // 原始 patch 不会被修改；此处只把协议字段转为中文，并补上审阅定位所需的旧/新行号。
+/**
+ * @param {string} diff
+ * @returns {DiffRow[]}
+ */
 export function presentDiff(diff) {
   const lines = String(diff || '').split('\n')
   if (lines.at(-1) === '') lines.pop()
   let oldLine = null
   let newLine = null
-  return lines.flatMap((line) => {
+  // Annotated so every branch widens to the same row shape: the metadata rows
+  // carry a label, the hunk/line rows carry the locators.
+  /** @type {(line: string) => DiffRow[]} */
+  const rowsOfLine = (line) => {
     const hunk = hunkPattern.exec(line)
     if (hunk) {
       const [, oldStart, oldCount = '1', newStart, newCount = '1', heading = ''] = hunk
@@ -58,5 +77,6 @@ export function presentDiff(diff) {
     }
     const row = metadataRow(line)
     return row ? [row] : []
-  })
+  }
+  return lines.flatMap(rowsOfLine)
 }

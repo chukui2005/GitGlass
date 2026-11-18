@@ -22,10 +22,36 @@ function validateUpdate(info, currentVersion) {
   return file
 }
 
+/**
+ * Everything `UpdateService` needs is injected so the service can be exercised
+ * without electron-updater, a real preferences file or a real clock.
+ * @typedef {object} UpdateServiceDependencies
+ * @property {any} updater electron-updater instance, or null when unsupported
+ * @property {{ value: { automatic: boolean, pending: any }, save: (patch: object) => void }} store
+ * @property {string} version
+ * @property {boolean} supported
+ * @property {string} [reason]
+ * @property {{ acquire: () => () => void }} gate
+ * @property {(session: any) => void} saveSession
+ * @property {() => void} clearSession
+ * @property {(callback: () => void, delay: number) => any} [setTimer]
+ * @property {(timer: any) => void} [clearTimer]
+ */
+
 class UpdateService extends EventEmitter {
+  /** @param {UpdateServiceDependencies} dependencies */
   constructor({ updater, store, version, supported, reason = '', gate, saveSession, clearSession, setTimer = setTimeout, clearTimer = clearTimeout }) {
     super()
-    Object.assign(this, { updater, store, version, gate, saveSession, clearSession, setTimer, clearTimer })
+    // Assigned one by one rather than through Object.assign so the properties
+    // are visible to `tsc --checkJs` instead of being inferred as missing.
+    this.updater = updater
+    this.store = store
+    this.version = version
+    this.gate = gate
+    this.saveSession = saveSession
+    this.clearSession = clearSession
+    this.setTimer = setTimer
+    this.clearTimer = clearTimer
     this.state = { supported, reason, currentVersion: version, channel: semver.prerelease(version) ? 'beta' : 'stable', automatic: store.value.automatic, phase: supported ? 'idle' : 'unsupported', latestVersion: null, notes: '', progress: null, error: '' }
     this.pending = null
     this.checking = null

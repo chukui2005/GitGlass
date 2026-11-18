@@ -16,6 +16,16 @@ export function isCommitMessageTarget(target) {
   return target?.id === 'commit-message'
 }
 
+/**
+ * @typedef {object} BlockingContext
+ * @property {boolean} [paletteOpen]
+ * @property {unknown} [safetyPlan]
+ * @property {unknown} [branchPlan]
+ * @property {unknown} [remotePlan]
+ * @property {boolean} [recoveryOpen]
+ */
+
+/** @param {BlockingContext} [context] */
 export function isBlockingContextOpen({ paletteOpen, safetyPlan, branchPlan, remotePlan, recoveryOpen } = {}) {
   return Boolean(paletteOpen || safetyPlan || branchPlan || remotePlan || recoveryOpen)
 }

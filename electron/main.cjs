@@ -205,6 +205,7 @@ if (primaryInstance) app.whenReady().then(async () => {
   // Windows: the 48px renderer top bar doubles as the title bar while the
   // system keeps drawing native minimize/maximize/close through the Window
   // Controls Overlay (Snap Layouts included). macOS keeps its traffic lights.
+  /** @type {import('electron').BrowserWindowConstructorOptions} */
   const titleBarOptions = process.platform === 'win32'
     ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#FFFFFF', symbolColor: '#344054', height: 48 } }
     : { titleBarStyle: 'hiddenInset' }
