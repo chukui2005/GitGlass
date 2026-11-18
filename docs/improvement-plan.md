@@ -23,6 +23,47 @@
 | 7 | `refreshAll` 生成了 `refresh-*` 序号却从不比较，只有历史查询序号生效；快速连点会出现旧响应覆盖新状态 | `src/main.jsx:1376,1391-1398` | 与 `historyQuerySequence` 同款：响应返回时比对序号，丢过期结果 | ✅（序号已比较；loading 兜底未做）
 | 8 | 处于 merge / rebase / cherry-pick 中途的仓库没有识别，用户在应用里看到的"脏工作区"提示会误导 | 全局（`.git/MERGE_HEAD` 等均未读取） | `state()` 增加 `operation: 'merge' \| 'rebase' \| null`，UI 明确提示"请在终端完成或中止该操作" | ✅
 
+## 0.6.4 / 0.6.5 路线（用户已确认，2026-11-18）
+
+视觉基准正式定为 **dbx**（源码在本机 `D:\DBX\dbx`，UI 在 `apps/desktop/src`，token 在 `apps/desktop/src/styles/tokens.css`）。顺序：**先视觉，再工程**。
+
+| 版本 | 范围 | 退出条件 |
+| --- | --- | --- |
+| **0.6.4-beta.1** | 视觉对齐 dbx：设计 token（中性灰 + 近黑主按钮 + 4/6/8px 圆角）、顶栏与按钮度量、侧栏与列表密度、分割条重做、账本与模态、空状态 | 三档宽度（1440/1280/1024）截图无溢出、字号层级与 dbx 一致、分割条 1px 视觉 + 宽命中区 |
+| **0.6.4-beta.2** | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
+| **0.6.5-beta.1** | 测试现代化 + 结构债：引入 `@testing-library/react`（**允许新增 devDependency**）替换约 39 例"读源码字符串"的 UI 断言；拆 `main.jsx`（history / safety / remote 三个领域 hook） | UI 测试改为真渲染，删掉一行文案不再误红；`main.jsx` 降到 1500 行以内 |
+| 后续（未排期） | 包体积与性能（见下节） | 有测量基线，且安装包/内存有可量化下降 |
+
+### 视觉对齐的取值来源（dbx `tokens.css` 浅色主题）
+
+| 类别 | dbx 取值 | GitGlass 落点 |
+| --- | --- | --- |
+| 主按钮 | `#171717` 底 / `#fafafa` 字（不是品牌蓝） | `.primary-button` 改近黑；品牌蓝只留给链接、焦点环、选中标记 |
+| 中性面 | `--background #fff`、`--sidebar #fafafa`、`--chrome #f5f5f5`、`--gutter #f3f3f3` | `--app` / `--sidebar` / `--surface` / `--code` |
+| 边框 | `#e5e5e5` 1px | `--line` 由 `#e2e6ea` 改 `#e5e5e5` |
+| 文本 | `#0a0a0a` / 次级 `#737373` | `--text` / `--muted`（对比度仍 ≥ 4.5:1） |
+| 状态色 | success `#16a34a`、warning `#d97706`、destructive `#e7000b`、info `#2563eb` | 状态与 diff 用色对齐，diff 底色保持浅色 tint |
+| 圆角 | 4 / 4 / 6（sm/md/lg），外观设置可放大 | `--radius-sm 4` / `--radius 6` / `--radius-lg 8`（模态 10） |
+| 控件高度 | 工具条按钮约 30px，图标按钮 30×30 | 顶栏、筛选、面板操作统一 30px（主按钮 32px） |
+
+分割条参考 dbx `apps/desktop/src/composables/usePanelResize.ts`：`setPointerCapture` + 拖拽期间铺一层全屏 overlay（避免 hover 抖动）+ `requestAnimationFrame` 节流 + 最小宽度 240 + 宽度持久化 + `blur` 兜底收尾。视觉上 dbx 是**一条 1px 分隔线**，命中区藏在两侧留白里；GitGlass 现在是 8px 宽的灰条 + 蓝色发光，需要重做。
+
+### 包体积与性能（后续 backlog，尚未排期）
+
+现状：安装包 113.6 MB、ZIP 151.2 MB；解压安装后约 500 MB 量级（Electron 运行时占大头）。
+
+- **打包**
+  - `electron-builder` 开 `compression: maximum`，确认 `asar` 已启用并检查 `app.asar` 内是否有 `docs/`、`tests/`、`.map`、示例资源；
+  - `build.files` 收紧成白名单（现在靠忽略规则），跑一次体积对比；
+  - 运行期依赖只有 `electron-updater`，定期确认没有把构建依赖打进包。
+- **启动**
+  - 更新服务（`electron-updater`）延迟到窗口 ready 之后再加载；
+  - `main.jsx` 拆分后把「历史审阅」相关组件按需加载。
+- **运行时**
+  - 超大仓库的 `.git` watcher 降噪（去抖可配 / 忽略 `objects/`）；
+  - 命令账本改虚拟列表（300 条记录全量渲染）；
+  - 加一个启动耗时 + 内存占用的测量脚本作为基线，改动前后对比。
+
 ## 0.6.3 交付（2026-11-18）
 
 v0.6.3 一次性清掉了 P1.5 自动刷新与 0.6.2 验收暴露的视觉/交互问题：
