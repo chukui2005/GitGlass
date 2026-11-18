@@ -19,8 +19,6 @@
 
 * stop the redaction patterns from backtracking on long output ([3e9123f](https://github.com/chukui2005/GitGlass/commit/3e9123f6859e4b3491ac5fbae445a5d9eb4e6105))
 
-# Changelog
-
 ## [0.6.1-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.0-beta.1...v0.6.1-beta.1) (2026-11-17)
 
 
