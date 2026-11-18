@@ -30,7 +30,7 @@
 | 版本 | 范围 | 退出条件 |
 | --- | --- | --- |
 | **0.6.4-beta.1** ✅ | 视觉对齐 dbx：设计 token（中性灰 + 近黑主按钮 + 4/6/8px 圆角）、顶栏与按钮度量、侧栏与列表密度、分割条重做、账本与模态、空状态 | 三档宽度（1440/1280/1024）截图无溢出、字号层级与 dbx 一致、分割条 1px 视觉 + 宽命中区 |
-| **0.6.4-beta.2** | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
+| **0.6.4-beta.2** ✅ | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
 | **0.6.5-beta.1** | 测试现代化 + 结构债：引入 `@testing-library/react`（**允许新增 devDependency**）替换约 39 例"读源码字符串"的 UI 断言；拆 `main.jsx`（history / safety / remote 三个领域 hook） | UI 测试改为真渲染，删掉一行文案不再误红；`main.jsx` 降到 1500 行以内 |
 | 后续（未排期） | 包体积与性能（见下节） | 有测量基线，且安装包/内存有可量化下降 |
 
@@ -46,6 +46,31 @@
 | #50 | 通知条与最近仓库菜单的遗留硬编码灰全部 token 化（成功/失败用 `--green-soft`/`--red-soft` + ink 色，对比度 3.2:1 → 4.6:1），最近仓库路径 10px → 11px，`design-tokens` 的 no-10px 断言覆盖整份样式表 |
 
 另外顺带修了 #49：普通计划（获取远程、切换分支）不再误显示「安全：创建救援分支」风险标签。
+
+### 0.6.4-beta.2 交付记录（2026-11-18）
+
+一个 PR 落地三道工程门槛。CI 的 `Quality (test and build)` 作业现在依次跑
+`npm ci` → `npm test` → `npm run lint` → `npm run typecheck` → `npm run test:coverage` → `npm run build` → `dist:win` / `verify:release`。
+
+| 门槛 | 落地 | 结果 |
+| --- | --- | --- |
+| ESLint flat config | `eslint.config.mjs`：`@eslint/js` recommended + `no-unused-vars`（允许 `_` 前缀）/ `eqeqeq: smart`（保留 `== null` 写法）/ `no-var` / `prefer-const` / `react-hooks/rules-of-hooks`(error) / `exhaustive-deps`(warn)；按 Node（`electron/`、`scripts/`、`tests/`、根 `*.mjs`）与浏览器 ESM（`src/`）分两组，忽略 `dist/`、`release/`、`coverage/`、`node_modules/`、`.tmp-*` | **0 error / 4 warning**。warn 全部是 `main.jsx` 的 `exhaustive-deps`，那几处依赖是刻意放宽的，留给 0.6.5 拆 hook 时一并处理 |
+| 类型检查 | `tsconfig.json`（`allowJs` + `checkJs` + `noEmit`，`strict: false`，`moduleResolution: bundler`）；`include` 只有 `electron/**/*.cjs` 与 12 个已有单测的 `src/` 纯逻辑模块 | **0 error**。首轮 38 个报错全部真修：`UpdateService` 用显式属性赋值替代 `Object.assign(this, …)`（行为等价，只为了让属性对 `checkJs` 可见）、`titleBarOptions` 补 `BrowserWindowConstructorOptions` 注解、`notice-lifecycle` / `shortcut-policy` / `diff-presentation` 补 `@typedef` 与 `@returns` |
+| 覆盖率门槛 | `vite.config.mjs` 的 `test.coverage`：`provider: v8`、`reporter: ['text', 'json-summary']`、阈值四项各 50% | 实测 **statements 79.94% / branches 70.61% / functions 79.12% / lines 83.27%**（1541 语句 / 1426 分支 / 297 函数 / 1190 行） |
+
+被 `test.coverage.exclude` 排除的三个文件（理由同步写进 `docs/conventions.md` 第 5 节）：
+
+| 文件 | 理由 |
+| --- | --- |
+| `src/main.jsx` | 2693 行的 UI 入口，只在渲染进程里跑；类型化与覆盖率都要等 0.6.5 拆成 history / safety / remote 三个 hook 之后 |
+| `electron/main.cjs` | 主进程入口，只在 `electron .` 拉起的子进程里执行，vitest 的进程内 v8 覆盖率看不到；实际覆盖由 `tests/ui/` 的真实启动探针负责 |
+| `electron/preload.cjs` | 同上，`contextBridge` 暴露面只在子进程里求值 |
+
+**下一步（扩大范围）**：
+
+1. **`tsc` 扩到 `main.jsx`**：先补 `@types/react` / `@types/react-dom`，随 0.6.5 的 hook 拆分逐个文件加进 `include`；同时评估打开 `strictNullChecks`（`strict: false` 只是第一档）。
+2. **提高覆盖率阈值**：当前四项实测都在 70% 以上，但 `app-updates.jsx`(0%)、`brand-mark.jsx`(0%)、`recent-repositories-menu.jsx`(18.81%) 还在拖后腿，等 0.6.5 换成 `@testing-library/react` 真渲染后再把门槛提到 70%。
+3. **CI 去重**：`npm test` 与 `npm run test:coverage` 会跑两遍同一套用例（约 +2 分钟），等覆盖率稳定后可以只保留后者。
 
 ### 0.6.4-beta.1 遗留的视觉问题（下一轮，不阻塞本次 beta）
 
@@ -160,7 +185,7 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 
 | # | 问题 | 现状 | 修法 |
 | --- | --- | --- | --- |
-| 9 | 没有 lint、没有类型检查、没有覆盖率门槛 | `package.json` 无 eslint/tsc、`vite.config.mjs` 仅 `globals/fileParallelism` | 加 ESLint + `tsc --checkJs --noEmit`（对 JSDoc 生效）；vitest coverage 门槛从 50% 起 |
+| 9 | 没有 lint、没有类型检查、没有覆盖率门槛 | `package.json` 无 eslint/tsc、`vite.config.mjs` 仅 `globals/fileParallelism` | ✅ 0.6.4-beta.2：ESLint flat config（0 error）+ `tsc --checkJs --noEmit`（0 error）+ vitest coverage 门槛 50%，三项都进 CI；详见「0.6.4-beta.2 交付记录」 |
 | 10 | UI 测试 47 例中 39 例是"读源码字符串断言"（断言某段文本出现几次），删代码会红、逻辑失效不会红 | `tests/ui/*.test.cjs` | 用真渲染替代文本断言（复用现有 Electron 探针或引入 `@testing-library/react`），至少覆盖暂存/提交/筛选/更新四条主流程 |
 | 11 | `main.jsx` 2693 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | 先抽三个领域 hook（history / safety / remote）与对应面板组件；再逐步引入 memo 化 |
 | 12 | 没有"装包 → 启动 → 查更新 → 卸载"的冒烟测试 | CI 只做构建 + 哈希校验 | CI 或手动脚本对 `release/win-unpacked` 启动一次并比对 `app.getVersion()`；升级路径留在 VM 验收 |

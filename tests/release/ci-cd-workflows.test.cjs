@@ -17,7 +17,16 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(checks.permissions).toEqual({ contents: 'read' })
     expect(checks.jobs.quality.permissions).toBeUndefined()
     expect(checks.jobs.quality.steps.filter((step) => step.run).map((step) => step.run))
-      .toEqual(['npm ci', 'npm test', 'npm run build', 'npm run dist:win', 'npm run verify:release'])
+      .toEqual([
+        'npm ci',
+        'npm test',
+        'npm run lint',
+        'npm run typecheck',
+        'npm run test:coverage',
+        'npm run build',
+        'npm run dist:win',
+        'npm run verify:release',
+      ])
     expect(release.jobs['build-windows-release'].steps.find((step) => step.run === 'npm run verify:release').env)
       .toEqual({ TAG_NAME: '${{ github.ref_name }}' })
     expect(release.jobs['create-github-release'].needs).toBe('build-windows-release')
@@ -36,6 +45,9 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('node-version: 22.12.0')
     expect(ci).toContain('run: npm ci')
     expect(ci).toContain('run: npm test')
+    expect(ci).toContain('run: npm run lint')
+    expect(ci).toContain('run: npm run typecheck')
+    expect(ci).toContain('run: npm run test:coverage')
     expect(ci).toContain('run: npm run build')
   })
 
