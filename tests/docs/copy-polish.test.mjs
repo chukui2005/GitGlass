@@ -12,7 +12,7 @@ const { RepositoryService } = require('../../electron/repository-service.cjs')
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const renderer = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8')
-const mainProcess = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8')
+const repositoryOpener = fs.readFileSync(path.join(root, 'electron', 'repository-opener.cjs'), 'utf8')
 
 describe('V0.5.4 用户提示与技术诊断边界', () => {
   it('真实 Git 失败时通知使用中文兜底，原始 stderr 仅保留在账本记录', async () => {
@@ -83,7 +83,7 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
   })
 
   it('目录选择、空状态与加载中的危险操作都有可见中文反馈和禁用保护', () => {
-    expect(mainProcess).toContain('此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。')
+    expect(repositoryOpener).toContain('此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。')
     expect(renderer).toContain('工作区干净，没有待暂存的改动。')
     expect(renderer).toContain('没有已暂存的改动。')
     expect(renderer).toContain('Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。')

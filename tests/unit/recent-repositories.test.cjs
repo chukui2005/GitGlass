@@ -1,7 +1,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { RecentRepositories } = require('../../electron/recent-repositories.cjs')
+const { RecentRepositories, describeRecent } = require('../../electron/recent-repositories.cjs')
 
 let directory
 afterEach(() => { if (directory) fs.rmSync(directory, { recursive: true, force: true }); directory = null })
@@ -61,5 +61,50 @@ describe('RecentRepositories', () => {
     recent.remember('D:/work/one')
     recent.remember('D:/work/two')
     expect(recent.forget('D:/work/one')).toEqual([path.resolve('D:/work/two')])
+  })
+
+  it('ignores a forget request for a path that is not remembered', () => {
+    const recent = store()
+    recent.remember('D:/work/one')
+    recent.remember('D:/work/two')
+    expect(recent.forget('D:/work/three')).toEqual([
+      path.resolve('D:/work/two'),
+      path.resolve('D:/work/one'),
+    ])
+  })
+
+  it('re-adds a forgotten repository at the front and still de-duplicates', () => {
+    const recent = store()
+    recent.remember('D:/work/one')
+    recent.remember('D:/work/two')
+    recent.forget('D:/work/two')
+    recent.remember('D:/work/two')
+    expect(recent.list()).toEqual([path.resolve('D:/work/two'), path.resolve('D:/work/one')])
+  })
+})
+
+describe('describeRecent', () => {
+  it('keeps the newest-first order and maps existence without reordering', () => {
+    const newest = path.resolve('D:/work/newest')
+    const older = path.resolve('D:/work/older')
+    const described = describeRecent([newest, older], (entry) => entry === older)
+    expect(described).toEqual([
+      { path: newest, name: 'newest', exists: false },
+      { path: older, name: 'older', exists: true },
+    ])
+  })
+
+  it('falls back to the path itself when it has no folder name', () => {
+    const driveRoot = path.parse(process.cwd()).root
+    expect(describeRecent([driveRoot], () => true)).toEqual([
+      { path: driveRoot, name: driveRoot, exists: true },
+    ])
+  })
+
+  it('reports an unreadable path as missing instead of throwing', () => {
+    expect(describeRecent(['D:/work/one'], () => { throw new Error('EACCES') })).toEqual([
+      { path: 'D:/work/one', name: 'one', exists: false },
+    ])
+    expect(describeRecent(null)).toEqual([])
   })
 })

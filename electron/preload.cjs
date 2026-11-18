@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('gitglass', {
     return () => ipcRenderer.removeListener('update:changed', listener)
   },
   chooseRepository: () => ipcRenderer.invoke('repo:choose'),
+  openRepository: (repositoryPath) => ipcRenderer.invoke('repo:open', repositoryPath),
+  getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),
+  forgetRecentRepository: (repositoryPath) => ipcRenderer.invoke('repo:recent:forget', repositoryPath),
   getState: () => ipcRenderer.invoke('repo:state'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),
   operate: (action, payload) => ipcRenderer.invoke('git:operate', action, payload),

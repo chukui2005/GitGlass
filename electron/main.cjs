@@ -7,7 +7,8 @@ const { OperationGate } = require('./operation-gate.cjs')
 const { UpdateStore } = require('./update-store.cjs')
 const { UpdateService } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
-const { RecentRepositories } = require('./recent-repositories.cjs')
+const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
+const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
 
 let mainWindow
 let repoPath = null
@@ -59,28 +60,33 @@ handleUpdate('update:resume', () => {
 })
 handleUpdate('update:resume-consumed', () => { updateStore.save({ resume: null }); return { ok: true } })
 
+async function openRepository(candidate) {
+  return openRepositoryPath({
+    candidate,
+    commandService,
+    repository,
+    remember: (root) => recentRepositories?.remember(root),
+    setRepositoryPath: (root) => { repoPath = root },
+  })
+}
+
 async function chooseRepository() {
   const choice = await dialog.showOpenDialog(mainWindow, { title: '打开本地 Git 仓库', properties: ['openDirectory'] })
   if (choice.canceled || !choice.filePaths[0]) return { canceled: true }
-  const candidate = path.resolve(choice.filePaths[0])
-  const root = await commandService.run({ argv: ['rev-parse', '--show-toplevel'], intent: 'Resolve repository root', source: 'background', cwd: candidate })
-  if (!root.ok) {
-    const notRepository = /not a git repository|not a git repo/i.test(root.stderr || '')
-    return {
-      ok: false,
-      message: notRepository
-        ? '此文件夹不是 Git 仓库。请选择包含 .git 目录的项目文件夹。'
-        : '无法读取仓库根目录。请确认文件夹可访问，并选择包含 .git 目录的项目文件夹。',
-      execution: root,
-    }
-  }
-  repoPath = root.stdout.trim()
-  // Remember the resolved root, not the folder the user picked.
-  recentRepositories?.remember(repoPath)
-  return { ok: true, path: repoPath, state: await repository.state(), execution: root }
+  return openRepository(choice.filePaths[0])
 }
 
 handleRepository('repo:choose', chooseRepository)
+handleRepository('repo:open', (_event, candidate) => openRepository(candidate))
+// Listing and forgetting must work with no repository open, so these two do not
+// take the operation gate.
+handleUpdate('repo:recent', () => describeRecent(recentRepositories?.list() ?? []))
+handleUpdate('repo:recent:forget', (candidate) => {
+  if (typeof candidate !== 'string' || candidate.trim().length === 0 || candidate.length > MAX_REPOSITORY_PATH || candidate.includes('\0')) {
+    throw new Error('仓库路径无效，无法从最近仓库移除。')
+  }
+  return describeRecent(recentRepositories?.forget(candidate) ?? [])
+})
 handleRepository('repo:state', () => repository.state())
 handleRepository('repo:diff', (_event, file) => repository.diff(file))
 handleRepository('repo:ledger', () => commandService.history())

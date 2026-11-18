@@ -85,3 +85,20 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .update-footer button{padding:8px 12px;font-size:12px}
 
 /* 应用级提示条：发生在标题栏下方的常驻通知（合并/变基进行中等）。 */.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}.app-shell.has-banner.ledger-open{grid-template-rows:48px auto minmax(0,1fr) minmax(250px,39vh)}.app-notice{flex:none}.app-notice{display:flex;align-items:center;gap:7px;padding:7px 14px;border-bottom:1px solid;font-size:12px}.app-notice.success{background:#f0fdf4;border-color:#bbe5c8;color:var(--green)}.app-notice.error{background:var(--red-soft);border-color:#f3c6c8;color:var(--red)}.app-notice span{flex:1}.app-notice-dismiss{background:none;border:0;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}
+
+/* 最近仓库切换器：顶栏「打开仓库」旁的下拉菜单。 */
+.recent-repositories{position:relative;display:flex}
+.recent-repositories-trigger{min-width:26px;padding:0 5px}
+.recent-repositories-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;display:grid;width:min(360px,calc(100vw - 32px));padding:5px;border:1px solid #d0d5dd;border-radius:8px;background:var(--surface);box-shadow:0 12px 32px rgba(16,24,40,.16);-webkit-app-region:no-drag}
+.recent-repository{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:7px 8px;border-radius:var(--radius);background:transparent;color:#344054;text-align:left;cursor:pointer}
+.recent-repository:hover,.recent-repository:focus,.recent-repository:focus-visible{background:var(--blue-soft);outline:0}
+.recent-repository.current{box-shadow:inset 2px 0 var(--blue)}
+.recent-repository.missing{color:#98a2b3}
+.recent-repository-main{display:grid;gap:1px;min-width:0}
+.recent-repository-name{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+.recent-repository-path{overflow:hidden;color:var(--muted);font:10px var(--mono);text-overflow:ellipsis;white-space:nowrap}
+.recent-repository.missing .recent-repository-path{color:#b6c0ca}
+.recent-repository-badge{padding:1px 5px;border-radius:3px;background:var(--blue-soft);color:#174ea6;font:600 10px var(--mono)}
+.recent-repository-missing{color:var(--orange);font-size:10px}
+.recent-repository-remove{display:grid;place-items:center;flex:none;padding:4px;border-radius:4px;background:transparent;color:var(--muted)}
+.recent-repository-remove:hover{background:var(--red-soft);color:var(--red)}
