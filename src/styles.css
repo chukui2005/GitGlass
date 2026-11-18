@@ -144,3 +144,79 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .top-state>span{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap}
 .top-state code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* V0.6.5 密度对齐 dbx：侧栏列表、历史提交行、Diff、账本与空状态按 dbx 的信息密度收紧。
+   只调整行高/间距/字号与中性底色，不动 :root token、顶栏、按钮、模态与分割条。
+   所有底色都由 --text / --blue / --surface / --sidebar 派生（color-mix），
+   等中性色 token 落地后会自动跟随，不在这里硬编码灰值。 */
+
+/* 侧栏列表：行高 26px；整行 hover 中性浅底；选中整行浅底 + 左侧 2px 强调条，文字不换色。
+   分组标题 12px/600 用 --text，右侧计数保持 11px 等宽 --muted，行高 28px、上下留白 10px。 */
+.status-panel .panel-heading{margin-bottom:10px}
+.status-panel{padding:14px 12px}
+.status-panel .file-section{margin-bottom:10px}
+.status-panel .branch-list,.status-panel .remote-summary{margin-top:10px;padding-top:10px}
+.status-panel .section-label{min-height:28px;margin:0 0 6px;color:var(--text)}
+.status-panel .section-label b{color:var(--muted)}
+.status-panel .file-row,.status-panel .branch-item{height:26px;margin:0 -4px}
+.status-panel .file-select,.status-panel .branch-row{height:26px;padding:0 6px;color:var(--text)}
+.status-panel .file-row:hover,.status-panel .file-row.selected,
+.status-panel .branch-item:hover,.status-panel .branch-item:hover .branch-row,
+.status-panel .branch-row:hover{background:color-mix(in srgb,var(--text) 3%,var(--sidebar))}
+.status-panel .file-row.selected{background:color-mix(in srgb,var(--blue) 8%,var(--sidebar));box-shadow:inset 2px 0 var(--blue)}
+.status-panel .branch-row.current{background:transparent;color:var(--text)}
+.status-panel .branch-item:has(.branch-row.current){background:color-mix(in srgb,var(--blue) 8%,var(--sidebar));box-shadow:inset 2px 0 var(--blue)}
+.status-panel .branch-item:has(.branch-row.current):hover{background:color-mix(in srgb,var(--blue) 14%,var(--sidebar))}
+.status-panel .batch-toolbar{margin:4px 0}
+.status-panel .batch-stage-row{gap:6px}
+.status-panel .branch-create{margin-top:8px}
+
+/* 历史提交行：两行结构保留，行高 44 → 38px；标题 13px/600，元信息 11px。 */
+.commit-select{min-height:38px;padding:2px 0;gap:8px}
+.commit-select .graph-line{height:auto}
+.graph-line i{top:50%;transform:translateY(-50%)}
+.commit-main{gap:1px}
+.commit-title{font-size:var(--font-body);font-weight:600;line-height:1.35}
+.commit-meta{font-size:var(--font-aux);gap:5px;line-height:1.3}
+.history-row.selected{background:color-mix(in srgb,var(--blue) 8%,var(--surface));box-shadow:inset 2px 0 var(--blue)}
+
+/* Diff：行号槽 40px；文件头与 hunk 头用中性 --code 底、无圆角；文件头单行 12px/600。 */
+.diff-content{padding:8px 0}
+.diff-line{grid-template-columns:40px 40px 20px max-content}
+.diff-line>.diff-line-number{padding-right:8px}
+.diff-line.file,.diff-line.file-path,.diff-line.metadata,.diff-line.binary{grid-template-columns:96px max-content;margin-top:0;padding:2px 28px 2px 12px;font-size:var(--font-secondary);line-height:1.5}
+.diff-line.file>.diff-line-number,.diff-line.file>.diff-marker,
+.diff-line.file-path>.diff-line-number,.diff-line.file-path>.diff-marker,
+.diff-line.metadata>.diff-line-number,.diff-line.metadata>.diff-marker,
+.diff-line.binary>.diff-line-number,.diff-line.binary>.diff-marker{display:none}
+.diff-line.file{margin-top:6px;background:var(--code);color:var(--text);font-weight:600}
+.diff-line.hunk{background:var(--code)}
+
+/* 账本：两行结构保留，单行约 40 → 32px；展开后的技术详情与输出区行距收紧。 */
+.ledger-list{gap:2px;padding:0 14px 10px}
+.ledger-summary{height:32px;padding:0 8px;gap:8px}
+.ledger-entry-main{gap:1px}
+.ledger-entry-line{gap:6px}
+.ledger-intent{line-height:1.25}
+.ledger-command{line-height:1.25}
+.ledger-entry-meta{gap:5px;line-height:1.2}
+.ledger-details{padding:6px 10px 8px 31px}
+.ledger-facts{gap:4px 16px;font-size:var(--font-secondary)}
+.ledger-facts dd code{font-size:var(--font-secondary)}
+.ledger-refresh-summary{height:28px;padding:0 8px}
+.ledger-note{padding:6px 14px 2px}
+.ledger-refresh-records{gap:1px}
+.tech-details{margin-top:6px}
+.output-grid{gap:6px;margin-top:6px}
+.output pre{padding:6px;font:var(--font-secondary)/1.5 var(--mono)}
+
+/* 空状态：居中但紧凑——标题 13px/600、说明 12px --muted，只保留一个按钮，不放大图标和大留白。 */
+.clean-state,.empty-repo{gap:4px;padding:16px 8px}
+.empty-repo{gap:5px;padding:20px 10px}
+.empty-repo>svg,.graph-empty>svg{width:18px;height:18px}
+.empty-repo p,.graph-empty p,.history-empty p,.history-failure strong{font-size:var(--font-body)}
+.empty-repo .primary-button{margin-top:4px}
+.history-empty,.history-failure,.graph-empty{min-height:160px;gap:4px;padding:24px 20px}
+.history-empty span,.history-failure p{line-height:1.5}
+.diff-empty{min-height:120px;padding:16px}
+.ledger-empty{padding:10px 14px}
+

@@ -2710,7 +2710,7 @@ function App() {
                         onClick={() => requestSwitch(branch)}
                         disabled={loading}
                       >
-                        <GitBranch size={13} />
+                        <GitBranch size={14} />
                         <code>{branchName(branch)}</code>
                         {current && <span>当前</span>}
                       </button>
@@ -2725,7 +2725,7 @@ function App() {
                           }
                           disabled={loading}
                         >
-                          <Trash size={13} />
+                          <Trash size={14} />
                         </button>
                       )}
                     </div>
