@@ -10,10 +10,13 @@ GitGlass ships from `main` with a manual, two-command release. A human chooses t
 
    ```powershell
    git switch -c chore/release-0.6.2 origin/main
-   npm run release -- 0.6.2 --no-tag     # 稳定版
-   npm run release -- 0.6.2 --beta --no-tag
+   npm run release -- 0.6.2 --no-tag          # 稳定版
+   npm run release -- 0.6.4-beta.1 --no-tag   # 显式预发布（路线图里点名的版本）
+   npm run release -- 0.6.2 --beta --no-tag   # 日期化 beta：0.6.2-beta.20261118.1
    npm run release -- 0.6.2 --dry-run
    ```
+
+   显式版本号（`0.6.4-beta.1`）与 `--beta` 不能同时使用：前者按你写的发，后者按日期加序号，混用会静默忽略你写的序号。
 
    `--no-tag` writes `package.json`, `package-lock.json` and the `CHANGELOG.md` section, commits `chore(release): <version>`, and prints the PR and tagging steps. The helper refuses to run unless the worktree is clean, the new version is higher than `package.json`, and the tag does not exist yet.
 4. Push the branch and merge the release pull request with **Rebase and merge**:
@@ -60,7 +63,10 @@ Rules:
 2. A release contains whatever has landed on `main` since the previous tag. Ship one feature or ten; the version moves one step either way.
 3. Never edit `package.json`, `package-lock.json` or `CHANGELOG.md` by hand in a feature PR; the release helper owns them.
 4. Tags are immutable. If a tag build fails, fix the cause through a normal PR and cut the next version — do not delete and reuse a tag that already produced artifacts. A tag with no release (for example after a failed first build) can be deleted while no assets exist.
-5. Beta builds are ordinary prereleases: tag `v<version>-beta.<YYYYMMDD>.<n>`. `publish-release.yml` marks any tag containing `-` as a prerelease, and stable builds ignore that channel.
+5. Beta builds are ordinary prereleases, in two shapes:
+   - 显式：`v0.6.4-beta.1`、`v0.6.5-beta.1` —— 路线图点名的版本，直接写进 `npm run release`；
+   - 日期化：`v<version>-beta.<YYYYMMDD>.<n>` —— 一天内多次出包时用 `--beta` 自动加序号。
+   `publish-release.yml` 把任何含 `-` 的 tag 标成 prerelease，稳定版不会把它们当成 Latest。
 
 ## One-time administrator checklist
 
