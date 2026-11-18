@@ -447,4 +447,4 @@ class RepositoryService {
 
   invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }
 }
-module.exports = { RepositoryService, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind, normalizeHistoryFilters, isSafeHistoryPath, HISTORY_QUERY_LIMIT, escapeGitRegexLiteral }
+module.exports = { RepositoryService, resolveGitDirectory, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind, normalizeHistoryFilters, isSafeHistoryPath, HISTORY_QUERY_LIMIT, escapeGitRegexLiteral }

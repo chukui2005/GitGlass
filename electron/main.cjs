@@ -2,7 +2,8 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { GitCommandService } = require('./git-command-service.cjs')
-const { RepositoryService, isPath } = require('./repository-service.cjs')
+const { RepositoryService, isPath, resolveGitDirectory } = require('./repository-service.cjs')
+const { RepositoryWatcher } = require('./repository-watcher.cjs')
 const { OperationGate } = require('./operation-gate.cjs')
 const { UpdateStore } = require('./update-store.cjs')
 const { UpdateService } = require('./update-service.cjs')
@@ -10,9 +11,23 @@ const { createWindowsUpdater } = require('./windows-updater.cjs')
 const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
 const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
 
+// Git commands that write the repository get a silent window in the watcher so
+// GitGlass does not report its own writes back to the renderer as an external
+// change.
+const WATCH_SILENCE_MS = 1500
+const REPOSITORY_WRITE_CHANNELS = new Set([
+  'git:operate',
+  'remote:execute',
+  'branch:execute',
+  'safety:discard:execute',
+  'safety:branch-delete:execute',
+  'recovery:rescue:execute',
+])
+
 let mainWindow
 let repoPath = null
 let recentRepositories = null
+let watcher = null
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
 app.on('second-instance', () => {
@@ -33,10 +48,33 @@ function assertMainFrame(event) {
   }
 }
 
+function stopWatching() {
+  watcher?.close()
+  watcher = null
+}
+
+// Started whenever repoPath changes (startup restore and every openRepository()
+// success) and stopped on window close, quit and repository switch, so a watcher
+// never outlives the repository it points at.
+function startWatching(repositoryPath) {
+  stopWatching()
+  if (!repositoryPath) return
+  const gitDirectory = resolveGitDirectory(repositoryPath)
+  if (!gitDirectory) return
+  watcher = new RepositoryWatcher()
+  watcher.watch(gitDirectory, ({ reason }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('repo:changed', { reason })
+  })
+}
+
 function handleRepository(channel, handler) {
   ipcMain.handle(channel, (event, ...args) => {
     assertMainFrame(event)
-    return operationGate.run(() => handler(event, ...args))
+    if (!REPOSITORY_WRITE_CHANNELS.has(channel)) return operationGate.run(() => handler(event, ...args))
+    // Silent before and after: the command may take seconds (network) and the
+    // watcher must not report the files it writes as an external change.
+    watcher?.notifyIgnored(WATCH_SILENCE_MS)
+    return operationGate.run(() => handler(event, ...args)).finally(() => watcher?.notifyIgnored(WATCH_SILENCE_MS))
   })
 }
 
@@ -61,13 +99,18 @@ handleUpdate('update:resume', () => {
 handleUpdate('update:resume-consumed', () => { updateStore.save({ resume: null }); return { ok: true } })
 
 async function openRepository(candidate) {
-  return openRepositoryPath({
+  const result = await openRepositoryPath({
     candidate,
     commandService,
     repository,
     remember: (root) => recentRepositories?.remember(root),
     setRepositoryPath: (root) => { repoPath = root },
   })
+  // Every way of opening a repository (dialog, recent-repository switcher,
+  // renderer request) goes through here, so the watcher always follows the
+  // repository that is actually open. startWatching() closes the previous one.
+  if (result?.ok && result.path) startWatching(result.path)
+  return result
 }
 
 async function chooseRepository() {
@@ -140,6 +183,7 @@ if (primaryInstance) app.whenReady().then(async () => {
   if (!repoPath && typeof resume?.repoPath === 'string' && fs.existsSync(resume.repoPath)) repoPath = resume.repoPath
   // Otherwise fall back to the most recent repository that still exists on disk.
   if (!repoPath) repoPath = recentRepositories.list().find((candidate) => fs.existsSync(candidate)) ?? null
+  startWatching(repoPath)
   const supported = app.isPackaged && process.platform === 'win32' && process.arch === 'x64' && fs.existsSync(path.join(process.resourcesPath, 'gitglass-installed'))
   updates = new UpdateService({
     updater: supported ? createWindowsUpdater({ NsisUpdater: require('electron-updater').NsisUpdater, app }) : null,
@@ -166,6 +210,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     : { titleBarStyle: 'hiddenInset' }
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'
   mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', iconFile), ...titleBarOptions, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  mainWindow.on('closed', () => stopWatching())
   const devUrl = process.env.VITE_DEV_SERVER_URL
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -174,6 +219,6 @@ if (primaryInstance) app.whenReady().then(async () => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow.show() })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
-app.on('will-quit', () => updates?.dispose())
+app.on('will-quit', () => { updates?.dispose(); stopWatching() })
 
 module.exports = { commandService, repository, isPath }
