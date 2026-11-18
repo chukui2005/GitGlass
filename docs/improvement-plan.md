@@ -84,6 +84,15 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 | 17 | 参考基准 | 目前没有视觉基准，改动容易各修各的 | 仍未取得 dbx 截图；0.6.3 按 `docs/design.md` 里写下的 token（13/12/11 三档 + 三档按钮）实现，视觉基准留到拿到对照截图后再对齐 |
 
 0.6.3 的执行顺序：#13（通知）→ #16（文案）→ #14/#15（token 与按钮，同一批改 `styles.css`）。
+
+### 0.6.3 发现但**没修**的小问题（下次单独开 PR）
+
+| 问题 | 现状 | 建议 |
+| --- | --- | --- |
+| Diff 的文件/元信息行会折行 | `.diff-line.file` / `.metadata` 的 DOM 有 5 个子元素，CSS 只有 `112px max-content` 两列 | 改成 5 列 grid 或给多余子元素 `display:none`，改动只在 `styles.css` |
+| 最近仓库菜单仍用 10px | `.recent-repositories-path`、`.recent-repositories-missing` 是 `font-size:10px` | 统一到 `--font-aux`（11px），顺手把这几个类也纳入 `tests/unit/design-tokens.test.mjs` 的 no-10px 断言 |
+| 合并/变基状态横幅仍是整行高度 | 计划 #13 里的"更窄的状态条"没做 | 单独调 `.app-notice` 的 padding 与行高，避免和 #14/#15 抢同一个 PR |
+| 顶栏在 1280–1440 区间靠折叠断点兜底 | 1240px 以下文字折叠为图标 | 若以后增加顶栏按钮，先跑一次 1280 + 154px overlay 的宽度探针（`1150~1250` 是最紧的区间） |
 ## P2 工程质量（决定改得动不动）
 
 | # | 问题 | 现状 | 修法 |
