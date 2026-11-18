@@ -3,6 +3,7 @@ const path = require('node:path')
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
+const { declarations } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
 describe('Workbench layout structure', () => {
   it('keeps selected-file diff content inside a two-row diff view', () => {
@@ -65,5 +66,39 @@ describe('Workbench layout structure', () => {
     expect(source).not.toContain('（无输出）')
     expect(source).not.toContain('title="stdout"')
     expect(source).not.toContain('title="stderr"')
+  })
+
+  it('gives each expanded ledger record two lines: intent plus command, then result metadata', () => {
+    // 第一行：意图 + 等宽命令；命令单行省略，全文放在 title 里。
+    expect(source).toContain('className="ledger-entry-main"')
+    expect(source).toContain('className="ledger-entry-line"')
+    expect(source).toContain('className="ledger-command" title={command}')
+    expect(source).toContain('<span className="ledger-intent">{intentLabel(record)}</span>')
+    // 第二行：结果 · 退出码 · 耗时/时间 · 来源。
+    expect(source).toContain('className="ledger-entry-meta"')
+    expect(source).toContain('{recordStatusLabel(record)}')
+    expect(source).toContain('<span>退出码 {record.exitCode ?? "—"}</span>')
+    expect(source).toContain('{duration && (')
+    expect(source).toContain('const duration = recordDurationLabel(record)')
+    expect(source).toContain('{recordTypeLabel(record.source)}')
+    expect(source).toContain('<time dateTime={record.startedAt || undefined}>')
+    // 展开按钮仍保留 aria-expanded，供键盘与读屏使用。
+    expect(source).toContain('aria-expanded={expanded}')
+
+    // 语义断言：两行布局用 grid，命令用省略号而不是换行，列表不出现横向滚动条。
+    expect(declarations(styles, '.ledger-summary')).toMatchObject({
+      display: 'grid',
+      'grid-template-columns': '15px minmax(0,1fr) 14px',
+    })
+    expect(declarations(styles, '.ledger-command')).toMatchObject({
+      overflow: 'hidden',
+      'text-overflow': 'ellipsis',
+      'white-space': 'nowrap',
+    })
+    expect(declarations(styles, '.ledger-entry-meta')['white-space']).toBe('nowrap')
+    expect(declarations(styles, '.ledger-list')['overflow-x']).toBe('hidden')
+    // 第一行 13px 正文，第二行 11px 辅助信息：两档字号必须真的不同。
+    expect(declarations(styles, '.ledger-intent')['font-size']).toBe('var(--font-body)')
+    expect(declarations(styles, '.ledger-entry-meta')['font-size']).toBe('var(--font-aux)')
   })
 })

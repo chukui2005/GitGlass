@@ -89,6 +89,20 @@ export function glanceSummary(record) {
   return record ? `最近：${intentLabel(record)} · ${recordStatusLabel(record)}` : '尚无命令记录'
 }
 
+// 账本第二行的“耗时”：只从记录自身的 startedAt/endedAt 计算，读不到时间就返回空串，
+// 由调用方退回显示时钟时间，绝不编造一个数字。
+export function recordDurationLabel(record) {
+  const started = Date.parse(record?.startedAt || '')
+  const ended = Date.parse(record?.endedAt || '')
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) return ''
+  const milliseconds = ended - started
+  if (milliseconds < 1000) return `${milliseconds}ms`
+  const seconds = milliseconds / 1000
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m${Math.round(seconds % 60)}s`
+}
+
 export function countBySource(records) {
   return {
     user: records.filter((record) => record.source === 'user').length,
