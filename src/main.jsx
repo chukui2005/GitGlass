@@ -63,6 +63,7 @@ import {
 import "./styles.css";
 import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 import { useHistoryReview } from "./use-history-review.js";
+import { branchName, useSafetyPlans } from "./use-safety-plans.js";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
 const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
@@ -82,14 +83,6 @@ const time = (value) =>
     : "—";
 const basename = (value) =>
   value?.split(/[\\/]/).filter(Boolean).at(-1) || "未打开仓库";
-const branchName = (branch) =>
-  typeof branch === "string" ? branch : branch.name;
-const rescueName = (entry) =>
-  `rescue/${
-    String(entry.occurredAt || "reflog")
-      .replace(/[^0-9A-Za-z]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "reflog"
-  }-${entry.shortHash}`;
 // 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
 const stageSelectionKey = (path) => `unstaged:${path}`;
 
@@ -1216,13 +1209,7 @@ export function App() {
   // 拆成两个标志，避免"鼠标离开但焦点还在横幅里"被误判成可以继续计时。
   const [noticeHovered, setNoticeHovered] = useState(false);
   const [noticeFocused, setNoticeFocused] = useState(false);
-  const [branchPlan, setBranchPlan] = useState(null);
   const [remotePlan, setRemotePlan] = useState(null);
-  const [safetyPlan, setSafetyPlan] = useState(null);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [reflogEntries, setReflogEntries] = useState([]);
-  const [reflogReason, setReflogReason] = useState("");
-  const [acknowledgement, setAcknowledgement] = useState("");
   const [remote, setRemote] = useState(null);
   const [branches, setBranches] = useState([]);
   const [records, setRecords] = useState([]);
@@ -1305,6 +1292,41 @@ export function App() {
     loading,
     setLoading,
     refreshLedger,
+  });
+  // 打开命令账本（可顺带切到某个筛选）；计划类操作执行时统一走这里。
+  const openLedger = (tab) => {
+    setLedgerOpen(true);
+    if (tab) setLedgerFilter(tab);
+  };
+  // 计划类操作（撤销 / 删除分支 / 救援分支 / 切换分支）与恢复中心。
+  const {
+    safetyPlan,
+    setSafetyPlan,
+    branchPlan,
+    setBranchPlan,
+    recoveryOpen,
+    setRecoveryOpen,
+    reflogEntries,
+    reflogReason,
+    acknowledgement,
+    setAcknowledgement,
+    requestSwitch,
+    confirmBranch,
+    requestDiscard,
+    requestDeleteMergedBranch,
+    openRecovery,
+    requestRescue,
+    confirmSafety,
+  } = useSafetyPlans({
+    gitglass: window.gitglass,
+    branch: state.branch,
+    loading,
+    setLoading,
+    refreshLedger,
+    refreshAll,
+    setNotice,
+    openLedger,
+    setFocusedOperationId,
   });
   const getPanelLimits = (side, widths = panelWidths) =>
     panelLimits(side, widths, workspaceRef.current?.clientWidth || window.innerWidth);
@@ -1757,41 +1779,6 @@ export function App() {
     await refreshAll();
     setLoading(false);
   }
-  async function requestSwitch(branch, create = false) {
-    if (loading) return;
-    const name = create ? branch.trim() : branchName(branch);
-    if (!name || (!create && (name === state.branch || branch.current))) return;
-    const prepared = await window.gitglass.prepareBranch(name, create);
-    await refreshLedger();
-    setBranchPlan(
-      prepared.plan
-        ? {
-            name,
-            create,
-            ...prepared,
-            operationId: prepared.plan.operationId,
-            displayCommand: prepared.plan.displayCommand,
-          }
-        : { name, create, ...prepared, blocked: true },
-    );
-  }
-  async function confirmBranch() {
-    if (!branchPlan?.plan) return;
-    setLoading(true);
-    setLedgerOpen(true);
-    const result = await window.gitglass.executeBranch(
-      branchPlan.name,
-      branchPlan.create,
-      branchPlan.operationId,
-    );
-    setFocusedOperationId(
-      result.execution?.operationId || branchPlan.operationId,
-    );
-    setNotice(executionNotice(`已${branchPlan.create ? "创建并切换到" : "切换到"} ${branchPlan.name}。`, result.execution));
-    if (result.execution?.ok) setBranchPlan(null);
-    await refreshAll();
-    setLoading(false);
-  }
   async function requestRemote(kind) {
     if (!repo || loading) return;
     setLoading(true);
@@ -1828,115 +1815,6 @@ export function App() {
     };
     setNotice(executionNotice(remoteSuccess[remotePlan.kind] || "远程操作已完成。", result.execution));
     if (result.execution?.ok) setRemotePlan(null);
-    await refreshAll();
-    setLoading(false);
-  }
-  async function requestDiscard(path) {
-    setLoading(true);
-    setAcknowledgement("");
-    const prepared = await window.gitglass.prepareDiscard(path);
-    await refreshLedger();
-    setSafetyPlan(
-      prepared.plan
-        ? {
-            ...prepared,
-            kind: "discard",
-            path,
-            operationId: prepared.plan.operationId,
-            displayCommand: prepared.plan.displayCommand,
-          }
-        : { ...prepared, kind: "discard", path, blocked: true },
-    );
-    setLoading(false);
-  }
-  async function requestDeleteMergedBranch(branch) {
-    if (loading) return;
-    setLoading(true);
-    const prepared = await window.gitglass.prepareDeleteMergedBranch(branch);
-    await refreshLedger();
-    setSafetyPlan(
-      prepared.plan
-        ? {
-            ...prepared,
-            kind: "delete-merged-branch",
-            branch,
-            operationId: prepared.plan.operationId,
-            displayCommand: prepared.plan.displayCommand,
-          }
-        : { ...prepared, kind: "delete-merged-branch", branch, blocked: true },
-    );
-    setLoading(false);
-  }
-  async function openRecovery() {
-    setLoading(true);
-    const result = await window.gitglass.getReflog();
-    setReflogEntries(result.entries || []);
-    setReflogReason(result.reason || "");
-    setRecoveryOpen(true);
-    await refreshLedger();
-    setLoading(false);
-  }
-  async function requestRescue(entry) {
-    setLoading(true);
-    const branch = rescueName(entry);
-    const prepared = await window.gitglass.prepareRescueBranch(
-      entry.hash,
-      branch,
-    );
-    await refreshLedger();
-    setRecoveryOpen(false);
-    setSafetyPlan(
-      prepared.plan
-        ? {
-            ...prepared,
-            kind: "rescue-branch",
-            branch,
-            hash: entry.hash,
-            operationId: prepared.plan.operationId,
-            displayCommand: prepared.plan.displayCommand,
-          }
-        : {
-            ...prepared,
-            kind: "rescue-branch",
-            branch,
-            hash: entry.hash,
-            blocked: true,
-          },
-    );
-    setLoading(false);
-  }
-  async function confirmSafety() {
-    if (!safetyPlan?.plan) return;
-    setLoading(true);
-    setLedgerOpen(true);
-    setLedgerFilter("user");
-    let result;
-    if (safetyPlan.kind === "discard")
-      result = await window.gitglass.executeDiscard(
-        safetyPlan.path,
-        safetyPlan.operationId,
-      );
-    else if (safetyPlan.kind === "delete-merged-branch")
-      result = await window.gitglass.executeDeleteMergedBranch(
-        safetyPlan.branch,
-        safetyPlan.operationId,
-      );
-    else
-      result = await window.gitglass.executeRescueBranch(
-        safetyPlan.hash,
-        safetyPlan.branch,
-        safetyPlan.operationId,
-      );
-    setFocusedOperationId(
-      result.execution?.operationId || safetyPlan.operationId,
-    );
-    const safetySuccess = safetyPlan.kind === "discard"
-      ? "已丢弃该文件的未暂存改动。"
-      : safetyPlan.kind === "delete-merged-branch"
-        ? `已删除分支 ${safetyPlan.branch}。`
-        : `已创建救援分支 ${safetyPlan.branch}。`;
-    setNotice(executionNotice(safetySuccess, result.execution));
-    if (result.execution?.ok) setSafetyPlan(null);
     await refreshAll();
     setLoading(false);
   }
