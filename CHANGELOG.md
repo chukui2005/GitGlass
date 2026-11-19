@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.5-beta.2](https://github.com/chukui2005/GitGlass/compare/v0.6.5-beta.1...v0.6.5-beta.2) (2026-11-19)
+
+### Refactors
+
+* move the workbench components into workbench-ui ([e126f35](https://github.com/chukui2005/GitGlass/commit/e126f35fdd6f8fb3ecf447d73e870c78c9dea3a9))
+* satisfy the hook dependency rules and fix two render gaps ([30e2145](https://github.com/chukui2005/GitGlass/commit/30e21455cad2c363f940a467f885b79f68a6ed53))
+* move the remote overview into use-remote-overview ([5668d7c](https://github.com/chukui2005/GitGlass/commit/5668d7c1378e3ec64a3ccd3794d5b48d89746481))
+* move the plan flows into use-safety-plans ([63c145e](https://github.com/chukui2005/GitGlass/commit/63c145e394095cea8c2408bb014faa02cc9c0c6f))
+* move history review state into use-history-review ([1184871](https://github.com/chukui2005/GitGlass/commit/1184871370dae93c502f119d17ed3418271fffcb))
+
+### 工程与质量（结构债，不改变产品行为）
+
+* **`main.jsx` 拆分**：3027 → **1441 行**（−52%），领域状态抽成 `use-history-review` / `use-safety-plans` / `use-remote-overview` / `use-panel-resize` 四个 hook，26 个展示组件搬到 `workbench-ui.jsx`；DOM 结构、类名、`aria-*`、文案零改动
+* **覆盖率不再排除 `main.jsx`**：四项 **75.03 / 69.71 / 71.95 / 77.64**（阈值仍 50%），exclude 只剩 `electron/main.cjs` 与 `electron/preload.cjs`
+* **`exhaustive-deps` 清零**：4 条 warning 全部按规则修好（最新闭包 ref / effect 内就地派生 / 订阅每次渲染重建 / 纯函数替代 memo），lint 现在 **0 error / 0 warning**
+* **顺带修掉两个真渲染测试暴露的缺口**：已暂存区在加载中「取消暂存」不再可点；`compare` 结果含二进制文件时「结果中包含二进制文件」提示不再丢失
+* `tsconfig` 的 `include` 增加 `src/use-*.js`（四个 hook 都带 JSDoc 类型）
+
 ## [0.6.5-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.4-beta.2...v0.6.5-beta.1) (2026-11-19)
 
 ### Features
