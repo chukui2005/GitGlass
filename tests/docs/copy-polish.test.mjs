@@ -98,6 +98,9 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     expect(renderer).toContain('onClick={refreshFromUser}')
     expect(styles).toContain('button:disabled{cursor:not-allowed;pointer-events:none}')
+    // 没有打开仓库时右栏是引导块，而不是一整套禁用的「创建提交」表单。
+    expect(renderer).toContain('还没有打开仓库')
+    expect(renderer).toContain('打开一个本地 Git 仓库后，这里会显示暂存状态、提交说明和下一条命令的预览。')
     // 语义断言：行内动作禁用时用 --faint 文字 + 降低透明度，不再写死某个灰色。
     expect(declarations(styles, '.row-action:disabled')).toMatchObject({
       color: 'var(--faint)',

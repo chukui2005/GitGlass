@@ -714,6 +714,30 @@ function FileInspector({ file, loading, onStage, onDiscard }) {
     </section>
   );
 }
+// 没有打开仓库时，右栏不渲染一整套禁用的提交表单，只留一块引导：
+// 说明这里将来会出现什么，并复用顶栏/空状态同一个目录选择入口（主按钮仍只有左栏那一个）。
+function NoRepositoryGuide({ loading, onOpen }) {
+  return (
+    <section className="inspector-flow repository-guide">
+      <div className="inspector-heading">
+        <span>开始使用</span>
+        <h2>还没有打开仓库</h2>
+      </div>
+      <p className="inspector-copy">
+        打开一个本地 Git 仓库后，这里会显示暂存状态、提交说明和下一条命令的预览。
+      </p>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={onOpen}
+        disabled={loading}
+      >
+        <FolderOpen size={15} />
+        打开仓库
+      </button>
+    </section>
+  );
+}
 function CommitInspector({
   staged,
   unstaged,
@@ -2187,6 +2211,8 @@ function App() {
       onRescue={requestRescue}
       onClose={() => setRecoveryOpen(false)}
     />
+  ) : !repo ? (
+    <NoRepositoryGuide loading={loading} onOpen={chooseRepo} />
   ) : selected ? (
     <FileInspector
       file={selected}

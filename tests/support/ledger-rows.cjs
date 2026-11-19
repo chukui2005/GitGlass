@@ -168,8 +168,10 @@ app.whenReady().then(async () => {
             enabledPrimaries: allPrimaries.filter((entry) => !entry.disabled).length,
             enabledText: allPrimaries.filter((entry) => !entry.disabled).map((entry) => entry.textContent.trim()).join('|'),
             topbarPrimaries: document.querySelectorAll('.top-actions .primary-button, .top-actions .primary-action').length,
-            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
             topbarToolbar: document.querySelectorAll('.top-actions .toolbar-button').length,
+            contextGuide: Boolean(document.querySelector('.repository-guide')),
+            contextForm: Boolean(document.querySelector('.context-panel textarea, .context-panel .primary-action')),
+            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
           }
         })()`)
         return snapshot && snapshot.hasButton ? snapshot : null
@@ -182,6 +184,9 @@ app.whenReady().then(async () => {
     assert.equal(empty.enabledText, '打开仓库', '空状态唯一的主动作必须是「打开仓库」')
     assert.equal(empty.topbarPrimaries, 0, '顶栏不放主按钮')
     assert.equal(empty.topbarToolbar, 4, '空状态顶栏同样保留 4 个低权重工具条')
+    // 没有仓库时右栏是引导块，而不是一整套禁用的「创建提交」表单。
+    assert.equal(empty.contextGuide, true, '空状态右栏应显示引导块')
+    assert.equal(empty.contextForm, false, '空状态右栏不应再渲染禁用的提交表单')
     assert.ok(empty.overflow <= 1, `空状态不允许横向溢出，实际 ${empty.overflow}px`)
 
     // 密度（对齐 dbx）：列表行 26px、分组标题 28px、账本单行 32px、Diff 行 20–21px。

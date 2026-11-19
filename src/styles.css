@@ -224,6 +224,10 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .empty-repo>svg,.graph-empty>svg{width:18px;height:18px}
 .empty-repo p,.graph-empty p,.history-empty p,.history-failure strong{font-size:var(--font-body)}
 .empty-repo .primary-button{margin-top:4px}
+/* 没有仓库时的右栏引导块：标题 + 一句说明 + 一个次按钮，替代整套禁用的提交表单。 */
+.repository-guide{gap:9px}
+.repository-guide .inspector-copy{max-width:34ch}
+.repository-guide .secondary-button{justify-self:start;margin-top:2px}
 .history-empty,.history-failure,.graph-empty{min-height:160px;gap:4px;padding:24px 20px}
 .history-empty span,.history-failure p{line-height:1.5}
 .diff-empty{min-height:120px;padding:16px}
