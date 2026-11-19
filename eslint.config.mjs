@@ -76,6 +76,23 @@ export default [
     rules: { ...js.configs.recommended.rules, ...sharedRules },
   },
 
+  // jsdom UI tests: the renderer is mounted with @testing-library/react inside
+  // vitest's jsdom environment (each file opts in with a
+  // `// @vitest-environment jsdom` header). They are still ESM under tests/, but
+  // `window` / `document` / `navigator` are real globals for them, so they need
+  // the browser globals on top of the Node and vitest ones. Kept as a separate,
+  // narrow group so the Electron probe tests never inherit a DOM they do not have.
+  {
+    files: ['tests/ui/**/*.test.mjs', 'tests/support/*.mjs'],
+    ...js.configs.recommended,
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser, ...vitestGlobals },
+    },
+    rules: { ...js.configs.recommended.rules, ...sharedRules },
+  },
+
   // Renderer: browser ESM (React 19 + JSX).
   {
     files: ['src/**/*.js', 'src/**/*.jsx'],

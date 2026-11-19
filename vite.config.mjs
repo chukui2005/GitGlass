@@ -8,6 +8,10 @@ export default defineConfig({
   test: {
     globals: true,
     fileParallelism: false,
+    // jsdom / jest-dom matchers for the files that opt in with
+    // `// @vitest-environment jsdom`. The Electron probe tests keep the default
+    // node environment, so the setup skips the React bits when there is no DOM.
+    setupFiles: ['tests/support/jsdom-setup.mjs'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
