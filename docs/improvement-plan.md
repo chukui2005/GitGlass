@@ -100,7 +100,8 @@
 2026-11-18 完成了一次完整测量：**基线 → 现状** 为安装包 113.6 MB → **102.1 MB**、ZIP 151.2 MB → **135.4 MB**、解压后 384.5 MB → **310.9 MB**（−73.6 MB）。其中 309.1 MB（99.4%）是 Electron 运行时，我们的代码与资源只有 1.8 MB。启动（模拟安装版）到渲染层就绪 **724 ms**：Electron 自身引导 163 ms、更新服务 36 ms、建窗 108 ms、首屏 104 ms。
 
 - **已落地（零风险）**：`electronLanguages` 只留 `zh-CN` + `en-US`（安装包 −8.1 MB）；`build.files` 排除 `@phosphor-icons` / `react` / `react-dom` / `scheduler`（安装包 −3.2 MB，`app.asar` 27.7 MB → 1.8 MB）；排除 `*.map`（−0.1 MB）。
-- **下一步（按收益排序，见新文档第 5 节）**：更新服务延后到窗口创建之后（首屏前省 36–48 ms）；运行期依赖归类（`react` 等移到 `devDependencies`，需同步 lockfile）；账本虚拟列表与 watcher 降噪（内存，属 0.6.5 结构债）。
+- **已落地（2026-11-19）**：更新服务延后到建窗之后——**窗口创建提前 34–38 ms，首帧持平**（那 40 ms 从建窗路径挪进了渲染层收尾阶段，一进一出抵消，见新文档 3.1）。真正的收益是窗口不再等待 `updater.restore()` 这类可能耗时数秒的更新逻辑；`update:*` 改为排队，初始化失败降级成「不可用」。
+- **下一步（按收益排序，见新文档第 5 节）**：运行期依赖归类（`react` 等移到 `devDependencies`，需同步 lockfile）；账本虚拟列表与 watcher 降噪（内存，属 0.6.5 结构债）。
 - **实测后不建议做**：`compression: maximum`（安装包 +455 B）、拆渲染层（`react-dom` 占 bundle 72.4%）、删 Electron 的 `dxcompiler`/`vk_swiftshader`（风险高）。
 - **复测**：`npm run report:size`、`npm run report:startup -- --installed`，对照数字写在新文档第 8 节。
 

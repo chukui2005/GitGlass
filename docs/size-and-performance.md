@@ -1,13 +1,13 @@
 # 包体积与启动性能：基线、瘦身清单与复测方法
 
-本文是 0.6.4-beta.1 的一次**测量记录**：先给出可复现的基线数字，再按「收益 / 风险」列出瘦身与提速清单，最后写清下次怎么复测。
+本文是 0.6.4-beta.1 的一次**测量记录**（2026-11-19 补上清单第 1 条的落地结果，见 3.1）：先给出可复现的基线数字，再按「收益 / 风险」列出瘦身与提速清单，最后写清下次怎么复测。
 所有数字都是本机实测（Windows 11 / Node 24.21 / electron 45.2.3 / electron-builder 26.0.12），不是估算；标注「估算」的条目会单独说明。
 
 ## 0. 一句话结论
 
 - 安装包 **113.6 MB → 102.1 MB**（−12.1 MB，−10.1%），ZIP **151.2 MB → 135.4 MB**（−16.5 MB，−10.4%），解压后磁盘占用 **384.5 MB → 310.9 MB**（−73.6 MB，−19.1%）。全部来自三条零风险配置改动（见第 4 节）。
 - 剩下的 **309.1 MB（99.4%）全是 Electron 运行时**，我们的代码与资源只有 **1.8 MB**。再往下压体积只能动 Electron 自己的 DLL 或换运行时，不是改配置能解决的。
-- 启动（模拟安装版）到渲染层就绪 **724 ms**：Electron 自身引导 163 ms、更新服务 36 ms、建窗 108 ms、首屏 104 ms。唯一值得动的启动项是**更新服务那 36 ms 卡在建窗之前**。
+- 启动（模拟安装版）到渲染层就绪 **724 ms**：Electron 自身引导 163 ms、更新服务 36 ms、建窗 108 ms、首屏 104 ms。清单第 1 条（更新服务挪到建窗之后）已于 2026-11-19 落地：**窗口创建提前 34–38 ms，首帧持平**——那 40 ms 从建窗路径挪到了渲染层收尾阶段，一进一出正好抵消（见 3.1，教训是「挪走阻塞」不等于「首屏变快」）。
 - 清单里有 3 项**实测后建议不做**：`compression: maximum`（安装包 ±0）、拆渲染层（`react-dom` 占 bundle 72%）、删 Electron DLL（风险高）。理由都在第 6 节。
 
 ## 1. 怎么复测（下次优化前后都跑这两条）
@@ -127,7 +127,43 @@ npm run report:startup -- --installed
 
 1. **`ready-to-show` 不是稳定信号。** 基线构建里它和 `did-finish-load` 同时出现（都在 613 ms，相差 <1 ms）；改造后的构建里只观测到 `did-finish-load`。脚本因此两个标记都记，优先用 `ready-to-show`，缺失时退到 `did-finish-load`（两者同时出现时相差 <1 ms，可以互换比较）。
 2. **total 的差值不要归因到单个改动。** 安装版口径两次测量区间不重叠（773–840 → 704–772），可以确认「改造后没有变慢、确实快了几十到一百毫秒」，合理归因是 `app.asar` 从 4962 个文件降到 286 个（少读目录项、少映射 26 MB），但没有单点证据，别写进验收标准。
-3. **更新服务的 36–48 ms 是唯一稳定可复现的阻塞项**：未安装时 1–2 ms、安装版 35–48 ms，六次运行无重叠。它卡在 `new BrowserWindow` 之前，所以 100% 落在首屏之前。
+3. **更新服务的 36–48 ms 是唯一稳定可复现的阻塞项**：未安装时 1–2 ms、安装版 35–48 ms，六次运行无重叠。它卡在 `new BrowserWindow` 之前，所以 100% 落在首屏之前。已于 2026-11-19 挪到建窗之后，实测结果见 3.1。
+
+### 3.1 更新服务延后到建窗之后（2026-11-19 落地）
+
+原来 `electron/main.cjs` 的顺序是「构造 `UpdateService`（含 `require('electron-updater')` 与 `NsisUpdater` 实例）→ `await updates.initialize()` → `new BrowserWindow()`」。现在先建窗并开始加载页面，页面开始加载之后才启动服务（不 await）：`update:*` 请求排队等 `updatesReady`，`update:state` 在此之前返回 `pendingUpdateState()`（结构完整的 `phase: 'loading'` 占位状态）。
+
+**结构性证据**：同一份二进制，用环境变量切换三种顺序交替各跑 8 次（临时测量开关，未提交；差异在同一个二进制里，因此不受机器负载漂移影响）：
+
+| 阶段时间戳（相对 `main.cjs` 载入） | 旧顺序（建窗前初始化） | 建窗后立即启动 | **加载后启动（已落地）** |
+| --- | --- | --- | --- |
+| `whenReady` | 258 ms | 249 ms | 253 ms |
+| `window-created` | 382 ms | 344 ms | **344 ms** |
+| `did-finish-load` | 493 ms | 479 ms | **472 ms** |
+| `updates-ready` | 295 ms | 411 ms | **511 ms** |
+| `whenReady` → `window-created` | 124 ms | 93 ms | **93 ms** |
+| `window-created` → `did-finish-load` | 110 ms | 133 ms | 129 ms |
+
+读法：`updates-ready` 从「建窗之前」（295 < 382）变成「首帧之后」（511 > 472），这是顺序改变的直接证据；`whenReady` → `window-created` 少了 31 ms，正是被挪走的那一段。另一轮 12 对交替测量（旧/新两种模式）复现了同一结论：`window-created` 374 → 340 ms（−34 ms）、`did-finish-load` 461 → 472 ms（+11 ms）。
+
+**诚实的结论**：
+
+- **窗口创建提前 34–38 ms**，两轮独立测量一致（374 → 340；382 → 344）。用户看到窗口框架的时间确实早了。
+- **首帧没有变快**：`did-finish-load` 两轮分别是 +11 ms 和 −21 ms，都被 ±20 ms 的噪声吞掉。被挪走的 40 ms 落进了渲染层收尾阶段（`window-created` → `did-finish-load` 110 → 129 ms），一进一出正好抵消。
+- 因此这次改动的价值是**语义性**的，不是「首屏快 40 ms」：
+  - 窗口不再等待任何更新逻辑。`initialize()` 在缓存了待安装更新时会调用 `updater.restore()`，对安装包做 sha512 校验（100 MB 量级）；旧顺序下这段会**整段**挡在建窗前面，新顺序下窗口完全不受影响。这条没实测（要构造 100 MB 的缓存包），是代码路径上的保证。
+  - `update:*` 请求改为排队，`update:state` 立刻拿到结构完整的占位状态；`updatesReady` 永不 reject，初始化失败也只会降级成「不可用」。
+- 没有选「建窗后立刻启动」：数值上和「加载后启动」等价（344 / 345 ms），但后者的同步工作落在渲染层收尾之后，对 `did-finish-load` 更友好。
+- **教训（写给下次）**：把一段阻塞从 A 挪到 B，只有在 B 不在关键路径上时才等于「变快」。这次 B（渲染层收尾）仍在关键路径上，所以总量没变——判断这类改动要看阶段时间戳，不能只看 total。
+
+**单跑 3 次为什么看不出来**：改动前后各跑 `npm run report:startup -- --installed` 3 次，中位数是 690 ms → 693 ms。跨会话的机器负载漂移（实测单次 total 可在 590–830 ms 之间跳）远大于 34 ms，**只有交替 A/B 才测得出来**。这也是第 1 节「对比纪律」的由来。
+
+**失败路径与幂等**（有单测覆盖，见 `tests/unit/update-service.test.cjs` 的 `deferred update service startup` 三例）：
+
+- `getState()` 在 `initialize()` 之前调用返回完整结构、不抛错；服务还没构造时主进程用 `pendingUpdateState()` 顶上，键集与真实状态完全一致。
+- `check` / `download` / `install` 在服务未就绪时排到 `updatesReady` 之后；服务根本没启动（页面加载卡死且 10 秒兜底计时器还没到）时直接返回「更新服务正在准备，请稍候。」
+- `initialize()` 抛错时 `UpdateService#start()` 把服务降级成「不支持」，保留中文提示 `更新服务暂时不可用，请重启应用后再试。`，状态结构不变，且**不会产生 unhandled rejection**（`updatesReady` 永远 resolve）。
+- `update:resume` / `update:resume-consumed` 仍然只读写 `updateStore`，时序未变：重启草稿在窗口加载前就可读。
 
 ## 4. 已落地（本 PR，零风险）
 
@@ -139,11 +175,11 @@ npm run report:startup -- --installed
 
 三条都不改产品代码、不改依赖清单、不改版本号；`tests/release/packaging-config.test.cjs` 与 `tests/release/size-performance-report.test.mjs` 守住这几条配置，防止有人改回去。
 
-## 5. 待决策清单（按「收益 / 风险」排序）
+## 5. 清单（按「收益 / 风险」排序）
 
 | # | 项 | 收益 | 风险 | 要改什么 |
 | --- | --- | --- | --- | --- |
-| 1 | **更新服务延后到窗口创建之后** | 首屏前省 **36–48 ms**（实测：安装版 36 ms，基线构建 48 ms；未安装时只要 1–2 ms） | 中：`update:state` 在渲染层首次查询时必须有答案；`update:resume` 在窗口加载前就要能读草稿（`updateStore` 可以先建、`electron-updater` 后加载） | 产品代码（`electron/main.cjs`）：把 `await updates.initialize()` 移到 `mainWindow.loadFile()` 之后（或 `did-finish-load` 后 `void updates.initialize()`），并把 `supported` 判断与 `UpdateService` 构造拆成「先给状态、后加载更新器」两步 |
+| 1 | ✅ **已落地（2026-11-19）**：更新服务延后到建窗之后 | **窗口创建提前 34–38 ms**；首帧持平（那 40 ms 挪进了渲染层收尾阶段，见 3.1）。语义收益：窗口不再等待 `updater.restore()` 这类可能耗时数秒的更新逻辑 | 已落地。`update:state` 在服务就绪前返回占位状态；其余 `update:*` 排队等 `updatesReady`；初始化失败降级成「不可用」，不会 unhandled rejection；`update:resume` 时序不变 | `electron/main.cjs`、`electron/update-service.cjs`、`tests/unit/update-service.test.cjs` |
 | 2 | 删掉用不到的 Electron DLL（`dxcompiler.dll` 24.6 MB、`vk_swiftshader.dll` 5.2 MB、`vulkan-1.dll` 0.9 MB） | 解压后 **−30.7 MB**，安装包预计 −8~10 MB（估算：按 locale 的压缩比外推） | **高**：SwiftShader 是显卡驱动异常时的软件回退，DXC 被 ANGLE/WebGPU 用；删了在部分机器上会黑屏或无法渲染，需要大量真机验证 | `afterPack` 钩子删文件（它们不在 `app.asar` 里，`build.files` 管不到） |
 | 3 | 运行期依赖归类 | 语义正确性（不是体积）：`react` / `react-dom` / `@phosphor-icons/react` 应移到 `devDependencies`，真正运行期依赖只剩 `electron-updater` + `semver` | 低-中：需要同步改 `package-lock.json`（本机不能跑 `npm install`），改错会让 CI 的 `npm ci` 直接失败 | `package.json` + `package-lock.json`，必须在能跑 `npm install` 的环境做 |
 | 4 | `compression: maximum` | **实测 ≈ 0**：安装包 +455 B（噪声内），ZIP −393 KB（−0.25%），构建时间明显变长 | 低（只是慢） | 不建议落地，见第 6 节 |
@@ -152,7 +188,7 @@ npm run report:startup -- --installed
 | 7 | `public/` 与 `dist/` 的图标重复 | 约 37 KB（忽略不计） | 低 | 不值得做 |
 | 8 | 内存：命令账本虚拟列表、超大仓库 watcher 降噪 | 账本 300 条全量渲染 → 虚拟列表，可省渲染进程内存与滚动卡顿；watcher 已在 0.6.3 做过 800 ms 去抖，只剩 `objects/` 降噪 | 中（交互回归风险） | 产品代码；属于 0.6.5 的结构债，不在本次范围 |
 
-**如果只做一件事**：第 1 项（更新服务延后），它同时改善首屏时间与「窗口先出来、更新在后面忙」的观感，且是唯一一个收益超过噪声的启动项。
+**如果只做一件事**：第 1 项已落地。剩下收益最确定的是第 3 项（依赖归类，纯语义债）；第 2 项虽然一次能省 30 MB，但需要显卡兼容性真机矩阵，风险远大于收益。
 
 ## 6. 为什么不建议做（负结果，省得下次再试）
 
@@ -170,7 +206,7 @@ npm run report:startup -- --installed
 | 外部墙钟 | `spawn` 打包后的 `GitGlass.exe`，轮询探针文件，直到出现就绪标记 | total（含 Electron 自身引导，这是用户真正感受到的时间） |
 | 进程内探针 | `electron/startup-probe.cjs` 写 JSON Lines：`whenReady` / `updates-ready` / `window-created` / `did-finish-load` / `ready-to-show`，并附 `app.getAppMetrics()` | 阶段拆分与内存；探针在 `GITGLASS_STARTUP_PROBE` 未设置时是空函数 |
 
-探针是**唯一**进入产品代码的改动（`electron/main.cjs` 里 2 处调用 + 1 个条件分支），全部由环境变量开关控制，未设置时不写文件、不注册监听、不改启动顺序。
+探针是**唯一**为测量进入产品代码的改动（`electron/main.cjs` 里 3 处 `startupProbe(...)` 调用 + 1 个注册两个监听的条件分支），全部由环境变量开关控制，未设置时不写文件、不注册监听、不改启动顺序。
 
 ### 7.2 踩过的坑（下次别重复）
 
@@ -188,6 +224,8 @@ npm run report:startup -- --installed
 | 便携版是否变小 | 同上 `.zip` | 142,003,757 B |
 | 用户安装后占多少磁盘 | `win-unpacked` 总计 | 310.9 MB |
 | 我们自己写了多少东西 | `app.asar` 解包字节数 | 1.7 MB |
-| 首屏是否变快 | `report:startup --installed` 的 total 中位数 | 724 ms |
-| 更新服务是否还在阻塞首屏 | 同表的「更新服务」列 | 36 ms（改造前 48 ms） |
-| 内存是否变差 | 同表的内存段 + 峰值工作集 | Browser 130.9 MB / 峰值 132.9 MB |
+| 首屏是否变快 | `report:startup --installed` 的 `did-finish-load` 时间戳 | 472–523 ms（相对 `main.cjs` 载入；跨会话波动 ±60 ms，要交替 A/B 才测得准） |
+| 窗口是否更早出现 | 同表的 `window-created` 时间戳 | 344 ms（改造前 382 ms） |
+| 更新服务是否还在阻塞首屏 | 同表的 `updates-ready` 与 `window-created` 的先后 | 已在首帧之后（`updates-ready` > `did-finish-load`） |
+| 内存是否变差 | 同表的内存段 + 峰值工作集 | Browser 125.6–130.9 MB / 峰值 133.0 MB |
+| 关于「total 中位数」 | 脚本优先用 `ready-to-show`、缺失时用 `did-finish-load` | 两个标记会跨构建漂移（有时只有后者），**total 不适合跨日对比**，看阶段时间戳 |
