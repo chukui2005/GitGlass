@@ -93,7 +93,7 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 @media(max-width:1080px){.topbar{padding-left:12px;padding-right:calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) + 12px)}.top-actions{gap:5px}.top-action,.toolbar-button,.sync-action,.secondary-button{min-width:30px;padding:0 7px}.top-action-label{display:none}}
 
 /* Diff 审阅坐标：左右标尺分别指向旧版与新版，方便直接定位改动。 */
-.diff-line{display:grid;grid-template-columns:46px 46px 24px max-content}.diff-line>.diff-line-number{width:auto;padding-right:10px;color:var(--muted);text-align:right;user-select:none}.diff-line>.diff-marker{width:auto;padding-right:0;color:var(--muted);text-align:center;user-select:none}.diff-line.plus .diff-line-number,.diff-line.plus .diff-marker{background:var(--green-soft);color:var(--green)}.diff-line.minus .diff-line-number,.diff-line.minus .diff-marker{background:var(--red-soft);color:var(--red)}.diff-line.hunk{color:var(--blue)}.diff-line.file,.diff-line.file-path,.diff-line.metadata,.diff-line.binary{grid-template-columns:112px max-content;margin-top:2px;padding:3px 28px 3px 20px;color:var(--muted);font-size:12px}.diff-line.file{margin-top:8px;background:var(--code);color:var(--text);font-weight:650}.diff-line.file-path.old{color:var(--red-ink)}.diff-line.file-path.new{color:var(--green-ink)}.diff-line.binary{background:var(--orange-soft);color:var(--orange-ink)}.diff-label{padding-right:10px;color:var(--muted);font-weight:600;text-align:right}.diff-line.file .diff-label{color:var(--text)}
+.diff-line{display:grid;grid-template-columns:46px 46px 24px max-content}.diff-line>.diff-line-number{width:auto;padding-right:10px;color:var(--muted);text-align:right;user-select:none}.diff-line>.diff-marker{width:auto;padding-right:0;color:var(--muted);text-align:center;user-select:none}.diff-line.plus .diff-line-number,.diff-line.plus .diff-marker{background:var(--green-soft);color:var(--green)}.diff-line.minus .diff-line-number,.diff-line.minus .diff-marker{background:var(--red-soft);color:var(--red)}.diff-line.hunk{color:var(--blue)}.diff-line.metadata,.diff-line.binary{grid-template-columns:112px max-content;margin-top:2px;padding:3px 28px 3px 20px;color:var(--muted);font-size:12px}.diff-line.binary{background:var(--orange-soft);color:var(--orange-ink)}.diff-label{padding-right:10px;color:var(--muted);font-weight:600;text-align:right}
 /* Application updates use a native modal so focus and repository interaction
    stay contained while a user explicitly prepares a restart. */
 .update-trigger{position:relative;min-width:30px;justify-content:center}
@@ -188,16 +188,18 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .commit-meta{font-size:var(--font-aux);gap:5px;line-height:1.3}
 .history-row.selected{background:color-mix(in srgb,var(--blue) 8%,var(--surface));box-shadow:inset 2px 0 var(--blue)}
 
-/* Diff：行号槽 40px；文件头与 hunk 头用中性 --code 底、无圆角；文件头单行 12px/600。 */
+/* Diff：行号槽 40px；hunk 头用中性 --code 底、无圆角；
+   文件头压成一行面包屑（路径，或重命名时的「旧 → 新」），12px/600，不再占三行。 */
 .diff-content{padding:8px 0}
 .diff-line{grid-template-columns:40px 40px 20px max-content}
 .diff-line>.diff-line-number{padding-right:8px}
-.diff-line.file,.diff-line.file-path,.diff-line.metadata,.diff-line.binary{grid-template-columns:96px max-content;margin-top:0;padding:2px 28px 2px 12px;font-size:var(--font-secondary);line-height:1.5}
-.diff-line.file>.diff-line-number,.diff-line.file>.diff-marker,
-.diff-line.file-path>.diff-line-number,.diff-line.file-path>.diff-marker,
+.diff-line.metadata,.diff-line.binary{grid-template-columns:96px max-content;margin-top:0;padding:2px 28px 2px 12px;font-size:var(--font-secondary);line-height:1.5}
 .diff-line.metadata>.diff-line-number,.diff-line.metadata>.diff-marker,
 .diff-line.binary>.diff-line-number,.diff-line.binary>.diff-marker{display:none}
-.diff-line.file{margin-top:6px;background:var(--code);color:var(--text);font-weight:600}
+/* 标签要占满 96px 的标签列：基础规则里的 .diff-line>span{width:38px} 会把 5 字标签挤成三行。 */
+.diff-line.metadata>.diff-label,.diff-line.binary>.diff-label{width:auto;white-space:nowrap}
+.diff-line.file{display:flex;align-items:baseline;gap:8px;margin-top:6px;padding:4px 28px 4px 12px;border-bottom:1px solid var(--line);background:var(--code);color:var(--text);font-size:var(--font-secondary);font-weight:600;line-height:1.5}
+.diff-line.file code{overflow-wrap:anywhere}
 .diff-line.hunk{background:var(--code)}
 
 /* 账本：两行结构保留，单行约 40 → 32px；展开后的技术详情与输出区行距收紧。 */

@@ -122,6 +122,14 @@ function PanelSplitter({ side, value, limits, onPointerDown, onDoubleClick, onKe
 }
 
 function DiffLine({ row }) {
+  // 文件头只有一行面包屑（路径，或重命名时的「旧 → 新」），不再有行号槽与标签列。
+  if (row.type === "file") {
+    return (
+      <div className="diff-line file">
+        <code>{row.content}</code>
+      </div>
+    );
+  }
   return (
     <div className={`diff-line ${row.type}`}>
       <span className="diff-line-number" aria-label={row.oldLine ? `原文件第 ${row.oldLine} 行` : undefined}>{row.oldLine || ""}</span>

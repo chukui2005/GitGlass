@@ -307,3 +307,17 @@ describe('Design tokens: 顶栏层次', () => {
     }
   })
 })
+
+describe('Design tokens: Diff 文件头', () => {
+  it('renders one 12px/600 breadcrumb row instead of three header lines', () => {
+    // presentDiff 只产出 type='file' 的一行（路径或「旧 → 新」），CSS 侧不再有原文件/新文件两列。
+    expect(declarations(styles, '.diff-line.file')).toMatchObject({
+      display: 'flex',
+      'font-size': 'var(--font-secondary)',
+      'font-weight': '600',
+      background: 'var(--code)',
+    })
+    expect(styles).not.toContain('.diff-line.file-path')
+    expect(styles).not.toMatch(/\.diff-line\.file \.diff-label/)
+  })
+})
