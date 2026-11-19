@@ -1,6 +1,6 @@
 // 工作台的展示组件：只接收 props，不做 IPC 调用，所以从 main.jsx 抽出来单独成文件。
 // 结构与类名必须与拆分前逐字一致——真渲染测试、Electron 探针与样式契约都按 DOM 断言。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   CaretDown,
@@ -92,10 +92,12 @@ export function DiffContent({ diff }) {
     </div>
   );
 }
-export function Output({ title, body, danger, warning }) {
+// 输出面板只在展开的记录里出现，但 stdout/stderr 单条最大 64 KiB：格式化结果按 body 记忆，
+// 这样父级重渲染或点「复制」都不会把整段文本重新扫一遍。
+export const Output = memo(function Output({ title, body, danger, warning }) {
   const [copied, setCopied] = useState(false);
   // 展示层格式化：控制字符转成可读文本，复制的内容与看到的内容一致。
-  const text = formatLedgerOutput(body);
+  const text = useMemo(() => formatLedgerOutput(body), [body]);
   async function copy() {
     await navigator.clipboard?.writeText(text);
     setCopied(true);
@@ -114,7 +116,7 @@ export function Output({ title, body, danger, warning }) {
       <pre>{text}</pre>
     </div>
   );
-}
+});
 export function FileRow({
   file,
   selected,
@@ -255,7 +257,11 @@ export function BatchStageToolbar({ total, count, loading, onSelectAll, onClear,
   );
 }
 
-export function LedgerEntry({ record }) {
+// 一条命令记录：展开态由组件自己的 state 管，详情只在展开时才挂进 DOM。
+// 这里用 memo 守住「列表级重渲染」——账本上限 300 条，而 App 会因为自动刷新、
+// 提示条、命令面板等无关状态频繁重渲染；记录对象身份由 reuseUnchangedRecords 保证稳定，
+// 所以没变的那一条不会被重新渲染（展开一条也只影响它自己）。
+export const LedgerEntry = memo(function LedgerEntry({ record }) {
   const [expanded, setExpanded] = useState(record.source === "user");
   const [copied, setCopied] = useState(false);
   const command = record.displayCommand || record.command || "等待执行结果";
@@ -391,8 +397,10 @@ export function LedgerEntry({ record }) {
       )}
     </article>
   );
-}
-export function RefreshGroup({ group }) {
+});
+// 刷新分组同样 memo：分组的 `records` 数组由 groupBackgroundRecords 的 useMemo 保持身份，
+// 无关状态重渲染时整组（含组内记录）直接跳过。
+export const RefreshGroup = memo(function RefreshGroup({ group }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <section className="ledger-refresh-group">
@@ -418,7 +426,7 @@ export function RefreshGroup({ group }) {
       )}
     </section>
   );
-}
+});
 export function CommitGraph({ commits }) {
   return (
     <div className="commit-graph">
@@ -1154,7 +1162,9 @@ export function CommandPalette({ commands, platform, onClose, onExecute }) {
  * @param {object[]} props.groups
  * @param {string} props.shortcut
  */
-export function CommandLedger({
+// 账本整块 memo：`groups` / `counts` 在 main.jsx 里已经 useMemo，回调也改成稳定引用，
+// 于是自动刷新、提示条、命令面板这类无关状态变化不会再重渲染整列记录。
+export const CommandLedger = memo(function CommandLedger({
   open,
   onToggle,
   onOpen,
@@ -1274,4 +1284,4 @@ export function CommandLedger({
       </div>
     </section>
   );
-}
+});
