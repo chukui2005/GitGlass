@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.6.5](https://github.com/chukui2005/GitGlass/compare/v0.6.3...v0.6.5) (2026-11-19)
+
+> 这是自 v0.6.3 之后的第一个稳定版。中间经过 5 个 beta（`0.6.4-beta.1/2`、`0.6.5-beta.1/2/3`），下面按「用户能感知的变化」归并，不列 beta 编号。
+
+### 视觉：整套换成 dbx 的设计语言
+
+* 主按钮改为近黑实心（`#171717`），品牌蓝只保留给链接、选中标记、Diff 强调与复选框；全页同一时刻最多 1 个实心按钮
+* 中性色板：画布 `#fff`、侧栏 `#fafafa`、hover `#f5f5f5`、边框 `#e5e5e5` 发丝线、文字 `#0a0a0a` / 次级 `#737373`
+* 字号三档 token（正文 13 / 次级 12 / 辅助 11），侧栏文件行 32→**26px**、提交行 44→**38px**、账本单行 52→**32px**
+* 命令账本展开态改为两行结构：意图 + 等宽命令 / 结果 · 退出码 · 耗时 · 时间 · 来源
+* 面板分割条由 8px 灰条重做为 **1px 发丝线 + 9px 命中区**：hover 2px 灰、拖拽 2px 近黑、双击重置、←/→ 微调、宽度持久化
+* 通知横幅去掉通栏染色，改为白底 + 左侧 2px 色条（文字对比度 3.2:1 → 4.6:1）
+* 空状态右栏不再显示整套禁用的提交表单，改为引导块
+* Diff 文件头由三行压成一行面包屑，重命名显示 `旧路径 → 新路径`
+* 模态与输入控件：10px 圆角 + 轻阴影、30px 高、`#a1a1a1` 焦点环（去掉蓝色外发光）
+
+### 性能
+
+* **自动刷新修好了整类漏报**：`fs.watch` 在 `refs/heads` 上只报裸文件名，旧逻辑丢弃了所有分支与远端 ref 的变化（约 1200 个事件 → 0 次通知）。现在按目录分类，事件合并为首事件立即 + 800ms 尾随 + 2s 上限；外部 `git add` / `commit` / `checkout -b` 的界面更新从约 1.0–1.2s 降到 **165–195ms**
+* 读命令只静默 `index` 事件，`head` / `refs` 保持即时上报；空闲时不再自触发刷新（4 秒内 0 次事件、账本 0 增长）
+* 命令账本不再整列重渲染：记录对象身份复用 + 记忆化 + 稳定回调，一次无关 App 重渲染的字段读取从 **3600 次降到 0**
+* 更新服务挪到窗口创建之后，窗口不再等待 `updater.restore()` 这类可能耗时数秒的逻辑
+* **安装包 113.6 → 102.1 MB**、便携 ZIP 151.2 → 135.4 MB、解压后 384.5 → 310.9 MB：只保留 `zh-CN`/`en-US` 语言包、剔除 Vite 已打包的渲染层依赖、排除 sourcemap；`app.asar` 27.7 MB → 1.8 MB
+
+### 工程质量（不改变产品行为）
+
+* ESLint flat config（0 error / 0 warning）、`tsc --checkJs --noEmit`（0 error）、vitest 覆盖率门槛 50%，三项进入 CI；当前覆盖率 75.03 / 69.71 / 71.95 / 77.64
+* 4 个测试文件里 32 例「读源码字符串」的 UI 断言改为 `@testing-library/react` 真渲染，纯 CSS 断言收进 `tests/ui/style-contracts.test.cjs`；8 个真实 Electron 探针保留；用例 274 → 339
+* `src/main.jsx` 2932 → **1437 行**，拆出 `use-history-review` / `use-safety-plans` / `use-remote-overview` / `use-panel-resize` 四个 hook 与 `workbench-ui.jsx`（26 个展示组件）
+* `dependencies` 只剩主进程真正 `require` 的 `electron-updater` 与 `semver`
+* 新增 `npm run report:size` / `report:startup` 与 `docs/size-and-performance.md`，体积与启动可复测
+
+### 修复
+
+* 获取远程 / 切换分支的计划面板不再误显示「安全：创建救援分支」风险标签
+* 已暂存区在加载中「取消暂存」不再可点
+* `compare` 结果包含二进制文件时，「结果中包含二进制文件」提示不再丢失
+* 发版脚本支持显式预发布版本号（`npm run release -- 0.6.5-beta.1`）
+* 修掉 Windows 换行（CRLF）下 `CHANGELOG.md` 重复写入 `# Changelog` 标题的缺陷
+
+### 已知问题（下一版修）
+
+* 窗口每次启动都是 1500×940，且不记忆用户调整后的尺寸
+* 「工作区」中间栏在未选中文件时显示一列**不可点击**的提交记录（历史交互请用「历史审查」）
+* Diff 文件头没有 `+N −M` 统计
+* 合并/变基中的状态横幅仍是整行高度
+
 ## [0.6.5-beta.3](https://github.com/chukui2005/GitGlass/compare/v0.6.5-beta.2...v0.6.5-beta.3) (2026-11-19)
 
 ### Performance
