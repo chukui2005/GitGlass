@@ -1,14 +1,10 @@
-const { execFileSync } = require('node:child_process')
 const path = require('node:path')
-const electronPath = require('electron')
+
+const { runProbe } = require(path.join(__dirname, '..', 'support', 'probe-runner.cjs'))
 
 describe('V0.5.6 history workspace width', () => {
   it('keeps the complete history workbench within the real 1024px viewport', () => {
-    const probe = path.join(__dirname, '..', 'support', 'history-workspace-layout.cjs')
-    const output = execFileSync(electronPath, [probe], { encoding: 'utf8', timeout: 90_000, windowsHide: true })
-    const line = output.split(/\r?\n/).find((entry) => entry.startsWith('[LAYOUT] '))
-    expect(line).toBeTruthy()
-    const layouts = JSON.parse(line.slice('[LAYOUT] '.length))
+    const layouts = JSON.parse(runProbe('history-workspace-layout.cjs', '[LAYOUT] '))
     expect(layouts.map((entry) => entry.viewport)).toEqual([1024, 1280])
     for (const entry of layouts) {
       const label = `${entry.viewport}px`

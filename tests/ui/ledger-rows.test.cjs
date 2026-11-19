@@ -1,27 +1,12 @@
-const { execFileSync } = require('node:child_process')
 const path = require('node:path')
 
 // 探针在真实 Electron 窗口里加载构建产物：账本两行结构、顶栏三档按钮、空状态主按钮都必须
 // 在真实布局下成立（字号取自 computed style，横向溢出来自 scrollWidth）。
-function runProbe() {
-  const root = path.join(__dirname, '..', '..')
-  const environment = { ...process.env }
-  // ELECTRON_RUN_AS_NODE 会让 electron 以纯 Node 启动，探针拿不到 app/BrowserWindow。
-  delete environment.ELECTRON_RUN_AS_NODE
+const { buildApplication, runElectronProbe } = require(path.join(__dirname, '..', 'support', 'probe-runner.cjs'))
 
-  // 始终用当前源码构建，避免读到本机过期的被忽略 dist/。
-  execFileSync(
-    process.execPath,
-    [path.join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'],
-    { cwd: root, env: { ...environment, NODE_ENV: 'production' }, windowsHide: true, timeout: 90_000 },
-  )
-  return execFileSync(require('electron'), [path.join(__dirname, '..', 'support', 'ledger-rows.cjs')], {
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 120_000,
-    windowsHide: true,
-    env: environment,
-  })
+function runProbe() {
+  buildApplication()
+  return runElectronProbe('ledger-rows.cjs', { marker: '[LEDGER-ROWS] ' })
 }
 
 describe('PR5 字号层级与按钮体系（真实窗口）', () => {

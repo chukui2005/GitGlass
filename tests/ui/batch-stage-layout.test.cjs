@@ -1,9 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
 
-const electronPath = require('electron')
-const probe = path.join(__dirname, '..', 'support', 'batch-stage-layout.cjs')
+const { runProbe } = require(path.join(__dirname, '..', 'support', 'probe-runner.cjs'))
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
 
@@ -11,10 +9,7 @@ let layout
 
 function readLayout() {
   if (layout) return layout
-  const stdout = execFileSync(electronPath, [probe], { encoding: 'utf8', timeout: 90_000, windowsHide: true })
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('[LAYOUT] '))
-  expect(line).toBeTruthy()
-  layout = JSON.parse(line.slice('[LAYOUT] '.length))
+  layout = JSON.parse(runProbe('batch-stage-layout.cjs', '[LAYOUT] '))
   return layout
 }
 

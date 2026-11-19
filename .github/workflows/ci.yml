@@ -29,12 +29,13 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Run tests
-        run: npm test
       - name: Lint
         run: npm run lint
       - name: Type-check
         run: npm run typecheck
+      # One test run, not two: `vitest run --coverage` executes the same suite as
+      # `npm test`, and running it twice doubled both the wall time and the
+      # exposure to the Electron-probe flakes that only show up under load.
       - name: Run tests with coverage
         run: npm run test:coverage
       - name: Build application
