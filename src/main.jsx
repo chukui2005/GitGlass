@@ -1163,7 +1163,10 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
   );
 }
 
-function App() {
+// Exported so the UI tests can mount the real workbench with a stubbed
+// `window.gitglass` bridge instead of asserting on this file's source text.
+// See tests/support/render-app.mjs.
+export function App() {
   const updates = useAppUpdates();
   const [historyMode, setHistoryMode] = useState(false);
   const [historySelected, setHistorySelected] = useState(null);
@@ -2984,4 +2987,7 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+// 生产环境里 index.html 一定有 #root；import 时的守卫只是让测试可以直接 import
+// 本模块（挂载到自己的容器里），不会顺带渲染一个真实应用的第二个实例。
+const rootElement = document.getElementById("root");
+if (rootElement) createRoot(rootElement).render(<App />);
