@@ -132,7 +132,9 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .recent-repositories-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;display:grid;width:min(360px,calc(100vw - 32px));padding:5px;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-modal);-webkit-app-region:no-drag}
 .recent-repository{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:7px 8px;border-radius:var(--radius);background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .recent-repository:hover,.recent-repository:focus,.recent-repository:focus-visible{background:var(--hover);outline:0}
-.recent-repository.current{box-shadow:inset 2px 0 var(--blue)}
+/* 当前项与侧栏选中行同一观感：整行浅底 + 左侧 2px 蓝条，hover 再深一级。 */
+.recent-repository.current{background:var(--hover);box-shadow:inset 2px 0 var(--blue)}
+.recent-repository.current:hover,.recent-repository.current:focus,.recent-repository.current:focus-visible{background:var(--active)}
 .recent-repository.missing{color:var(--faint)}
 .recent-repository-main{display:grid;gap:1px;min-width:0}
 .recent-repository-name{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;font-size:var(--font-secondary);font-weight:600;text-overflow:ellipsis;white-space:nowrap}

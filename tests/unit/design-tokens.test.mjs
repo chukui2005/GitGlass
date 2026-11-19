@@ -109,7 +109,14 @@ describe('Design tokens: dbx 中性色板', () => {
     expect(declarations(styles, '.recent-repository:hover,.recent-repository:focus,.recent-repository:focus-visible')).toMatchObject({
       background: 'var(--hover)',
     })
-    expect(declarations(styles, '.recent-repository.current')['box-shadow']).toBe('inset 2px 0 var(--blue)')
+    // 当前项与侧栏选中行同观感：整行浅底 + 左侧 2px 蓝条，hover 深一级。
+    expect(declarations(styles, '.recent-repository.current')).toMatchObject({
+      background: 'var(--hover)',
+      'box-shadow': 'inset 2px 0 var(--blue)',
+    })
+    expect(
+      declarations(styles, '.recent-repository.current:hover,.recent-repository.current:focus,.recent-repository.current:focus-visible'),
+    ).toMatchObject({ background: 'var(--active)' })
     expect(declarations(styles, '.recent-repository-badge')).toMatchObject({ color: 'var(--blue)' })
     // 路径/失效提示统一到 11px，失效项用 --faint（只做装饰性弱化）。
     expect(declarations(styles, '.recent-repository-path')['font']).toBe('var(--font-aux) var(--mono)')
