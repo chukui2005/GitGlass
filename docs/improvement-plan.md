@@ -23,15 +23,20 @@
 | 7 | `refreshAll` 生成了 `refresh-*` 序号却从不比较，只有历史查询序号生效；快速连点会出现旧响应覆盖新状态 | `src/main.jsx:1376,1391-1398` | 与 `historyQuerySequence` 同款：响应返回时比对序号，丢过期结果 | ✅（序号已比较；loading 兜底未做）
 | 8 | 处于 merge / rebase / cherry-pick 中途的仓库没有识别，用户在应用里看到的"脏工作区"提示会误导 | 全局（`.git/MERGE_HEAD` 等均未读取） | `state()` 增加 `operation: 'merge' \| 'rebase' \| null`，UI 明确提示"请在终端完成或中止该操作" | ✅
 
-## 0.6.4 / 0.6.5 路线（用户已确认，2026-11-18）
+## 0.6.4 / 0.6.5 路线（用户已确认，2026-11-18；2026-11-19 调整口径）
 
 视觉基准正式定为 **dbx**（源码在本机 `D:\DBX\dbx`，UI 在 `apps/desktop/src`，token 在 `apps/desktop/src/styles/tokens.css`）。顺序：**先视觉，再工程**。
+
+> **版本口径调整（2026-11-19，用户指令）**：不再发 `0.6.4` 稳定版；`0.6.4-beta.1` / `0.6.4-beta.2` 保留在 Releases 里作为历史，后续所有 beta 都用 `0.6.5-beta.x`，**稳定版直接是 `0.6.5`**。
 
 | 版本 | 范围 | 退出条件 |
 | --- | --- | --- |
 | **0.6.4-beta.1** ✅ | 视觉对齐 dbx：设计 token（中性灰 + 近黑主按钮 + 4/6/8px 圆角）、顶栏与按钮度量、侧栏与列表密度、分割条重做、账本与模态、空状态 | 三档宽度（1440/1280/1024）截图无溢出、字号层级与 dbx 一致、分割条 1px 视觉 + 宽命中区 |
-| **0.6.4-beta.2** ✅ | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
-| **0.6.5-beta.1** | **A 半 ✅（2026-11-19）** 测试现代化：引入 `@testing-library/react`（**允许新增 devDependency**），把 32 例"读源码字符串"的 UI 断言换成真渲染；**B 半 ✅（2026-11-19）** 结构债：`main.jsx` 3027 → **1441 行**，拆出 history / safety / remote / panel 四个 hook 与 `workbench-ui.jsx` | 两项都已达成：UI 测试真渲染（删一行文案不再误红）；`main.jsx` 在 1500 行以内，四项覆盖率门槛仍绿 |
+| **0.6.4-beta.2** ✅ | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
+| **0.6.5-beta.1** ✅ | A 半（测试现代化）：引入 `@testing-library/react`，32 例"读源码字符串"的 UI 断言换成真渲染；视觉遗留 6 条；更新服务延后建窗；依赖归类 | UI 测试真渲染、6 条视觉问题清零、`window-created` −34~38 ms |
+| **0.6.5-beta.2** ✅ | B 半（结构债）：`main.jsx` 3027 → **1441 行**，拆出 history / safety / remote / panel 四个 hook 与 `workbench-ui.jsx`；`main.jsx` 退出覆盖率排除 | `main.jsx` < 1500 行；覆盖率四项仍 ≥50%（实测 75.03/69.71/71.95/77.64）；lint 0 warning |
+| **0.6.5-beta.3** | 运行时：`.git` watcher 降噪（大仓库事件合并）、命令账本渲染成本（先测量再决定是否虚拟化） | 大仓库里一次 fetch/commit 的通知数不随 ref 数增长；账本 300 条记录的渲染开销有改前/改后数字 |
+| **0.6.5**（稳定版） | 上述全部 + 用户验收 | 装上后视觉与行为验收通过；Latest 从 `v0.6.3` 前进到 `v0.6.5` |
 | 后续（未排期） | 包体积与性能（见下节） | 有测量基线，且安装包/内存有可量化下降 |
 
 ### 0.6.4-beta.1 交付记录（2026-11-18）
@@ -121,14 +126,16 @@
 - **偏离原计划的两处，需要评审确认**：① 只抽 3 个 hook 无法把 `main.jsx` 压到 1500 行以内（三个 hook 只能带走约 400 行，剩下的是 JSX 与展示组件），所以额外拆了 `workbench-ui.jsx` 与 `use-panel-resize.js`；② `remotePlan` 的 prepare/confirm 放进 `use-remote-overview.js` 而不是 `use-safety-plans.js`，因为准备 fetch 需要 overview、计划面板也要显示上游与领先/落后，拆开会让两个 hook 互相依赖。
 - 三个"读源码"的测试跟着代码走：`resizable-workspace-panels`（标记 → `workbench-ui.jsx`，拖拽/持久化 → `use-panel-resize.js`）、`history-row-layout`（提交行 → `workbench-ui.jsx`）、`copy-polish`（同时读两个渲染层文件，文案搬家不再误红）。
 
-### 0.6.4-beta.1 遗留的视觉问题（下一轮，不阻塞本次 beta）
+### 0.6.4-beta.1 遗留的视觉问题（✅ 6 条已在 0.6.5-beta.1 全部修完）
 
-1. 成功/失败横幅仍是**通栏浅色 tint**，dbx 没有这种整行染色；建议改白底 + 左侧 2px 色条。
-2. 空状态下右侧 Inspector 仍渲染完整的「创建提交」表单（全部禁用），没有仓库时没有意义，应换成引导块。
-3. Diff 文件头仍是三行（文件 / 原文件 / 新文件），比 dbx 的一行面包屑松。
-4. 禁用按钮两套写法：全局 `opacity:.5` 与 `.remote-actions button:disabled` 的 `--sunken` + `--faint`，视觉深浅不一致。
-5. 最近仓库当前项只有左条 + 徽标，没有整行浅底（与侧栏选中行不完全一致，菜单场景可接受）。
-6. `.app-notice-pin` 用 `currentColor` 描边，若要对齐 dbx 的 ghost 观感应改 `--line` 描边 + `--text` 文字。
+1. ✅ 成功/失败横幅：白底 + 左侧 2px 色条（`--green` / `--red`），正文用 ink 色。
+2. ✅ 空状态右栏：改渲染引导块（标题 + 说明 + 「打开仓库」），不再显示整套禁用的提交表单。
+3. ✅ Diff 文件头：三行压成一行面包屑，重命名显示 `旧 → 新`。
+4. ✅ 禁用态：统一成一套公式（`--sunken` 底 + `--line` 边框 + `--faint` 文字 + `opacity:1`），低权重按钮保留 `opacity:.5` 兜底。
+5. ✅ 最近仓库当前项：整行 `--hover` 底，hover 深到 `--active`。
+6. ✅ `.app-notice-pin`：`--line` 描边 + `--text` 文字 + hover 浅底。
+
+未做：Diff 文件头的 `+N −M` 统计——现有数据里没有（`presentDiff` 只有原始 patch，`selected` 只有 path/area/status），自己数 patch 行在截断/二进制时会失真，走 `git diff --numstat` 又会多一条系统读取记录，留待决策。
 
 ### 视觉对齐的取值来源（dbx `tokens.css` 浅色主题）
 
