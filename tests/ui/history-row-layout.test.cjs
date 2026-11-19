@@ -1,9 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
 
-const electronPath = require('electron')
-const probe = path.join(__dirname, '..', 'support', 'history-row-layout.cjs')
+const { runProbe } = require(path.join(__dirname, '..', 'support', 'probe-runner.cjs'))
 // 0.6.5 拆完 main.jsx 之后，提交行组件住在 workbench-ui.jsx；断言跟着代码走。
 const panels = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'workbench-ui.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
@@ -13,10 +11,7 @@ let layout
 
 function readLayout() {
   if (layout) return layout
-  const stdout = execFileSync(electronPath, [probe], { encoding: 'utf8', timeout: 90_000, windowsHide: true })
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('[LAYOUT] '))
-  expect(line).toBeTruthy()
-  layout = JSON.parse(line.slice('[LAYOUT] '.length))
+  layout = JSON.parse(runProbe('history-row-layout.cjs', '[LAYOUT] '))
   return layout
 }
 

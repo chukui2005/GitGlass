@@ -19,7 +19,6 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(checks.jobs.quality.steps.filter((step) => step.run).map((step) => step.run))
       .toEqual([
         'npm ci',
-        'npm test',
         'npm run lint',
         'npm run typecheck',
         'npm run test:coverage',
@@ -44,9 +43,9 @@ describe('GitHub CI/CD workflow configuration', () => {
     expect(ci).toContain('runs-on: windows-2022')
     expect(ci).toContain('node-version: 22.12.0')
     expect(ci).toContain('run: npm ci')
-    expect(ci).toContain('run: npm test')
     expect(ci).toContain('run: npm run lint')
     expect(ci).toContain('run: npm run typecheck')
+    // `test:coverage` runs the same suite as `npm test`; CI runs it once.
     expect(ci).toContain('run: npm run test:coverage')
     expect(ci).toContain('run: npm run build')
   })

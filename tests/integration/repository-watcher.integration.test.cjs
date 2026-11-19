@@ -8,16 +8,35 @@ const { resolveGitDirectory } = require('../../electron/repository-service.cjs')
 
 let cwd
 let extraDirectory
+
+// Windows keeps a directory busy until every fs.watch handle on it is released,
+// and a watcher that is still attached (for example after a failed assertion)
+// makes the cleanup itself fail. Retry instead of masking the real failure with
+// an EBUSY from rmdir.
+function removeDirectory(directory) {
+  if (!directory) return
+  try {
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  } catch {
+    // Best effort: a leftover temp directory must never fail an otherwise green run.
+  }
+}
+
 afterEach(() => {
-  if (cwd) fs.rmSync(cwd, { recursive: true, force: true })
-  if (extraDirectory) fs.rmSync(extraDirectory, { recursive: true, force: true })
+  removeDirectory(cwd)
+  removeDirectory(extraDirectory)
   cwd = null
   extraDirectory = null
 })
 
+// Integration tests spawn real Git processes, and the coverage run instruments
+// every module they load. The 5 s default is not enough on a cold CI runner: one
+// timed-out test used to skip its cleanup and leave a watched directory behind.
+const TEST_TIMEOUT_MS = 30_000
+
 // Pending filesystem events are collected by polling; a fixed sleep would be
 // flaky on a cold CI runner.
-async function waitFor(predicate, label, timeout = 5000) {
+async function waitFor(predicate, label, timeout = 10_000) {
   const deadline = Date.now() + timeout
   let last
   for (;;) {
@@ -30,7 +49,7 @@ async function waitFor(predicate, label, timeout = 5000) {
 
 // Poll until the watcher has been silent for `quietMs`; used instead of a fixed
 // sleep to assert how many notifications a burst produced.
-async function waitForQuiet(events, quietMs = 1000, timeout = 5000) {
+async function waitForQuiet(events, quietMs = 1000, timeout = 10_000) {
   const deadline = Date.now() + timeout
   let lastCount = events.length
   let lastChange = Date.now()
@@ -96,21 +115,26 @@ describe('repository watcher against real Git (integration)', () => {
     } finally {
       watcher.close()
     }
-  })
+  }, TEST_TIMEOUT_MS)
 
   it('reports a branch switch and releases the watch on close()', async () => {
     const { run, gitDirectory } = await repositoryFixture()
     const { watcher, events } = startWatcher(gitDirectory)
-    await run(['checkout', '-b', 'feature/watched'])
-    await waitFor(() => events.length > 0, '切换分支触发一次 repo:changed')
-    watcher.close()
+    try {
+      await run(['checkout', '-b', 'feature/watched'])
+      await waitFor(() => events.length > 0, '切换分支触发一次 repo:changed')
+    } finally {
+      // Always release the handle: without this, a failed assertion above leaves
+      // .git watched and the cleanup cannot delete the directory on Windows.
+      watcher.close()
+    }
     expect(() => watcher.close()).not.toThrow()
     // The temporary repository (including .git) must be removable afterwards,
     // which fails on Windows while a watcher still holds a handle on it.
-    fs.rmSync(cwd, { recursive: true, force: true })
+    fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     expect(fs.existsSync(cwd)).toBe(false)
     cwd = null
-  })
+  }, TEST_TIMEOUT_MS)
 
   it('coalesces a burst of 200 new refs into at most three notifications', async () => {
     const { gitDirectory, sha } = await repositoryFixture()
@@ -130,7 +154,7 @@ describe('repository watcher against real Git (integration)', () => {
     } finally {
       watcher.close()
     }
-  })
+  }, TEST_TIMEOUT_MS)
 
   it('reports a fetch that updates 200 remote-tracking refs', async () => {
     const { run, gitDirectory, sha } = await repositoryFixture()
@@ -160,5 +184,5 @@ describe('repository watcher against real Git (integration)', () => {
     } finally {
       watcher.close()
     }
-  })
+  }, TEST_TIMEOUT_MS)
 })
