@@ -6,7 +6,7 @@ const { RepositoryService, isPath, resolveGitDirectory } = require('./repository
 const { RepositoryWatcher } = require('./repository-watcher.cjs')
 const { OperationGate } = require('./operation-gate.cjs')
 const { UpdateStore } = require('./update-store.cjs')
-const { UpdateService } = require('./update-service.cjs')
+const { UpdateService, pendingUpdateState } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
 const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
 const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
@@ -43,8 +43,18 @@ app.on('second-instance', () => {
 const commandService = new GitCommandService()
 const repository = new RepositoryService(commandService, () => repoPath)
 const operationGate = new OperationGate()
+// Update service state. Constructing it needs `require('electron-updater')` plus an
+// NsisUpdater instance (~35-48 ms measured), so it happens only after the window has
+// started loading instead of before `new BrowserWindow()`: window creation no longer
+// waits for update plumbing (measured 34-38 ms earlier; first paint is unchanged, see
+// docs/size-and-performance.md 3.1). Requests that arrive earlier queue on
+// `updatesReady`, and `update:state` answers with pendingUpdateState() until then.
 let updates
+/** @type {Promise<any> | null} */
+let updatesReady = null
+let quitting = false
 let updateStore
+const UPDATES_NOT_STARTED = '更新服务正在准备，请稍候。'
 
 function assertMainFrame(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
@@ -89,11 +99,28 @@ function handleUpdate(channel, handler) {
   })
 }
 
-handleUpdate('update:state', () => updates.getState())
-handleUpdate('update:check', () => updates.check())
-handleUpdate('update:download', () => updates.download())
-handleUpdate('update:automatic', (value) => updates.setAutomatic(value))
-handleUpdate('update:install', (session) => updates.install(session))
+// Update requests must not touch the service before it exists. `update:state` answers
+// with the placeholder so the renderer always gets a complete state; every other action
+// queues on `updatesReady` (or fails fast when the service was never started).
+function runUpdate(action) {
+  return async (...args) => {
+    if (!updatesReady) throw new Error(UPDATES_NOT_STARTED)
+    const service = await updatesReady
+    return action(service, ...args)
+  }
+}
+
+function broadcastUpdateState(state) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const next = state ?? updates?.getState()
+  if (next) mainWindow.webContents.send('update:changed', next)
+}
+
+handleUpdate('update:state', () => (updates ? updates.getState() : pendingUpdateState(app.getVersion())))
+handleUpdate('update:check', runUpdate((service) => service.check()))
+handleUpdate('update:download', runUpdate((service) => service.download()))
+handleUpdate('update:automatic', runUpdate((service, value) => service.setAutomatic(value)))
+handleUpdate('update:install', runUpdate((service, session) => service.install(session)))
 handleUpdate('update:resume', () => {
   const resume = updateStore.value.resume
   return resume && typeof resume.commitMessage === 'string'
@@ -101,6 +128,43 @@ handleUpdate('update:resume', () => {
     : null
 })
 handleUpdate('update:resume-consumed', () => { updateStore.save({ resume: null }); return { ok: true } })
+
+// Started only once the window has begun loading. `require('electron-updater')` plus the
+// NsisUpdater instance costs 35-48 ms, and that used to sit between app.whenReady() and
+// `new BrowserWindow()`, pushing window creation back by the same amount. initialize() is
+// deliberately not awaited: `updatesReady` is what every update:* request queues on.
+function startUpdateService() {
+  if (updates || quitting || !updateStore) return
+  const supported = app.isPackaged && process.platform === 'win32' && process.arch === 'x64' && fs.existsSync(path.join(process.resourcesPath, 'gitglass-installed'))
+  const service = new UpdateService({
+    updater: supported ? createWindowsUpdater({ NsisUpdater: require('electron-updater').NsisUpdater, app }) : null,
+    store: updateStore,
+    version: app.getVersion(),
+    supported,
+    reason: supported ? '' : !app.isPackaged ? '开发模式不检查更新。请使用 Windows 安装版体验应用内更新。' : '此版本暂不支持原地更新，请安装 Windows x64 安装版以启用应用内更新。',
+    gate: operationGate,
+    saveSession: (session) => {
+      if (!session || typeof session.commitMessage !== 'string' || session.commitMessage.length > 65536 || typeof session.historyMode !== 'boolean') throw new Error('无法保存当前草稿，更新未开始。')
+      updateStore.save({ resume: { repoPath, commitMessage: session.commitMessage, historyMode: session.historyMode } })
+    },
+    clearSession: () => updateStore.save({ resume: null }),
+  })
+  updates = service
+  // Registered before start(): initialize() can emit a 'ready' state while restoring a
+  // cached download, and the renderer has to see it.
+  service.on('state', broadcastUpdateState)
+  // start() never rejects (it degrades to an unavailable state), so updatesReady cannot
+  // leave an unhandled rejection behind; the catch is only a belt-and-braces guard.
+  updatesReady = service.start()
+    .catch(() => {})
+    .then(() => {
+      startupProbe('updates-ready')
+      // initialize() only emits when it restores a cached download; otherwise the renderer
+      // is still on pendingUpdateState(), so push the settled state once.
+      broadcastUpdateState()
+      return service
+    })
+}
 
 async function openRepository(candidate) {
   const result = await openRepositoryPath({
@@ -189,25 +253,6 @@ if (primaryInstance) app.whenReady().then(async () => {
   // Otherwise fall back to the most recent repository that still exists on disk.
   if (!repoPath) repoPath = recentRepositories.list().find((candidate) => fs.existsSync(candidate)) ?? null
   startWatching(repoPath)
-  const supported = app.isPackaged && process.platform === 'win32' && process.arch === 'x64' && fs.existsSync(path.join(process.resourcesPath, 'gitglass-installed'))
-  updates = new UpdateService({
-    updater: supported ? createWindowsUpdater({ NsisUpdater: require('electron-updater').NsisUpdater, app }) : null,
-    store: updateStore,
-    version: app.getVersion(),
-    supported,
-    reason: supported ? '' : !app.isPackaged ? '开发模式不检查更新。请使用 Windows 安装版体验应用内更新。' : '此版本暂不支持原地更新，请安装 Windows x64 安装版以启用应用内更新。',
-    gate: operationGate,
-    saveSession: (session) => {
-      if (!session || typeof session.commitMessage !== 'string' || session.commitMessage.length > 65536 || typeof session.historyMode !== 'boolean') throw new Error('无法保存当前草稿，更新未开始。')
-      updateStore.save({ resume: { repoPath, commitMessage: session.commitMessage, historyMode: session.historyMode } })
-    },
-    clearSession: () => updateStore.save({ resume: null }),
-  })
-  updates.on('state', (state) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:changed', state)
-  })
-  await updates.initialize()
-  startupProbe('updates-ready')
   // Windows: the 48px renderer top bar doubles as the title bar while the
   // system keeps drawing native minimize/maximize/close through the Window
   // Controls Overlay (Snap Layouts included). macOS keeps its traffic lights.
@@ -229,11 +274,17 @@ if (primaryInstance) app.whenReady().then(async () => {
   const devUrl = process.env.VITE_DEV_SERVER_URL
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
-  if (devUrl) mainWindow.loadURL(devUrl)
-  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+  // The update service starts after the page has begun loading (loadFile resolves at
+  // did-finish-load, rejects on did-fail-load): either way nothing may leave update:*
+  // requests queued forever.
+  const pageLoaded = devUrl ? mainWindow.loadURL(devUrl) : mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+  pageLoaded.then(startUpdateService, startUpdateService)
+  // 兜底：万一页面既不成功也不失败地卡住，10 秒后照样把更新服务拉起来，
+  // 否则 update:* 请求会一直停在「正在准备更新服务」。
+  setTimeout(startUpdateService, 10_000).unref()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow.show() })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
-app.on('will-quit', () => { updates?.dispose(); stopWatching() })
+app.on('will-quit', () => { quitting = true; updates?.dispose(); stopWatching() })
 
 module.exports = { commandService, repository, isPath }
