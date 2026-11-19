@@ -4,6 +4,10 @@ const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "..", "src", "main.jsx"), "utf8");
+// 0.6.5 拆完 main.jsx 之后：分隔条的标记在 workbench-ui.jsx，拖拽/持久化实现在
+// use-panel-resize.js。断言跟着代码走，仍然盯同一批行为。
+const panels = fs.readFileSync(path.join(__dirname, "..", "..", "src", "workbench-ui.jsx"), "utf8");
+const panelHook = fs.readFileSync(path.join(__dirname, "..", "..", "src", "use-panel-resize.js"), "utf8");
 const model = fs.readFileSync(path.join(__dirname, "..", "..", "src", "panel-resize.js"), "utf8");
 const styles = fs.readFileSync(path.join(__dirname, "..", "..", "src", "styles.css"), "utf8");
 const { declarations } = require(path.join(__dirname, "..", "support", "css-inspect.cjs"));
@@ -32,21 +36,22 @@ describe("Resizable workbench panels", () => {
   }, 120_000);
 
   it("exposes pointer, double-click and keyboard accessible separators for both side panels", () => {
-    expect(source).toContain('role="separator"');
-    expect(source).toContain('aria-orientation="vertical"');
-    expect(source).toContain("aria-valuemin={limits.min}");
-    expect(source).toContain("aria-valuemax={limits.max}");
-    expect(source).toContain("aria-valuenow={value}");
-    expect(source).toContain('onPointerDown={(event) => onPointerDown(side, event)}');
-    expect(source).toContain("onDoubleClick={() => onDoubleClick(side)}");
-    expect(source).toContain('onKeyDown={(event) => onKeyDown(side, event)}');
+    expect(panels).toContain('role="separator"');
+    expect(panels).toContain('aria-orientation="vertical"');
+    expect(panels).toContain("aria-valuemin={limits.min}");
+    expect(panels).toContain("aria-valuemax={limits.max}");
+    expect(panels).toContain("aria-valuenow={value}");
+    expect(panels).toContain('onPointerDown={(event) => onPointerDown(side, event)}');
+    expect(panels).toContain("onDoubleClick={() => onDoubleClick(side)}");
+    expect(panels).toContain('onKeyDown={(event) => onKeyDown(side, event)}');
+    // 两个工作区（历史 / 工作区）各渲染一对分隔条。
     expect(source).toContain('side="left"');
     expect(source).toContain('side="right"');
     // 拖拽使用 pointer capture、rAF 节流和全屏 overlay，失焦也能收尾。
-    expect(source).toContain("setPointerCapture?.(pointerId)");
-    expect(source).toContain("requestAnimationFrame(apply)");
-    expect(source).toContain("panel-resize-overlay");
-    expect(source).toContain('window.addEventListener("blur", finish, { once: true })');
+    expect(panelHook).toContain("setPointerCapture?.(pointerId)");
+    expect(panelHook).toContain("requestAnimationFrame(apply)");
+    expect(panelHook).toContain("panel-resize-overlay");
+    expect(panelHook).toContain('window.addEventListener("blur", finish, { once: true })');
   });
 
   it("keeps the dimensions bounded, remembers them and clamps them when the window narrows", () => {
@@ -55,13 +60,13 @@ describe("Resizable workbench panels", () => {
     expect(model).toContain("min: 190, max: 420, default: 224");
     expect(model).toContain("min: 240, max: 420, default: 296");
     expect(model).toContain("export const PANEL_KEYBOARD_STEP = 8");
-    expect(source).toContain("localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, serializePanelWidths(panelWidths))");
-    expect(source).toContain('window.addEventListener("resize", scheduleConstrain)');
-    expect(source).toContain("constrainPanelWidths(current, workspaceWidth)");
+    expect(panelHook).toContain("localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, serializePanelWidths(panelWidths))");
+    expect(panelHook).toContain('window.addEventListener("resize", scheduleConstrain)');
+    expect(panelHook).toContain("constrainPanelWidths(current, workspaceWidth)");
     // 挂载后先夹紧一次，并用 ResizeObserver 覆盖工作区自身的尺寸变化。
-    expect(source).toContain("new ResizeObserver(scheduleConstrain)");
-    expect(source).toContain("constrainPanels()");
-    expect(source).toContain("requestAnimationFrame(constrainPanels)");
+    expect(panelHook).toContain("new ResizeObserver(scheduleConstrain)");
+    expect(panelHook).toContain("constrainPanels()");
+    expect(panelHook).toContain("requestAnimationFrame(constrainPanels)");
   });
 
   it("draws a 1px hairline with a neutral 2px highlight and no gray bar or glow", () => {

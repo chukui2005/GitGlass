@@ -4,7 +4,8 @@ const { execFileSync } = require('node:child_process')
 
 const electronPath = require('electron')
 const probe = path.join(__dirname, '..', 'support', 'history-row-layout.cjs')
-const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.jsx'), 'utf8')
+// 0.6.5 拆完 main.jsx 之后，提交行组件住在 workbench-ui.jsx；断言跟着代码走。
+const panels = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'workbench-ui.jsx'), 'utf8')
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
 const { declarations } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
@@ -30,8 +31,8 @@ describe('V0.5.2 commit row layout', () => {
       expect(rule).toContain('grid-template-columns:minmax(0,1fr) auto')
     }
     // 行内只有两列：提交按钮 + 比较按钮，顺序固定。
-    expect(source).toContain('<div className={`history-row ${selected ? "selected" : ""}`}>')
-    expect(source).toContain('className="compare-pin"')
+    expect(panels).toContain('<div className={`history-row ${selected ? "selected" : ""}`}>')
+    expect(panels).toContain('className="compare-pin"')
     // 选中态覆盖整行，而不是只覆盖左侧按钮：整行浅底 + 左侧 2px 强调条。
     const selected = declarations(styles, '.history-row.selected')
     expect(selected).toMatchObject({ 'box-shadow': 'inset 2px 0 var(--blue)' })
