@@ -1,14 +1,18 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { spawn } = require('node:child_process')
 const { RepositoryWatcher } = require('../../electron/repository-watcher.cjs')
 const { GitCommandService } = require('../../electron/git-command-service.cjs')
 const { resolveGitDirectory } = require('../../electron/repository-service.cjs')
 
 let cwd
+let extraDirectory
 afterEach(() => {
   if (cwd) fs.rmSync(cwd, { recursive: true, force: true })
+  if (extraDirectory) fs.rmSync(extraDirectory, { recursive: true, force: true })
   cwd = null
+  extraDirectory = null
 })
 
 // Pending filesystem events are collected by polling; a fixed sleep would be
@@ -24,6 +28,34 @@ async function waitFor(predicate, label, timeout = 5000) {
   }
 }
 
+// Poll until the watcher has been silent for `quietMs`; used instead of a fixed
+// sleep to assert how many notifications a burst produced.
+async function waitForQuiet(events, quietMs = 1000, timeout = 5000) {
+  const deadline = Date.now() + timeout
+  let lastCount = events.length
+  let lastChange = Date.now()
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    if (events.length !== lastCount) {
+      lastCount = events.length
+      lastChange = Date.now()
+    } else if (Date.now() - lastChange >= quietMs) {
+      return
+    }
+  }
+}
+
+// 200 refs are written through one `git update-ref --stdin` process so the test
+// stays fast; Git still produces ~1200 filesystem events for them.
+function updateRefs(directory, lines) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['update-ref', '--stdin'], { cwd: directory, stdio: ['pipe', 'ignore', 'ignore'] })
+    child.on('error', reject)
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`update-ref --stdin exited ${code}`))))
+    child.stdin.end(lines.join('\n') + '\n')
+  })
+}
+
 async function repositoryFixture() {
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-watch-'))
   const commands = new GitCommandService()
@@ -36,22 +68,31 @@ async function repositoryFixture() {
   fs.writeFileSync(path.join(cwd, 'seed.txt'), 'seed\n')
   await run(['add', '--', 'seed.txt'])
   await run(['commit', '-m', 'chore: seed'])
-  return { run, gitDirectory: resolveGitDirectory(cwd) }
+  return { run, gitDirectory: resolveGitDirectory(cwd), sha: (await run(['rev-parse', 'HEAD'])).stdout.trim() }
+}
+
+function startWatcher(gitDirectory) {
+  const events = []
+  const watcher = new RepositoryWatcher()
+  expect(watcher.watch(gitDirectory, ({ reason }) => events.push({ reason, at: Date.now() }))).toBe(true)
+  return { watcher, events }
 }
 
 describe('repository watcher against real Git (integration)', () => {
   it('reports a commit executed by another Git process', async () => {
     const { run, gitDirectory } = await repositoryFixture()
-    expect(gitDirectory).toBeTruthy()
-    const reasons = []
-    const watcher = new RepositoryWatcher()
-    expect(watcher.watch(gitDirectory, ({ reason }) => reasons.push(reason))).toBe(true)
+    const { watcher, events } = startWatcher(gitDirectory)
     try {
+      const startedAt = Date.now()
       fs.writeFileSync(path.join(cwd, 'seed.txt'), 'changed from the terminal\n')
       await run(['add', '--', 'seed.txt'])
       await run(['commit', '-m', 'chore: external commit'])
-      await waitFor(() => reasons.length > 0, '提交触发一次 repo:changed')
-      expect(reasons.every((reason) => ['head', 'index', 'refs'].includes(reason))).toBe(true)
+      await waitFor(() => events.length > 0, '提交触发一次 repo:changed')
+      // Leading edge: the first report must not wait for the burst to finish.
+      expect(events[0].at - startedAt).toBeLessThan(1500)
+      expect(events.every(({ reason }) => ['head', 'index', 'refs'].includes(reason))).toBe(true)
+      // The trailing report merges index+refs+head into the strongest reason.
+      await waitFor(() => events.some(({ reason }) => reason === 'head'), '合并后上报 head')
     } finally {
       watcher.close()
     }
@@ -59,11 +100,9 @@ describe('repository watcher against real Git (integration)', () => {
 
   it('reports a branch switch and releases the watch on close()', async () => {
     const { run, gitDirectory } = await repositoryFixture()
-    const reasons = []
-    const watcher = new RepositoryWatcher()
-    watcher.watch(gitDirectory, ({ reason }) => reasons.push(reason))
+    const { watcher, events } = startWatcher(gitDirectory)
     await run(['checkout', '-b', 'feature/watched'])
-    await waitFor(() => reasons.length > 0, '切换分支触发一次 repo:changed')
+    await waitFor(() => events.length > 0, '切换分支触发一次 repo:changed')
     watcher.close()
     expect(() => watcher.close()).not.toThrow()
     // The temporary repository (including .git) must be removable afterwards,
@@ -71,5 +110,55 @@ describe('repository watcher against real Git (integration)', () => {
     fs.rmSync(cwd, { recursive: true, force: true })
     expect(fs.existsSync(cwd)).toBe(false)
     cwd = null
+  })
+
+  it('coalesces a burst of 200 new refs into at most three notifications', async () => {
+    const { gitDirectory, sha } = await repositoryFixture()
+    const { watcher, events } = startWatcher(gitDirectory)
+    try {
+      const lines = []
+      for (let index = 0; index < 200; index++) lines.push(`create refs/heads/bulk-${index} ${sha}`)
+      const startedAt = Date.now()
+      await updateRefs(cwd, lines)
+      await waitFor(() => events.length > 0, '200 个分支触发一次 repo:changed')
+      expect(events[0].at - startedAt).toBeLessThan(1500)
+      // Wait for the burst to go quiet, then assert the notification count is
+      // bounded: ~1200 raw filesystem events must not become 200 refreshes.
+      await waitForQuiet(events)
+      expect(events.length).toBeLessThanOrEqual(3)
+      expect(events.every(({ reason }) => reason === 'refs')).toBe(true)
+    } finally {
+      watcher.close()
+    }
+  })
+
+  it('reports a fetch that updates 200 remote-tracking refs', async () => {
+    const { run, gitDirectory, sha } = await repositoryFixture()
+    extraDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-watch-remote-'))
+    const remote = path.join(extraDirectory, 'remote.git')
+    const commands = new GitCommandService()
+    const runAt = async (directory, argv) => {
+      const record = await commands.run({ argv, intent: 'Fixture', source: 'background', cwd: directory })
+      expect(record.ok, `${argv.join(' ')}: ${record.stderr}`).toBe(true)
+      return record
+    }
+    await runAt(extraDirectory, ['init', '--bare', remote])
+    await run(['remote', 'add', 'origin', remote])
+    await run(['push', 'origin', 'main'])
+    const remoteLines = []
+    for (let index = 0; index < 200; index++) remoteLines.push(`create refs/heads/remote-${index} ${sha}`)
+    await updateRefs(remote, remoteLines)
+
+    const { watcher, events } = startWatcher(gitDirectory)
+    try {
+      const startedAt = Date.now()
+      await run(['fetch', 'origin'])
+      await waitFor(() => events.length > 0, 'fetch 触发一次 repo:changed')
+      expect(events[0].at - startedAt).toBeLessThan(1500)
+      await waitForQuiet(events)
+      expect(events.length).toBeLessThanOrEqual(3)
+    } finally {
+      watcher.close()
+    }
   })
 })

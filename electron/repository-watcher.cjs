@@ -7,7 +7,15 @@ const path = require('node:path')
 // rebase and stash are watched.
 const WATCHED_DIRECTORIES = ['', 'refs', 'refs/heads', 'logs']
 const DEBOUNCE_MS = 800
+// A stream of writes (a 200-ref fetch, a batch of branches) must not postpone the
+// notification forever: after this long the batch is reported even if it never
+// pauses.
+const MAX_WAIT_MS = 2000
 const SILENT_MS = 1500
+
+// The renderer treats `head` and `refs` as external changes and lets them through
+// its quiet window, so a merged batch must report the strongest reason it saw.
+const REASON_PRIORITY = { index: 1, refs: 2, head: 3 }
 
 const HEAD_ENTRIES = new Set(['head', 'orig_head', 'merge_head', 'cherry_pick_head', 'revert_head'])
 const INDEX_ENTRY = 'index'
@@ -27,22 +35,45 @@ function splitWatchPath(filename) {
   return normalized.split('/').filter((segment) => segment && segment !== '.')
 }
 
-// Pure: which repository fact an fs.watch filename can change.
+function mergeReasons(current, next) {
+  if (!current) return next
+  if (!next) return current
+  return (REASON_PRIORITY[next] || 0) > (REASON_PRIORITY[current] || 0) ? next : current
+}
+
+// Pure: which repository fact one fs.watch event can change.
 // Returns 'head' (branch tip / in-progress operation), 'index' (staged state)
 // or 'refs' (branches, tags, packed refs); null means the event is not
-// interesting. Lock files are classified as the file they protect because Git
-// writes them first and some platforms only surface the lock name before the
-// rename, while the debounce merges the pair into one notification.
-function classifyWatchEvent(filename) {
+// interesting. `directory` is the watched directory the filename is relative to:
+// fs.watch reports bare names, so a branch called `feature` inside refs/heads is
+// a ref change even though the name alone says nothing.
+// Lock files are classified as the file they protect because Git writes them
+// first and some platforms only surface the lock name before the rename; the
+// debounce merges the pair into one notification.
+function classifyWatchEvent(filename, { directory = 'git' } = {}) {
   const segments = splitWatchPath(filename)
   if (!segments.length) return null
+  // Everything inside refs/ is a ref by definition (branch, tag, remote-tracking
+  // or stash), including `.lock` files and new subdirectories.
+  if (directory === 'refs' || directory === 'refs/heads') return 'refs'
+  if (directory === 'logs') {
+    // Only logs/HEAD follows the checked-out branch. Other reflogs duplicate the
+    // refs/* events we already receive, so they are ignored instead of waking the
+    // renderer a second time (measured: 0-2 such events per operation, always
+    // accompanied by a refs/heads or HEAD event).
+    return segments.length === 1 && segments[0].toLowerCase() === 'head' ? 'head' : null
+  }
   const first = segments[0].toLowerCase()
   const last = segments[segments.length - 1].toLowerCase().replace(/\.lock$/, '')
   if (segments.length === 1) {
     if (HEAD_ENTRIES.has(last)) return 'head'
     if (last === INDEX_ENTRY) return 'index'
     if (last === REFS_ENTRY || last === PACKED_REFS_ENTRY) return 'refs'
-    if (last === LOGS_ENTRY) return 'head'
+    // A bare `logs` event means something below the logs directory changed. It is
+    // usually a reflog for a ref (Windows also bumps the directory mtime for
+    // nested writes), while the checked-out branch's reflog is reported as `HEAD`
+    // by the logs watcher itself, so this one is only a ref change.
+    if (last === LOGS_ENTRY) return 'refs'
     if (OPERATION_DIRECTORIES.has(last)) return 'head'
     return null
   }
@@ -54,42 +85,87 @@ function classifyWatchEvent(filename) {
   return null
 }
 
-// Pure: merge a burst of watcher events into one onFire(reason) call.
-// The first interesting reason of the round wins; the timer restarts on every
-// push so a burst of writes ends in exactly one notification.
-function createDebouncer({ delay, onFire, setTimeout: schedule = setTimeout, clearTimeout: cancel = clearTimeout }) {
+// Pure: coalesce a burst of watcher events into as few onFire(reason) calls as
+// possible without losing the final state.
+// - The first event of a quiet period is reported immediately (leading edge), so
+//   the renderer does not wait for a long fetch to finish.
+// - Further events are merged (highest-priority reason wins) and reported once
+//   the burst has been quiet for `delay`.
+// - A burst that never pauses is still reported every `maxWait` milliseconds.
+function createDebouncer({
+  delay = DEBOUNCE_MS,
+  maxWait = MAX_WAIT_MS,
+  onFire,
+  now = Date.now,
+  setTimeout: schedule = setTimeout,
+  clearTimeout: cancelTimer = clearTimeout,
+}) {
   let timer = null
   let pendingReason = null
+  let batchStartedAt = null
+  let lastEventAt = null
+  const reportPending = () => {
+    const reason = pendingReason
+    pendingReason = null
+    if (reason) onFire(reason)
+  }
   return {
     push(reason) {
       if (!reason) return false
-      if (pendingReason === null) pendingReason = reason
-      if (timer !== null) cancel(timer)
+      const current = now()
+      // A quiet gap of one full debounce window ends the previous burst; the next
+      // event leads so a fresh external change is visible immediately.
+      const idle = batchStartedAt === null || current - lastEventAt >= delay
+      lastEventAt = current
+      if (idle) {
+        batchStartedAt = current
+        if (timer !== null) cancelTimer(timer)
+        timer = null
+        pendingReason = null
+        onFire(reason)
+        return true
+      }
+      pendingReason = mergeReasons(pendingReason, reason)
+      const elapsed = current - batchStartedAt
+      if (elapsed >= maxWait) {
+        // The burst is still producing events at the hard limit: report now and
+        // restart the accounting instead of postponing the update again.
+        reportPending()
+        batchStartedAt = current
+        if (timer !== null) cancelTimer(timer)
+        timer = null
+        return true
+      }
+      if (timer !== null) cancelTimer(timer)
       timer = schedule(() => {
         timer = null
-        const reasonToReport = pendingReason
-        pendingReason = null
-        if (reasonToReport !== null) onFire(reasonToReport)
-      }, delay)
+        // Restart the max-wait accounting from the report, not from the first
+        // event, so a stream that keeps writing cannot fire twice in a row.
+        batchStartedAt = now()
+        reportPending()
+      }, Math.min(delay, maxWait - elapsed))
       return true
     },
     cancel() {
-      if (timer !== null) cancel(timer)
+      if (timer !== null) cancelTimer(timer)
       timer = null
       pendingReason = null
+      batchStartedAt = null
+      lastEventAt = null
     },
     get pending() {
-      return pendingReason !== null
+      return pendingReason !== null || timer !== null
     },
   }
 }
 
-// Watches the .git directory of one repository and reports debounced changes.
+// Watches the .git directory of one repository and reports coalesced changes.
 // `notifyIgnored(ms)` opens a silent window so the Git commands GitGlass runs
 // itself are not reported back as an external change.
 class RepositoryWatcher {
   constructor({
     debounceMs = DEBOUNCE_MS,
+    maxWaitMs = MAX_WAIT_MS,
     silentMs = SILENT_MS,
     watch = fs.watch,
     existsSync = fs.existsSync,
@@ -98,6 +174,7 @@ class RepositoryWatcher {
     clearTimeout: cancel = clearTimeout,
   } = {}) {
     this.debounceMs = debounceMs
+    this.maxWaitMs = maxWaitMs
     this.silentMs = silentMs
     this.watchFileSystem = watch
     this.existsSync = existsSync
@@ -107,7 +184,7 @@ class RepositoryWatcher {
     this.handles = []
     this.debouncer = null
     this.onChange = null
-    this.ignoredUntil = 0
+    this.ignoredWindows = []
   }
 
   // Starts watching `gitDirectory`; a previous watch() is closed first so a
@@ -117,13 +194,15 @@ class RepositoryWatcher {
     this.close()
     if (typeof gitDirectory !== 'string' || !gitDirectory) return false
     if (typeof onChange === 'function') this.onChange = onChange
-    this.ignoredUntil = 0
+    this.ignoredWindows = []
     this.debouncer = createDebouncer({
       delay: this.debounceMs,
+      maxWait: this.maxWaitMs,
+      now: this.now,
       setTimeout: this.schedule,
       clearTimeout: this.cancel,
       onFire: (reason) => {
-        if (this.now() < this.ignoredUntil) return
+        if (this.isIgnored(reason)) return
         if (this.onChange) this.onChange({ reason })
       },
     })
@@ -132,8 +211,9 @@ class RepositoryWatcher {
       // refs/heads can be absent (packed refs only) and rebase/merge state comes
       // and goes while the app runs, so missing paths are expected.
       if (!this.existsSync(target)) continue
+      const kind = directory || 'git'
       try {
-        this.handles.push(this.watchFileSystem(target, { persistent: false }, (_event, filename) => this.handleEvent(filename)))
+        this.handles.push(this.watchFileSystem(target, { persistent: false }, (_event, filename) => this.handleEvent(filename, kind)))
       } catch {
         // The directory can disappear between existsSync and watch().
       }
@@ -141,22 +221,40 @@ class RepositoryWatcher {
     return this.handles.length > 0
   }
 
-  // Feeds one filesystem event through the filename filter and the silent
-  // window. Exposed for tests; real callers come from fs.watch above.
-  handleEvent(filename) {
-    const reason = classifyWatchEvent(filename)
+  // Feeds one filesystem event through the filename filter, the silent window and
+  // the coalescing debouncer. Exposed for tests; real callers come from fs.watch.
+  handleEvent(filename, directory = 'git') {
+    const reason = classifyWatchEvent(filename, { directory })
     if (!reason) return false
-    if (this.now() < this.ignoredUntil) return false
+    if (this.isIgnored(reason)) return false
     if (!this.debouncer) return false
     return this.debouncer.push(reason)
   }
 
-  // Drops every event for the next `ms`; GitGlass calls this around the Git
-  // commands it runs so their writes do not look like an external change.
-  notifyIgnored(ms) {
+  // Drops events for the next `ms`. Without `reasons` every event is dropped
+  // (GitGlass uses that around the Git commands it runs so their writes are not
+  // reported as external changes). With `reasons` only those kinds are dropped:
+  // `git status` rewrites .git/index, so reads silence `index` alone and keep
+  // reporting external HEAD/ref changes that happen while a refresh is running.
+  /**
+   * @param {number} [ms]
+   * @param {{ reasons?: string[] }} [options]
+   */
+  notifyIgnored(ms, options = {}) {
     const duration = Number.isFinite(ms) && ms > 0 ? ms : this.silentMs
-    this.ignoredUntil = Math.max(this.ignoredUntil, this.now() + duration)
-    return this.ignoredUntil
+    const current = this.now()
+    const until = current + duration
+    const reasons = options.reasons
+    const filter = Array.isArray(reasons) && reasons.length > 0 ? new Set(reasons) : null
+    this.ignoredWindows = this.ignoredWindows.filter((window) => window.until > current)
+    this.ignoredWindows.push({ until, reasons: filter })
+    return until
+  }
+
+  isIgnored(reason) {
+    const current = this.now()
+    this.ignoredWindows = this.ignoredWindows.filter((window) => window.until > current)
+    return this.ignoredWindows.some((window) => window.reasons === null || window.reasons.has(reason))
   }
 
   // Idempotent: safe to call on every window close, quit and repository switch.
@@ -180,4 +278,4 @@ class RepositoryWatcher {
   }
 }
 
-module.exports = { RepositoryWatcher, classifyWatchEvent, createDebouncer, WATCHED_DIRECTORIES, DEBOUNCE_MS, SILENT_MS }
+module.exports = { RepositoryWatcher, classifyWatchEvent, createDebouncer, mergeReasons, WATCHED_DIRECTORIES, DEBOUNCE_MS, MAX_WAIT_MS, SILENT_MS }
