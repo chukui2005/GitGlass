@@ -181,14 +181,14 @@ npm run report:startup -- --installed
 | --- | --- | --- | --- | --- |
 | 1 | ✅ **已落地（2026-11-19）**：更新服务延后到建窗之后 | **窗口创建提前 34–38 ms**；首帧持平（那 40 ms 挪进了渲染层收尾阶段，见 3.1）。语义收益：窗口不再等待 `updater.restore()` 这类可能耗时数秒的更新逻辑 | 已落地。`update:state` 在服务就绪前返回占位状态；其余 `update:*` 排队等 `updatesReady`；初始化失败降级成「不可用」，不会 unhandled rejection；`update:resume` 时序不变 | `electron/main.cjs`、`electron/update-service.cjs`、`tests/unit/update-service.test.cjs` |
 | 2 | 删掉用不到的 Electron DLL（`dxcompiler.dll` 24.6 MB、`vk_swiftshader.dll` 5.2 MB、`vulkan-1.dll` 0.9 MB） | 解压后 **−30.7 MB**，安装包预计 −8~10 MB（估算：按 locale 的压缩比外推） | **高**：SwiftShader 是显卡驱动异常时的软件回退，DXC 被 ANGLE/WebGPU 用；删了在部分机器上会黑屏或无法渲染，需要大量真机验证 | `afterPack` 钩子删文件（它们不在 `app.asar` 里，`build.files` 管不到） |
-| 3 | 运行期依赖归类 | 语义正确性（不是体积）：`react` / `react-dom` / `@phosphor-icons/react` 应移到 `devDependencies`，真正运行期依赖只剩 `electron-updater` + `semver` | 低-中：需要同步改 `package-lock.json`（本机不能跑 `npm install`），改错会让 CI 的 `npm ci` 直接失败 | `package.json` + `package-lock.json`，必须在能跑 `npm install` 的环境做 |
+| 3 | ✅ **已落地（2026-11-19）**：运行期依赖归类 | 语义正确性（体积不变）：`react` / `react-dom` / `@phosphor-icons/react` 移到 `devDependencies`，`dependencies` 只剩主进程真的 `require` 的 `electron-updater` + `semver`；`build.files` 里的 `!node_modules/react/**` 从「唯一手段」变成双保险 | 已落地。`app.asar` 与基线完全一致（1.8 MB / 286 个文件，`node_modules/` 里只剩 electron-updater 的依赖链，**没有** react / react-dom / scheduler / @phosphor-icons）；`npm ci --dry-run` 通过，构建、51 文件 / 323 用例、覆盖率门槛全绿 | `package.json` + `package-lock.json`（lock 只改 10 行：三条从 `dependencies` 移到 `devDependencies`、四个包的 `dev` 标记翻转；`scheduler` 是 `react-dom` 的传递依赖，自动跟随） |
 | 4 | `compression: maximum` | **实测 ≈ 0**：安装包 +455 B（噪声内），ZIP −393 KB（−0.25%），构建时间明显变长 | 低（只是慢） | 不建议落地，见第 6 节 |
 | 5 | 渲染层按需加载（历史审阅面板拆包） | 上限很小：`main.jsx` 只占 bundle 源码的 13.2%，历史审阅相关组件约占其中 9.5%（≈4 KB min / ≈1.5 KB gzip） | 低-中：拆包会引入异步边界与首屏骨架，交互变复杂 | 不建议做，见第 6 节 |
 | 6 | 用内联 SVG 替掉 `@phosphor-icons/react`（20 个图标） | 源码 49.5 KB（占 bundle 5.8%），min 后约 −15 KB / gzip ≈ −5 KB | 低：纯替换，但要逐个核对视觉 | `src/main.jsx`、`src/app-updates.jsx`、`src/recent-repositories-menu.jsx`；收益太小，优先级低于第 1 项 |
 | 7 | `public/` 与 `dist/` 的图标重复 | 约 37 KB（忽略不计） | 低 | 不值得做 |
 | 8 | 内存：命令账本虚拟列表、超大仓库 watcher 降噪 | 账本 300 条全量渲染 → 虚拟列表，可省渲染进程内存与滚动卡顿；watcher 已在 0.6.3 做过 800 ms 去抖，只剩 `objects/` 降噪 | 中（交互回归风险） | 产品代码；属于 0.6.5 的结构债，不在本次范围 |
 
-**如果只做一件事**：第 1 项已落地。剩下收益最确定的是第 3 项（依赖归类，纯语义债）；第 2 项虽然一次能省 30 MB，但需要显卡兼容性真机矩阵，风险远大于收益。
+**如果只做一件事**：第 1、3 项都已落地（启动提速 + 依赖语义；第 3 项不改一个字节，纯粹是把清单说对，顺带让 `npm list --omit=dev` 的输出等于"真实运行期依赖"）。剩下已经没有「零风险又省得多」的项了：第 2 项虽然一次能省 30 MB，但需要显卡兼容性真机矩阵，风险远大于收益。
 
 ## 6. 为什么不建议做（负结果，省得下次再试）
 
