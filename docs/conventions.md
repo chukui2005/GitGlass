@@ -60,16 +60,18 @@ tests/               见第 4 节
 ```
 tests/
   unit/        纯逻辑：不启动 Electron、不碰真实 git 仓库
-  ui/          Electron 探针：渲染真实窗口后断言 DOM（必须轮询等待，禁止固定 sleep）
+  ui/          渲染断言：Electron 探针（真窗口）或 @testing-library/react（jsdom）
   integration/ 真实 git：在临时目录里执行 git 命令，带 .integration.test.cjs 后缀
   release/     打包/工作流/校验和/发版脚本的配置断言
   docs/        文档一致性（中英 README、文案）
-  support/     上述测试共用的探针与 fixture（不是测试用例）
+  support/     上述测试共用的探针、假桥与 fixture（不是测试用例）
 ```
 
 - **命名**：`<area>.<kind>.test.{cjs,mjs}`，`kind` 只在 `integration` 层出现（如 `remote-sync.integration.test.cjs`）。
 - **路径约定**：子目录里的测试引用仓库根用 `path.join(__dirname, '..', '..')`，引用共用探针用 `path.join(__dirname, '..', 'support', ...)`，引用脚本用 `../../scripts/xxx.mjs`。
-- **禁止固定延时**：UI 探针统一用轮询（参考 `tests/support/update-ui.cjs` 里的 `waitUntil`），超时信息里带最后观测值——CI 冷启动比本地慢，`pause(250)` 一定会翻车。
+- **两条渲染路线，先选便宜的**：断言组件自身的行为/结构/可访问名称时，用 `@testing-library/react` 真渲染（0.6.5 起），文件头写 `// @vitest-environment jsdom`，用 `tests/support/render-app.mjs` 里的 `renderApp()` 装上 `window.gitglass` 假桥（`tests/support/gitglass-stub.mjs`）再挂载 `<App />`；需要真实 Electron 才能验证的东西（窗口拖拽、CSS 计算样式、安装器、contextBridge）才写 `tests/support/*-preload.cjs` + 真启动探针。
+- **不读源码文本**：`expect(source).toContain('<div className=…')` 这类断言删一行文案就会红、逻辑失效却不会红，禁止新增。只有**样式契约**（CSS 规则本身：哪一格滚动、窄到什么程度隐藏哪段）才读 `src/styles.css`，统一放在 `tests/ui/style-contracts.test.cjs`。
+- **禁止固定延时**：UI 探针统一用轮询（参考 `tests/support/update-ui.cjs` 里的 `waitUntil`），渲染测试用 `await waitFor(...)` / `findBy*`，超时信息里带最后观测值——CI 冷启动比本地慢，`pause(250)` 一定会翻车。
 - **禁止版本硬编码**：测试不得写死当前版本号。需要版本时从 `package.json` 读（`tests/release/release-checksums.test.mjs` 是范例）——版本一改，硬编码的测试必红。
 - **不访问外网**：需要网络的逻辑用本地 `http://127.0.0.1:<port>` 假服务或 mock。
 

@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | **0.6.4-beta.1** ✅ | 视觉对齐 dbx：设计 token（中性灰 + 近黑主按钮 + 4/6/8px 圆角）、顶栏与按钮度量、侧栏与列表密度、分割条重做、账本与模态、空状态 | 三档宽度（1440/1280/1024）截图无溢出、字号层级与 dbx 一致、分割条 1px 视觉 + 宽命中区 |
 | **0.6.4-beta.2** ✅ | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
-| **0.6.5-beta.1** | 测试现代化 + 结构债：引入 `@testing-library/react`（**允许新增 devDependency**）替换约 39 例"读源码字符串"的 UI 断言；拆 `main.jsx`（history / safety / remote 三个领域 hook） | UI 测试改为真渲染，删掉一行文案不再误红；`main.jsx` 降到 1500 行以内 |
+| **0.6.5-beta.1** | **A 半 ✅（2026-11-19）** 测试现代化：引入 `@testing-library/react`（**允许新增 devDependency**），把 32 例"读源码字符串"的 UI 断言换成真渲染；**B 半（剩余）** 结构债：拆 `main.jsx`（history / safety / remote 三个领域 hook） | A 半已达成：UI 测试改为真渲染，删掉一行文案不再误红；B 半待达成：`main.jsx` 降到 1500 行以内 |
 | 后续（未排期） | 包体积与性能（见下节） | 有测量基线，且安装包/内存有可量化下降 |
 
 ### 0.6.4-beta.1 交付记录（2026-11-18）
@@ -71,6 +71,34 @@
 1. **`tsc` 扩到 `main.jsx`**：先补 `@types/react` / `@types/react-dom`，随 0.6.5 的 hook 拆分逐个文件加进 `include`；同时评估打开 `strictNullChecks`（`strict: false` 只是第一档）。
 2. **提高覆盖率阈值**：当前四项实测都在 70% 以上，但 `app-updates.jsx`(0%)、`brand-mark.jsx`(0%)、`recent-repositories-menu.jsx`(18.81%) 还在拖后腿，等 0.6.5 换成 `@testing-library/react` 真渲染后再把门槛提到 70%。
 3. **CI 去重**：`npm test` 与 `npm run test:coverage` 会跑两遍同一套用例（约 +2 分钟），等覆盖率稳定后可以只保留后者。
+
+### 0.6.5-beta.1（A 半）交付记录（2026-11-19）
+
+`tests/ui/` 里"读 `src/main.jsx` 源码字符串"的 UI 断言全部换成 `@testing-library/react`
+真渲染；结构债（拆 `main.jsx`）是 B 半，仍在排队。
+
+| 项 | 之前 | 之后 |
+| --- | --- | --- |
+| `npm test` | 49 文件 / 305 用例 | **51 文件 / 320 用例** |
+| "读源码"用例 | 4 文件 / 32 用例 | **0**（只剩 `tests/ui/style-contracts.test.cjs` 的 7 例读 `styles.css`——那是样式契约，不是组件源码） |
+| `src/main.jsx` 覆盖率 | 被 `test.coverage.exclude` 排除，未测量 | **statements 51.53% / branches 55.76% / functions 47.96% / lines 55.55%** |
+
+- 新增 devDependency：`@testing-library/react`、`@testing-library/dom`、`@testing-library/user-event`、`@testing-library/jest-dom`、`jsdom`（装在主仓库，worktree 共用同一个 `node_modules`）。
+- 共用件都在 `tests/support/`：`gitglass-stub.mjs`（按 `electron/preload.cjs` 的形状复刻 `window.gitglass`）、`gitglass-fixtures.mjs`（仓库状态 / 提交 / 账本记录）、`render-app.mjs`（装假桥再挂 `<App />`）、`jsdom-setup.mjs`（jest-dom matcher + 每例 `cleanup` + `<dialog>` 最小 polyfill）。
+- **没有全局切 jsdom**：只有文件头写了 `// @vitest-environment jsdom` 的用例进浏览器环境，8 个真实 Electron 探针仍在 node 环境运行——`electron-launch`、`ledger-rows`、`resizable-workspace-panels`、`recent-repositories-ui`、`update-ui`、`batch-stage-layout`、`history-row-layout`、`history-workspace-layout`。
+- 产品代码只加了一行 export：`src/main.jsx` 的 `export function App()`（外加 import 时对 `#root` 的守卫，避免测试 import 时顺带挂载第二个实例）。
+- 覆盖率 `exclude` 未动。实测把 `main.jsx` 放回 `include` 后四项是 **73.67 / 69.42 / 71.06 / 76.56**（仍过 50% 门槛），B 半拆完 hook 可以顺手撤掉这条 exclude、把阈值往 70% 提。
+
+真渲染顺带暴露的三个既有缺口（本次不改产品代码，留给后续 PR）：
+
+1. 已暂存区的 `<FileSection>` 没有接 `busy`，加载期间"取消暂存"按钮仍可点（未暂存区是禁用的）。
+2. `historyNotice` 的三元链把 compare 分支排在 binary 之前，所以"结果中包含二进制文件…"这句只在非 compare 结果里出现。
+3. jsdom 没有实现 `<dialog>.showModal()`，`jsdom-setup.mjs` 补了最小 polyfill；顶层图层与焦点陷阱仍由 `tests/ui/update-ui.test.cjs` 的真实探针守着。
+
+**B 半（拆 `main.jsx`）的输入**：
+
+- 先拆 history 领域（`historyMode` / `historySelected` / `historyDetail` / `historyResult` / `historyCompare` / `historyFile` / `historyDraft` / `historyApplied` 加 `selectHistoryCommit`、`readCompare`、`applyHistoryFilters`、`openFileHistory*`）：`tests/ui/history-review-ui.test.mjs` 的 14 例现成可以当安全网。
+- 每搬一块就顺手删掉对应的"源码同步"断言：`resizable-workspace-panels`（17 条读 `main.jsx`）、`history-row-layout`（2 条）、`batch-stage-layout`（1 条取区块用）。
 
 ### 0.6.4-beta.1 遗留的视觉问题（下一轮，不阻塞本次 beta）
 
@@ -179,8 +207,8 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 | # | 问题 | 现状 | 修法 |
 | --- | --- | --- | --- |
 | 9 | 没有 lint、没有类型检查、没有覆盖率门槛 | `package.json` 无 eslint/tsc、`vite.config.mjs` 仅 `globals/fileParallelism` | ✅ 0.6.4-beta.2：ESLint flat config（0 error）+ `tsc --checkJs --noEmit`（0 error）+ vitest coverage 门槛 50%，三项都进 CI；详见「0.6.4-beta.2 交付记录」 |
-| 10 | UI 测试 47 例中 39 例是"读源码字符串断言"（断言某段文本出现几次），删代码会红、逻辑失效不会红 | `tests/ui/*.test.cjs` | 用真渲染替代文本断言（复用现有 Electron 探针或引入 `@testing-library/react`），至少覆盖暂存/提交/筛选/更新四条主流程 |
-| 11 | `main.jsx` 2693 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | 先抽三个领域 hook（history / safety / remote）与对应面板组件；再逐步引入 memo 化 |
+| 10 | UI 测试 47 例中 39 例是"读源码字符串断言"（断言某段文本出现几次），删代码会红、逻辑失效不会红 | `tests/ui/*.test.cjs` | ✅ **0.6.5-beta.1（A 半）**：4 个文件 32 例改成 `@testing-library/react` 真渲染，覆盖暂存/提交/筛选/更新四条主流程；纯 CSS 规则挪到 `tests/ui/style-contracts.test.cjs`；8 个真实 Electron 探针全部保留。详见「0.6.5-beta.1（A 半）交付记录」 |
+| 11 | `main.jsx` ≈2 990 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | **0.6.5 剩余项（B 半）**：先抽三个领域 hook（history / safety / remote）与对应面板组件；再逐步引入 memo 化。A 半已把真渲染测试建好，拆 hook 时可以直接用它当安全网 |
 | 12 | 没有"装包 → 启动 → 查更新 → 卸载"的冒烟测试 | CI 只做构建 + 哈希校验 | CI 或手动脚本对 `release/win-unpacked` 启动一次并比对 `app.getVersion()`；升级路径留在 VM 验收 |
 
 ## P3 发布与版本
