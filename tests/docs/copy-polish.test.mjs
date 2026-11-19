@@ -11,7 +11,12 @@ const { GitCommandService } = require('../../electron/git-command-service.cjs')
 const { RepositoryService } = require('../../electron/repository-service.cjs')
 const { declarations } = require('../support/css-inspect.cjs')
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const renderer = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8')
+// 渲染层文案分布在 App（main.jsx）与展示组件（workbench-ui.jsx）两个文件里，
+// 0.6.5 拆完 main.jsx 后这里按"两份都读"来断言，避免文案一搬家就误红。
+const renderer = [
+  fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8'),
+  fs.readFileSync(path.join(root, 'src', 'workbench-ui.jsx'), 'utf8'),
+].join('\n')
 const styles = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8')
 const repositoryOpener = fs.readFileSync(path.join(root, 'electron', 'repository-opener.cjs'), 'utf8')
 
