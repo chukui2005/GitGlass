@@ -3,6 +3,15 @@ const semver = require('semver')
 
 const HOURLY = 60 * 60 * 1000
 const SHA512 = /^[A-Za-z0-9+/]{86}==$/
+// initialize() 失败时给用户的提示；服务降级成「不可用」，但状态结构保持不变。
+const SERVICE_UNAVAILABLE = '更新服务暂时不可用，请重启应用后再试。'
+
+// 主进程把更新服务的初始化挪到了窗口开始加载之后，这段时间里渲染层已经可能查询状态。
+// 这个占位状态的键必须和 UpdateService#getState() 完全一致，phase 用 'loading'
+// （界面显示「正在读取更新状态…」），初始化完成后再推一次真实状态。
+function pendingUpdateState(version) {
+  return { supported: false, reason: '', currentVersion: version, channel: semver.prerelease(version) ? 'beta' : 'stable', automatic: false, phase: 'loading', latestVersion: null, notes: '', progress: null, error: '' }
+}
 
 function releaseNotes(value) {
   if (typeof value === 'string') return value.slice(0, 32000)
@@ -58,6 +67,8 @@ class UpdateService extends EventEmitter {
     this.downloading = null
     this.timer = null
     this.disposed = false
+    // initialize() 失败时保留原始错误，供 start() 之后排查；状态里只放中文提示。
+    this.startError = null
     this.onProgress = (progress) => {
       if (this.state.phase === 'downloading') this.change({ progress: Math.max(0, Math.min(100, Number(progress.percent) || 0)) })
     }
@@ -105,6 +116,30 @@ class UpdateService extends EventEmitter {
       void this.check().finally(() => this.schedule())
     }, delay)
     this.timer?.unref?.()
+  }
+
+  /**
+   * 主进程的启动入口：initialize() 失败时降级成「不可用」，**永不 reject**。
+   * 这样 `updatesReady` 不会有 unhandled rejection，排队的 update:* 请求拿到的是
+   * 结构完整、带中文提示的状态，而不是一个永远挂起的 promise。
+   * @returns {Promise<ReturnType<UpdateService['getState']>>}
+   */
+  async start() {
+    try {
+      await this.initialize()
+    } catch (error) {
+      this.startError = error
+      this.markUnavailable(SERVICE_UNAVAILABLE)
+    }
+    return this.getState()
+  }
+
+  // 把服务降级成「不支持」：按钮消失、面板显示提示，后续 check/download/install 直接返回该状态。
+  markUnavailable(reason) {
+    if (this.timer) this.clearTimer(this.timer)
+    this.timer = null
+    this.change({ supported: false, phase: 'unsupported', reason, error: '', progress: null })
+    return this.getState()
   }
 
   setAutomatic(value) {
@@ -230,4 +265,4 @@ function updateError(error) {
   return '更新未完成，请稍后重试。'
 }
 
-module.exports = { UpdateService, validateUpdate, releaseNotes, updateError }
+module.exports = { UpdateService, validateUpdate, releaseNotes, updateError, pendingUpdateState, SERVICE_UNAVAILABLE }

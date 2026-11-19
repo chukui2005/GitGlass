@@ -1,5 +1,5 @@
 const { EventEmitter } = require('node:events')
-const { UpdateService, validateUpdate, updateError } = require('../../electron/update-service.cjs')
+const { UpdateService, validateUpdate, updateError, pendingUpdateState, SERVICE_UNAVAILABLE } = require('../../electron/update-service.cjs')
 const { OperationGate } = require('../../electron/operation-gate.cjs')
 
 const digest = Buffer.alloc(64, 1).toString('base64')
@@ -198,6 +198,49 @@ describe('application updates', () => {
     await service.check()
     expect(JSON.stringify(service.getState())).not.toMatch(/fileName|sha512|\/cache|fileInfo/)
     service.dispose()
+  })
+})
+
+describe('deferred update service startup', () => {
+  it('answers with a complete state before initialize() has run', () => {
+    const { service } = setup()
+    // 主进程现在先建窗、再启动更新服务，这段空档里渲染层就会查询状态。
+    const beforeInit = service.getState()
+    expect(beforeInit).toMatchObject({ phase: 'idle', supported: true, currentVersion: '0.5.6-beta.1', channel: 'beta', automatic: true, latestVersion: null, notes: '', progress: null, error: '' })
+    // 服务还没构造时主进程返回的占位状态：键必须和真实状态完全一致，渲染层才不用判空。
+    const placeholder = pendingUpdateState('0.5.6-beta.1')
+    expect(Object.keys(placeholder).sort()).toEqual(Object.keys(beforeInit).sort())
+    expect(placeholder).toMatchObject({ phase: 'loading', supported: false, currentVersion: '0.5.6-beta.1', latestVersion: null, progress: null, error: '' })
+  })
+
+  it('reports the settled state once start() has run', async () => {
+    const { service, store, timers } = setup()
+    store.value.pending = snapshot()
+    await expect(service.start()).resolves.toMatchObject({ phase: 'ready', latestVersion: '0.5.7-beta.1', supported: true })
+    expect(service.getState().phase).toBe('ready')
+    expect(timers[0].delay).toBe(10_000)
+  })
+
+  it('degrades to an unavailable state, without an unhandled rejection, when initialize() throws', async () => {
+    // schedule() 是 initialize() 里唯一会向外抛的路径，借它制造一次初始化失败。
+    const { service, updater } = setup({ setTimer: () => { throw new Error('timer unavailable') } })
+    const rejections = []
+    const onRejection = (error) => rejections.push(error)
+    process.on('unhandledRejection', onRejection)
+    try {
+      // start() 必须 resolve：主进程直接把它赋给 updatesReady，不允许留下未捕获的拒绝。
+      await expect(service.start()).resolves.toMatchObject({ supported: false, phase: 'unsupported', reason: SERVICE_UNAVAILABLE, error: '', progress: null })
+      await new Promise((resolve) => setImmediate(resolve))
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+    expect(rejections).toEqual([])
+    expect(service.startError?.message).toBe('timer unavailable')
+    // 降级之后 check/download/install 直接返回该状态，不再碰 updater。
+    await expect(service.check()).resolves.toMatchObject({ phase: 'unsupported' })
+    await expect(service.download()).resolves.toMatchObject({ phase: 'unsupported' })
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
   })
 })
 
