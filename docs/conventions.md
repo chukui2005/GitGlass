@@ -105,6 +105,7 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 - `electron/` 里每个模块只做一件事，通过 IPC 暴露给渲染层；preload 只暴露必要方法，不接受渲染层传入的可执行路径/URL/argv。
 - 任何会改变仓库状态的 IPC 必须走"计划 → 执行"两步并写 Command Ledger。
 - 新增运行时依赖要同时更新 `package.json`、`package-lock.json`，并确认 `build.files` 允许它被打包（`tests/release/packaging-config.test.cjs` 会校验）。
+- **依赖归类**：`dependencies` 只放**主进程 / preload 运行期真的 `require`** 的包（当前只有 `electron-updater` 与 `semver`）。渲染层依赖（`react`、`react-dom`、`@phosphor-icons/react` 之类由 Vite 打进 `dist/` 的包）一律放 `devDependencies`：写进 `dependencies` 只会让 electron-builder 把整包 `node_modules` 塞进安装包，而 `build.files` 里的 `!node_modules/react/**` 只是第二道保险。新增依赖前先问一句「主进程会不会 `require` 它」，不会就放 dev。
 
 ## 7. `.gitignore` 规范
 
