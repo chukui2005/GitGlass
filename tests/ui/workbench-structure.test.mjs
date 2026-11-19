@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import {
   commitFixture,
+  fileFixture,
   ledgerRecordFixture,
   repositoryState,
   unifiedDiff,
@@ -96,6 +97,47 @@ describe('workbench structure (rendered)', () => {
     expect(screen.getByLabelText('新文件第 1 行')).toHaveTextContent('1')
     expect(view.querySelectorAll('.diff-line.plus')).toHaveLength(1)
     expect(view.querySelectorAll('.diff-line.minus')).toHaveLength(1)
+  })
+
+  it('renders the diff file header as one breadcrumb row', async () => {
+    const { container } = await renderWorkspace()
+    const headers = container.querySelectorAll('.diff-line.file')
+
+    // 一个文件只占一行：路径直接放在面包屑里，没有「文件 / 原文件 / 新文件」三行。
+    expect(headers).toHaveLength(1)
+    expect(headers[0]).toHaveTextContent('src/main.jsx')
+    expect(headers[0].querySelector('.diff-label')).toBeNull()
+    expect(container.querySelectorAll('.diff-line.file-path')).toHaveLength(0)
+  })
+
+  it('renders a rename as one「旧 → 新」breadcrumb row', async () => {
+    const { container } = renderApp(workspaceStub({
+      getState: async () => repositoryState({ files: [fileFixture({ path: 'src/old-name.js', status: 'renamed' })] }),
+      getDiff: async () => ({
+        ok: true,
+        stdout: [
+          'diff --git a/src/old-name.js b/src/new-name.js',
+          'similarity index 96%',
+          'rename from src/old-name.js',
+          'rename to src/new-name.js',
+          'index 1111111..2222222 100644',
+          '--- a/src/old-name.js',
+          '+++ b/src/new-name.js',
+          '@@ -1 +1 @@',
+          '-export function oldName() {',
+          '+export function newName() {',
+        ].join('\n'),
+      }),
+    }))
+
+    const headers = await waitFor(() => {
+      const rows = container.querySelectorAll('.diff-line.file')
+      expect(rows).toHaveLength(1)
+      return rows
+    })
+    expect(headers[0]).toHaveTextContent('src/old-name.js → src/new-name.js')
+    // 重命名信息已经在面包屑里，不再单独渲染「重命名前 / 重命名后」两行。
+    expect(container.querySelector('.diff-content')).not.toHaveTextContent('重命名前')
   })
 
   it('keeps the ledger bar outside of the only scrolling ledger list', async () => {
@@ -251,5 +293,23 @@ describe('workbench structure (rendered)', () => {
     await waitFor(() => {
       expect(screen.getByText('尚无命令记录')).toBeInTheDocument()
     })
+  })
+
+  it('shows a guide block instead of the commit form when no repository is open', async () => {
+    const user = userEvent.setup()
+    // 默认假桥就是「还没有打开仓库」：getState 返回 ok:false。
+    const { container, gitglass } = renderApp()
+    const panel = container.querySelector('.context-panel')
+    expect(panel).toBeInTheDocument()
+
+    // 右栏给引导块，而不是一整套全禁用的提交表单。
+    expect(within(panel).getByRole('heading', { name: '还没有打开仓库' })).toBeInTheDocument()
+    expect(panel.querySelector('textarea')).toBeNull()
+    expect(within(panel).queryByRole('button', { name: '提交' })).toBeNull()
+    expect(within(panel).queryByText('下一条命令')).toBeNull()
+
+    // 引导块的「打开仓库」复用同一个目录选择入口（主按钮仍只有左栏那一个）。
+    await user.click(within(panel).getByRole('button', { name: '打开仓库' }))
+    expect(gitglass.chooseRepository).toHaveBeenCalledTimes(1)
   })
 })
