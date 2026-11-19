@@ -1188,6 +1188,29 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
   );
 }
 
+// 命令面板条目：纯函数，输入是这次渲染的可用性与动作，输出 CommandPalette 要的数组。
+// 刻意不做 useMemo：每个 run 都闭包住最新的动作，依赖每帧都会变，
+// memo 只会白算一次，还会让 exhaustive-deps 需要一份永远不完整的依赖表。
+function buildPaletteCommands({
+  availability,
+  ledgerOpen,
+  selected,
+  commandShortcut,
+  ledgerShortcut,
+  historySearchShortcut,
+  actions,
+}) {
+  return [
+    { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: actions.chooseRepo },
+    { id: "refresh", label: "刷新工作区", keywords: "刷新 状态", ...availability.refresh, run: actions.refreshFromUser },
+    { id: "workspace", label: "前往工作区", keywords: "工作区 文件", ...availability.workspace, run: () => actions.setHistoryMode(false) },
+    { id: "history", label: "前往历史审查", keywords: "历史 提交", ...availability.history, run: () => actions.setHistoryMode(true) },
+    { id: "ledger", label: ledgerOpen ? "收起命令账本" : "展开命令账本", shortcut: ledgerShortcut, keywords: "账本 命令", ...availability.ledger, run: () => actions.setLedgerOpen((value) => !value) },
+    { id: "history-search", label: "聚焦历史搜索", shortcut: historySearchShortcut, keywords: "历史 搜索", ...availability.historySearch, run: actions.focusHistorySearch },
+    { id: "stage-selected", label: "暂存当前选中文件", keywords: "暂存 文件", ...availability.stageSelected, run: () => selected?.area === "unstaged" && actions.operate("stage", { path: selected.path }) },
+  ];
+}
+
 // Exported so the UI tests can mount the real workbench with a stubbed
 // `window.gitglass` bridge instead of asserting on this file's source text.
 // See tests/support/render-app.mjs.
@@ -1490,6 +1513,17 @@ export function App() {
         : unstaged.length
           ? "git add -A"
           : "git status --porcelain=v1 -z --untracked-files=all";
+  // 首屏恢复与自动刷新订阅都只建立一次，两者都要"最新一份" refreshAll：
+  // 每次渲染先把最新的闭包与仓库 / loading 状态放进 ref，effect 里只读 ref。
+  // 这个 effect 必须排在首屏恢复之前，挂载时才能保证 ref 已经就位。
+  useEffect(() => {
+    refreshAllRef.current = refreshAll;
+    automaticRefresh.current.loading = loading;
+    automaticRefresh.current.hasRepository = Boolean(repo);
+  });
+  // 首屏：先恢复更新前保存的草稿与模式，再整体刷新一次；哨兵只用一次。
+  // 依赖里只有 setHistoryMode（useHistoryReview 暴露的稳定 setter）：
+  // refreshAll 通过 ref 取最新闭包，所以这个 effect 不会重复执行。
   useEffect(() => {
     (async () => {
       const resume = await window.gitglass.getUpdateResume();
@@ -1497,20 +1531,13 @@ export function App() {
         setMessage(resume.commitMessage);
         setHistoryMode(resume.historyMode);
       }
-      await refreshAll();
+      await refreshAllRef.current?.();
       if (resume) await window.gitglass.consumeUpdateResume();
     })().catch(() => setNotice({ type: "error", text: "无法恢复工作区，请重新打开仓库。" }));
-  }, []);
+  }, [setHistoryMode]);
   useEffect(() => {
     loadRecentRepositories();
   }, []);
-  // 自动刷新订阅只建立一次：每次渲染把最新的 refreshAll 与仓库 / loading 状态
-  // 放进 ref，事件回调永远用到最新一份，不重新订阅。
-  useEffect(() => {
-    refreshAllRef.current = refreshAll;
-    automaticRefresh.current.loading = loading;
-    automaticRefresh.current.hasRepository = Boolean(repo);
-  });
   // 窗口重新获得焦点、或主进程在 .git 上看到变化（终端里 commit / 切换分支）
   // 时静默刷新一次：不弹通知、不打开账本。loading、静默刷新进行中一律丢弃；
   // 刷新结束后 1 秒内的事件也丢弃，但与 index 无关的 HEAD / refs 变化可以穿过
@@ -1817,10 +1844,14 @@ export function App() {
   const workspaceBanner = operationBanner || notice;
   const noticeWaiting = noticeHovered || noticeFocused;
   // 瞬时通知出现（或被新内容替换）就开始计时；文案变化会重新计满整段时间。
-  // 依赖只放 notice 对象和 state.operation 原始值：operationBanner 每次渲染都是
-  // 新对象，放进依赖会让计时器被无限重启，6 秒永远走不完。
+  // 依赖只放 notice 对象和 state.operation 原始值，并在 effect 里就地推出
+  // operationBanner：`workspaceBanner` 那个对象每次渲染都是新的，放进依赖会
+  // 让计时器被无限重启，6 秒永远走不完。
   useEffect(() => {
-    syncNoticeTimer(noticeTimerRef.current, { notice, operationBanner });
+    syncNoticeTimer(noticeTimerRef.current, {
+      notice,
+      operationBanner: state?.operation ? operationInProgressNotice(state.operation) : null,
+    });
   }, [notice, state?.operation]);
   // 悬停/聚焦暂停；离开后重新计满整段时间，所以不会"鼠标一离开就消失"。
   useEffect(() => {
@@ -1862,6 +1893,9 @@ export function App() {
     // 历史模式自己决定 Esc 的三段语义（关 Diff → 丢草稿 → 还原筛选 → 退出模式）。
     handleEscape();
   }
+  // 全局快捷键。订阅每次渲染重建、不写依赖数组：处理器用到的函数（operate /
+  // escapeCurrentContext / 打开面板）与状态都是本次渲染的最新闭包，比维护一份
+  // 永远少一项的依赖表更可靠，也不会出现"旧闭包读到旧仓库"的问题。
   useEffect(() => {
     const onKeyDown = (event) => {
       const action = resolveShortcut(event, {
@@ -1885,24 +1919,33 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [paletteOpen, blockingContextOpen, historyMode, loading, staged.length, message, safetyPlan, branchPlan, remotePlan, recoveryOpen, historyResult, historyFile, historyDraft, historyApplied]);
-  const paletteCommands = useMemo(() => {
-    const availability = commandAvailability({
+  });
+  // 命令面板的条目由纯函数生成：`run` 闭包住 App 里最新的动作，
+  // 所以不放进 useMemo（放进去了依赖也每帧都变，白算一次）。
+  const paletteCommands = buildPaletteCommands({
+    availability: commandAvailability({
       hasRepository: Boolean(repo),
       loading,
       historyMode,
       selectedArea: selected?.area,
-    });
-    return [
-      { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: chooseRepo },
-      { id: "refresh", label: "刷新工作区", keywords: "刷新 状态", ...availability.refresh, run: refreshFromUser },
-      { id: "workspace", label: "前往工作区", keywords: "工作区 文件", ...availability.workspace, run: () => setHistoryMode(false) },
-      { id: "history", label: "前往历史审查", keywords: "历史 提交", ...availability.history, run: () => setHistoryMode(true) },
-      { id: "ledger", label: ledgerOpen ? "收起命令账本" : "展开命令账本", shortcut: ledgerShortcut, keywords: "账本 命令", ...availability.ledger, run: () => setLedgerOpen((value) => !value) },
-      { id: "history-search", label: "聚焦历史搜索", shortcut: historySearchShortcut, keywords: "历史 搜索", ...availability.historySearch, run: () => { historySearchRef.current?.focus(); historySearchRef.current?.select(); } },
-      { id: "stage-selected", label: "暂存当前选中文件", keywords: "暂存 文件", ...availability.stageSelected, run: () => selected?.area === "unstaged" && operate("stage", { path: selected.path }) },
-    ];
-  }, [repo, loading, historyMode, ledgerOpen, selected, commandShortcut, ledgerShortcut, historySearchShortcut]);
+    }),
+    ledgerOpen,
+    selected,
+    commandShortcut,
+    ledgerShortcut,
+    historySearchShortcut,
+    actions: {
+      chooseRepo,
+      refreshFromUser,
+      setHistoryMode,
+      setLedgerOpen,
+      operate,
+      focusHistorySearch: () => {
+        historySearchRef.current?.focus();
+        historySearchRef.current?.select();
+      },
+    },
+  });
   function executePaletteCommand(command) {
     if (!command.available) return;
     closeCommandPalette();
@@ -2440,6 +2483,7 @@ export function App() {
                 selected={selected}
                 onSelect={loadDiff}
                 onStage={(file) => operate("unstage", { path: file.path })}
+                busy={loading}
               />
               {!state.files.length && (
                 <div className="clean-state">

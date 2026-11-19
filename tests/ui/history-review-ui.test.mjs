@@ -275,10 +275,12 @@ describe('history review UI (rendered)', () => {
     // 二进制差异不打印乱码，而是给一句人话说明它为什么没有文本 Diff。
     expect(await screen.findByText('二进制文件差异')).toBeInTheDocument()
     expect(container).toHaveTextContent('Git 无法生成文本内容')
-    // 比较结果顶部仍说明读取的方向。
-    expect(container.querySelector('.history-notice')).toHaveTextContent(
+    // 比较结果顶部同时说明读取方向，并且不吞掉二进制提示（两者彼此独立）。
+    const notice = container.querySelector('.history-notice')
+    expect(notice).toHaveTextContent(
       `比较方向「基准 → 对比」：${PREVIOUS_COMMIT.shortHash} → ${HEAD_COMMIT.shortHash}`,
     )
+    expect(notice).toHaveTextContent('结果中包含二进制文件，Git 无法为它们生成文本 Diff。')
   })
 
   it('reports a failed comparison with a Chinese reason and a way back', async () => {

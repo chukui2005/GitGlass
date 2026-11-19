@@ -148,11 +148,9 @@ describe('batch stage UI (rendered)', () => {
     expect(screen.getByRole('button', { name: '暂存所选 1 个' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '全选未暂存' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '清除选择' })).toBeDisabled()
-    // 单文件行上的“暂存”同样禁用，加载期间不能半途改状态。
-    // 注意：已暂存区目前没有接 `busy`（`<FileSection>` 只给未暂存区传了它），
-    // 所以“取消暂存”按钮在加载期间仍可点——这是本次真渲染暴露出来的既有缺口，
-    // 记在 PR 的后续项里，不用断言锁死当前行为。
+    // 单文件行上的“暂存 / 取消暂存”同样禁用：加载期间两个分区都不能半途改状态。
     expect(screen.getByRole('button', { name: '暂存 src/main.jsx' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '取消暂存 electron/main.cjs' })).toBeDisabled()
 
     release()
     await waitFor(() => {
