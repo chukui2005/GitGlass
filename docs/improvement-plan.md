@@ -238,7 +238,8 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 | 9 | 没有 lint、没有类型检查、没有覆盖率门槛 | `package.json` 无 eslint/tsc、`vite.config.mjs` 仅 `globals/fileParallelism` | ✅ 0.6.4-beta.2：ESLint flat config（0 error）+ `tsc --checkJs --noEmit`（0 error）+ vitest coverage 门槛 50%，三项都进 CI；详见「0.6.4-beta.2 交付记录」 |
 | 10 | UI 测试 47 例中 39 例是"读源码字符串断言"（断言某段文本出现几次），删代码会红、逻辑失效不会红 | `tests/ui/*.test.cjs` | ✅ **0.6.5-beta.1（A 半）**：4 个文件 32 例改成 `@testing-library/react` 真渲染，覆盖暂存/提交/筛选/更新四条主流程；纯 CSS 规则挪到 `tests/ui/style-contracts.test.cjs`；8 个真实 Electron 探针全部保留。详见「0.6.5-beta.1（A 半）交付记录」 |
 | 11 | `main.jsx` ≈2 990 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | ✅ **0.6.5-beta.1（B 半）**：`main.jsx` 3027 → **1441 行**；4 个领域 hook（history / safety / remote / panel）+ `workbench-ui.jsx`（26 个展示组件）；4 条 `exhaustive-deps` warning 全部消除，覆盖率 exclude 里撤掉 `main.jsx`。详见「0.6.5-beta.1（B 半）交付记录」 |
-| 12 | 没有"装包 → 启动 → 查更新 → 卸载"的冒烟测试 | CI 只做构建 + 哈希校验 | CI 或手动脚本对 `release/win-unpacked` 启动一次并比对 `app.getVersion()`；升级路径留在 VM 验收 |
+| 12 | 没有"装包 → 启动 → 查更新 → 卸载"的冒烟测试 | CI 只做构建 + 哈希校验 | CI 或手动脚本对 `release/win-unpacked` 启动一次并比对 `app.getVersion()`；升级路径留在 VM 验收。**部分缓解**：体积审计时已手动对打包产物做过一次启动冒烟（探针记录到 `whenReady → window-created → did-finish-load → ready-to-show`），但仍未进 CI |
+| 18 | **窗口外壳没有自动化覆盖，且"测试时看到的外观"不等于产品外观** | `tests/ui/electron-launch.test.cjs` 只读 `main.cjs` 的源码字符串（断言写了 `titleBarOverlay`、传了 `icon`），没有真的启动一次外壳；`tests/support/*.cjs` 自建 `BrowserWindow` 时**不复制** `titleBarStyle` / `titleBarOverlay` / `icon`，也不调用 `Menu.setApplicationMenu(null)`，所以探针窗口是**原生 Windows 标题栏 + `electron.exe` 的 Electron 原子图标 + 原生菜单**，而真实应用是自绘 48px 标题栏 + GitGlass 图标、无原生菜单。维护者（2026-11-19）因此误以为图标/标题栏没生效 | 用 `npm run dist:win` 的产物跑一条冒烟测试：启动 `release/win-unpacked/GitGlass.exe`，断言窗口带自绘标题栏（`titleBarOverlay` 生效）、进程 exe 的图标不是 Electron 默认图标、win32 上没有原生应用菜单；前置条件复用 CI `Quality` job 里已经跑的 `dist:win`。**不要**给探针加"模拟外壳"开关——那会让探针既不像测试也不像产品 |
 
 ## P3 发布与版本
 
