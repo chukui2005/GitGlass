@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.5-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.4-beta.2...v0.6.5-beta.1) (2026-11-19)
+
+### Features
+
+* 最近仓库当前项补整行浅底 ([ddb4806](https://github.com/chukui2005/GitGlass/commit/ddb4806a52e079219e0c6af8aa0520502ad57e7d))
+* 文件头三行压成一行面包屑 ([1ffa443](https://github.com/chukui2005/GitGlass/commit/1ffa443c6e5dfc461eff4df6f20382ffa3ee8dc7))
+* 没有仓库时右栏改渲染引导块，不再显示整套禁用的提交表单 ([0dc8f62](https://github.com/chukui2005/GitGlass/commit/0dc8f62265240f154893f588745b88499d871bee))
+
+### Bug Fixes
+
+* 通知横幅改白底色条，并统一按钮禁用态 ([5a775f5](https://github.com/chukui2005/GitGlass/commit/5a775f53188007aa70ad882809301034a0d42f79))
+
+### Performance
+
+* start the update service after the window, not before it ([e0ad04a](https://github.com/chukui2005/GitGlass/commit/e0ad04a413db0217360975cf8b7994432070615d))
+
+### 工程与质量（不改变产品行为）
+
+* **UI 测试现代化**：引入 `@testing-library/react`，把 4 个测试文件里 32 例「读 `src/main.jsx` 源码字符串」的断言换成真渲染（假 `window.gitglass` 桥），用例 305 → 320；纯 CSS 断言单独收进 `tests/ui/style-contracts.test.cjs`；8 个真实 Electron 探针原样保留
+* **依赖归类**：`dependencies` 只剩主进程真正 `require` 的 `electron-updater` 与 `semver`；`react` / `react-dom` / `@phosphor-icons/react` 移入 `devDependencies`（`scheduler` 作为传递依赖自动跟随），`app.asar` 内不再含这些包
+* 启动探针与体积报告：`npm run report:startup -- --installed` / `npm run report:size` 可复测（见 `docs/size-and-performance.md`）
+
 ## [0.6.4-beta.2](https://github.com/chukui2005/GitGlass/compare/v0.6.4-beta.1...v0.6.4-beta.2) (2026-11-18)
 
 ### 工程与质量（不改产品行为）
