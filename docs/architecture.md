@@ -85,6 +85,21 @@ Renderer intent -> preload IPC -> RepositoryService -> GitCommandService
 
 Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout and cwd stay in their CommandRecord for copy and inspection.
 
+## Renderer structure (0.6.5)
+
+`src/main.jsx` is the App shell only: workspace state (files, diff, commit message, ledger, notices), the refresh pipeline, repository switching, and the JSX that places the three panes. The domain logic lives in hooks, and the presentational pieces live in one components module:
+
+| File | Owns |
+| --- | --- |
+| `src/main.jsx` | App shell + JSX, refresh/ledger pipeline, repository open/switch, notice banner, global shortcuts, command palette wiring |
+| `src/use-history-review.js` | history mode, filters (draft/applied), query sequence, commit selection + detail cache, compare pair, file history, Esc semantics |
+| `src/use-safety-plans.js` | discard / delete-merged-branch / reflog rescue / branch switch plans and the recovery panel |
+| `src/use-remote-overview.js` | remote overview and the fetch/push/pull plans (the plan needs the overview, so both live here) |
+| `src/use-panel-resize.js` | panel widths: persistence, clamping, drag, keyboard |
+| `src/workbench-ui.jsx` | every presentational component (diff rows, file sections, batch toolbar, ledger, plan/inspector panels, history rows/filters, command palette, command ledger) |
+
+Hooks receive the IPC bridge as a `gitglass` argument instead of reading `window`, so they can be unit tested with a plain object. The JSX, class names, `aria-*` attributes and Chinese copy are unchanged from the single-file version — the rendered tests in `tests/ui/*.test.mjs` assert them.
+
 ## V0.5.6 history query boundary
 
 `history:query(filters)` accepts only `{ keyword, author, branch, filePath }`; unknown keys, non-strings, NUL/control characters and overlong text are rejected in the main process and recorded as a background local validation rejection. `branch` is rechecked against `git branch --format=…`; `filePath` must be a repository-relative safe path and pass `git ls-files --error-unmatch -- <path>`. Only then does `RepositoryService` construct fixed-structure `git log -200 --date=iso-strict --regexp-ignore-case …`; keyword-only queries add `--fixed-strings`, while queries containing an author use Git's regex matcher with both author and keyword safely escaped as literals. It never accepts renderer-supplied argv or a command string, never uses `--all`, and never exposes remote branch or rewrite operations.

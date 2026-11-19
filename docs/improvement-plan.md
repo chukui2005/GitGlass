@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | **0.6.4-beta.1** ✅ | 视觉对齐 dbx：设计 token（中性灰 + 近黑主按钮 + 4/6/8px 圆角）、顶栏与按钮度量、侧栏与列表密度、分割条重做、账本与模态、空状态 | 三档宽度（1440/1280/1024）截图无溢出、字号层级与 dbx 一致、分割条 1px 视觉 + 宽命中区 |
 | **0.6.4-beta.2** ✅ | 工程门槛：ESLint flat config、`tsc --checkJs --noEmit`（先覆盖 `electron/` 与 `src/` 里已有单测的纯逻辑模块）、vitest coverage 门槛 | `npm run lint` / `npm run typecheck` 进 CI 且为绿色，覆盖率门槛从 50% 起 |
-| **0.6.5-beta.1** | **A 半 ✅（2026-11-19）** 测试现代化：引入 `@testing-library/react`（**允许新增 devDependency**），把 32 例"读源码字符串"的 UI 断言换成真渲染；**B 半（剩余）** 结构债：拆 `main.jsx`（history / safety / remote 三个领域 hook） | A 半已达成：UI 测试改为真渲染，删掉一行文案不再误红；B 半待达成：`main.jsx` 降到 1500 行以内 |
+| **0.6.5-beta.1** | **A 半 ✅（2026-11-19）** 测试现代化：引入 `@testing-library/react`（**允许新增 devDependency**），把 32 例"读源码字符串"的 UI 断言换成真渲染；**B 半 ✅（2026-11-19）** 结构债：`main.jsx` 3027 → **1441 行**，拆出 history / safety / remote / panel 四个 hook 与 `workbench-ui.jsx` | 两项都已达成：UI 测试真渲染（删一行文案不再误红）；`main.jsx` 在 1500 行以内，四项覆盖率门槛仍绿 |
 | 后续（未排期） | 包体积与性能（见下节） | 有测量基线，且安装包/内存有可量化下降 |
 
 ### 0.6.4-beta.1 交付记录（2026-11-18）
@@ -58,18 +58,19 @@
 | 类型检查 | `tsconfig.json`（`allowJs` + `checkJs` + `noEmit`，`strict: false`，`moduleResolution: bundler`）；`include` 只有 `electron/**/*.cjs` 与 12 个已有单测的 `src/` 纯逻辑模块 | **0 error**。首轮 38 个报错全部真修：`UpdateService` 用显式属性赋值替代 `Object.assign(this, …)`（行为等价，只为了让属性对 `checkJs` 可见）、`titleBarOptions` 补 `BrowserWindowConstructorOptions` 注解、`notice-lifecycle` / `shortcut-policy` / `diff-presentation` 补 `@typedef` 与 `@returns` |
 | 覆盖率门槛 | `vite.config.mjs` 的 `test.coverage`：`provider: v8`、`reporter: ['text', 'json-summary']`、阈值四项各 50% | 实测 **statements 79.94% / branches 70.61% / functions 79.12% / lines 83.27%**（1541 语句 / 1426 分支 / 297 函数 / 1190 行） |
 
-被 `test.coverage.exclude` 排除的三个文件（理由同步写进 `docs/conventions.md` 第 5 节）：
+被 `test.coverage.exclude` 排除的文件（理由同步写进 `docs/conventions.md` 第 5 节）。0.6.5 拆完 `main.jsx` 后只剩两个：
 
 | 文件 | 理由 |
 | --- | --- |
-| `src/main.jsx` | 2693 行的 UI 入口，只在渲染进程里跑；类型化与覆盖率都要等 0.6.5 拆成 history / safety / remote 三个 hook 之后 |
 | `electron/main.cjs` | 主进程入口，只在 `electron .` 拉起的子进程里执行，vitest 的进程内 v8 覆盖率看不到；实际覆盖由 `tests/ui/` 的真实启动探针负责 |
 | `electron/preload.cjs` | 同上，`contextBridge` 暴露面只在子进程里求值 |
 
+`src/main.jsx` 曾经也在名单里（2693 行的 UI 入口）；0.6.5 把它拆成 4 个 hook + `workbench-ui.jsx` 之后，真渲染用例已经覆盖到它，于是这条 exclude 被撤掉了。
+
 **下一步（扩大范围）**：
 
-1. **`tsc` 扩到 `main.jsx`**：先补 `@types/react` / `@types/react-dom`，随 0.6.5 的 hook 拆分逐个文件加进 `include`；同时评估打开 `strictNullChecks`（`strict: false` 只是第一档）。
-2. **提高覆盖率阈值**：当前四项实测都在 70% 以上，但 `app-updates.jsx`(0%)、`brand-mark.jsx`(0%)、`recent-repositories-menu.jsx`(18.81%) 还在拖后腿，等 0.6.5 换成 `@testing-library/react` 真渲染后再把门槛提到 70%。
+1. **`tsc` 扩到 `main.jsx` / `workbench-ui.jsx`**：先补 `@types/react` / `@types/react-dom`（领域 hook 已在 `include` 里，见 `src/use-*.js`）；同时评估打开 `strictNullChecks`（`strict: false` 只是第一档）。
+2. **提高覆盖率阈值**：0.6.5 之后四项实测 75.03 / 69.71 / 71.95 / 77.64，`workbench-ui.jsx`（40.24%）是主要短板——安全计划、恢复中心、命令面板这几个面板还没有真渲染用例。补完再往 70% 提。
 3. **CI 去重**：`npm test` 与 `npm run test:coverage` 会跑两遍同一套用例（约 +2 分钟），等覆盖率稳定后可以只保留后者。
 
 ### 0.6.5-beta.1（A 半）交付记录（2026-11-19）
@@ -99,6 +100,26 @@
 
 - 先拆 history 领域（`historyMode` / `historySelected` / `historyDetail` / `historyResult` / `historyCompare` / `historyFile` / `historyDraft` / `historyApplied` 加 `selectHistoryCommit`、`readCompare`、`applyHistoryFilters`、`openFileHistory*`）：`tests/ui/history-review-ui.test.mjs` 的 14 例现成可以当安全网。
 - 每搬一块就顺手删掉对应的"源码同步"断言：`resizable-workspace-panels`（17 条读 `main.jsx`）、`history-row-layout`（2 条）、`batch-stage-layout`（1 条取区块用）。
+
+### 0.6.5-beta.1（B 半）交付记录（2026-11-19）
+
+`main.jsx` 从"一个 3000 行的组件"拆成"App 外壳 + 4 个领域 hook + 1 个展示组件模块"。
+行为、DOM 结构、类名、`aria-*`、中文文案一律不变——A 半建好的真渲染用例（现 333 例）全程当安全网，每抽一块都单独跑绿。
+
+| 文件 | 行数 | 职责 |
+| --- | --- | --- |
+| `src/main.jsx` | **1441**（原 3027） | App 外壳与 JSX、刷新/账本管线、仓库打开与切换、通知横幅、全局快捷键、命令面板接线 |
+| `src/use-history-review.js` | 422 | 历史模式、筛选草稿/已应用、查询序号、提交选择与详情缓存、双提交比较、文件历史、Esc 三段语义 |
+| `src/use-safety-plans.js` | 260 | 撤销/删除分支/救援分支/切换分支的计划与恢复中心 |
+| `src/use-remote-overview.js` | 118 | 远程 overview 与 fetch/push/pull 计划 |
+| `src/use-panel-resize.js` | 148 | 面板宽度：持久化、夹紧、拖拽、键盘 |
+| `src/workbench-ui.jsx` | 1277 | 26 个展示组件（diff 行、文件分区、批量工具栏、账本、计划/Inspector 面板、历史行与筛选、命令面板） |
+
+- **4 条 `exhaustive-deps` warning 全部消除，没有加一条 disable**：首屏 effect 改读"最新闭包"ref；通知计时器在 effect 内就地推 `operationBanner`；全局快捷键订阅改为每次渲染重建（处理器闭包住最新状态）；命令面板条目改由 `buildPaletteCommands()` 纯函数生成，去掉那个每帧都会重算的 `useMemo`。lint 现在是 **0 error / 0 warning**。
+- **覆盖率 exclude 撤掉 `src/main.jsx`**：四项 75.03 / 69.71 / 71.95 / 77.64（门槛 50%），`main.jsx` 自身 64.72 / 65.36 / 55.17 / 68.68。`workbench-ui.jsx` 只有 40.24%，是下一步提阈值前要补的短板（安全计划、恢复中心、命令面板还没有真渲染用例）。
+- **两个真渲染测试暴露的缺口已修，各带一条测试**：已暂存区 `<FileSection>` 接上 `busy`（加载中「取消暂存」也禁用）；`historyNotice` 把比较方向与二进制提示拆成彼此独立的判断（二进制比较结果不再吞掉提示）。
+- **偏离原计划的两处，需要评审确认**：① 只抽 3 个 hook 无法把 `main.jsx` 压到 1500 行以内（三个 hook 只能带走约 400 行，剩下的是 JSX 与展示组件），所以额外拆了 `workbench-ui.jsx` 与 `use-panel-resize.js`；② `remotePlan` 的 prepare/confirm 放进 `use-remote-overview.js` 而不是 `use-safety-plans.js`，因为准备 fetch 需要 overview、计划面板也要显示上游与领先/落后，拆开会让两个 hook 互相依赖。
+- 三个"读源码"的测试跟着代码走：`resizable-workspace-panels`（标记 → `workbench-ui.jsx`，拖拽/持久化 → `use-panel-resize.js`）、`history-row-layout`（提交行 → `workbench-ui.jsx`）、`copy-polish`（同时读两个渲染层文件，文案搬家不再误红）。
 
 ### 0.6.4-beta.1 遗留的视觉问题（下一轮，不阻塞本次 beta）
 
@@ -209,7 +230,7 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 | --- | --- | --- | --- |
 | 9 | 没有 lint、没有类型检查、没有覆盖率门槛 | `package.json` 无 eslint/tsc、`vite.config.mjs` 仅 `globals/fileParallelism` | ✅ 0.6.4-beta.2：ESLint flat config（0 error）+ `tsc --checkJs --noEmit`（0 error）+ vitest coverage 门槛 50%，三项都进 CI；详见「0.6.4-beta.2 交付记录」 |
 | 10 | UI 测试 47 例中 39 例是"读源码字符串断言"（断言某段文本出现几次），删代码会红、逻辑失效不会红 | `tests/ui/*.test.cjs` | ✅ **0.6.5-beta.1（A 半）**：4 个文件 32 例改成 `@testing-library/react` 真渲染，覆盖暂存/提交/筛选/更新四条主流程；纯 CSS 规则挪到 `tests/ui/style-contracts.test.cjs`；8 个真实 Electron 探针全部保留。详见「0.6.5-beta.1（A 半）交付记录」 |
-| 11 | `main.jsx` ≈2 990 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | **0.6.5 剩余项（B 半）**：先抽三个领域 hook（history / safety / remote）与对应面板组件；再逐步引入 memo 化。A 半已把真渲染测试建好，拆 hook 时可以直接用它当安全网 |
+| 11 | `main.jsx` ≈2 990 行、42 个 `useState`、0 个 `useCallback` | `src/main.jsx` | ✅ **0.6.5-beta.1（B 半）**：`main.jsx` 3027 → **1441 行**；4 个领域 hook（history / safety / remote / panel）+ `workbench-ui.jsx`（26 个展示组件）；4 条 `exhaustive-deps` warning 全部消除，覆盖率 exclude 里撤掉 `main.jsx`。详见「0.6.5-beta.1（B 半）交付记录」 |
 | 12 | 没有"装包 → 启动 → 查更新 → 卸载"的冒烟测试 | CI 只做构建 + 哈希校验 | CI 或手动脚本对 `release/win-unpacked` 启动一次并比对 `app.getVersion()`；升级路径留在 VM 验收 |
 
 ## P3 发布与版本
