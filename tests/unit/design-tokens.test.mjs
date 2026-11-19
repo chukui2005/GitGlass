@@ -71,29 +71,35 @@ describe('Design tokens: dbx 中性色板', () => {
     expect(fontSizesBelow(styles, 11)).toEqual([])
   })
 
-  it('keeps the notice banner and the recent-repository menu on the same tokens', () => {
-    expect(declarations(styles, '.app-notice')).toMatchObject({ 'font-size': 'var(--font-secondary)' })
-    // 横幅正文与 pin 都是 12/11px 小字：浅色底上用同色 ink（#16a34a on #e8f7ee 约 3.2:1 → ink 约 4.6:1）。
+  it('keeps the notice banner and its pin on the ghost recipe', () => {
+    expect(declarations(styles, '.app-notice')).toMatchObject({
+      'font-size': 'var(--font-secondary)',
+      background: 'var(--surface)',
+      'border-bottom': '1px solid var(--line)',
+    })
+    // 横幅不再通栏染色：白底 + 左侧 2px 色条，正文用对应的 ink 色。
     expect(declarations(styles, '.app-notice.success')).toMatchObject({
-      background: 'var(--green-soft)',
-      'border-color': 'color-mix(in srgb,var(--green) 30%,#fff)',
+      'border-left': '2px solid var(--green)',
       color: 'var(--green-ink)',
     })
     expect(declarations(styles, '.app-notice.error')).toMatchObject({
-      background: 'var(--red-soft)',
-      'border-color': 'color-mix(in srgb,var(--red) 30%,#fff)',
+      'border-left': '2px solid var(--red)',
       color: 'var(--red-ink)',
     })
+    // pin 是 ghost 按钮：--line 描边 + --text 文字，按下才用淡蓝底强调。
     expect(declarations(styles, '.app-notice-pin')).toMatchObject({
       'font-size': 'var(--font-aux)',
       'line-height': 'var(--line-aux)',
       'border-radius': 'var(--radius-sm)',
-      color: 'inherit',
+      border: '1px solid var(--line)',
+      color: 'var(--text)',
     })
     expect(declarations(styles, '.app-notice-pin[aria-pressed="true"]')).toMatchObject({
-      background: 'color-mix(in srgb,var(--text) 10%,transparent)',
+      background: 'var(--blue-soft)',
     })
+  })
 
+  it('keeps the recent-repository menu on the same tokens', () => {
     expect(declarations(styles, '.recent-repositories-menu')).toMatchObject({
       border: '1px solid var(--line)',
       'border-radius': 'var(--radius-lg)',
@@ -148,11 +154,33 @@ describe('Design tokens: 按钮三档（dbx 度量）', () => {
     expect(
       declarations(styles, '.primary-button:not(:disabled):active,.primary-action:not(:disabled):active'),
     ).toMatchObject({ background: '#0a0a0a' })
-    // 禁用态回到中性灰底：页面上永远只有一个"看起来实心"的主按钮。
-    expect(declarations(styles, '.primary-button:disabled,.primary-action:disabled')).toMatchObject({
-      background: 'var(--hover)',
+    // 禁用态回到中性灰底：页面上永远只有一个"看起来实心"的主按钮（完整公式见下一组用例）。
+    expect(
+      declarations(
+        styles,
+        '.primary-button:disabled,.primary-action:disabled,.secondary-button:disabled,.secondary-action:disabled,.sync-action:disabled,.remote-actions button:disabled',
+      )['background'],
+    ).toBe('var(--sunken)')
+  })
+
+  it('uses one disabled formula for primary, secondary and remote buttons', () => {
+    // 以前主/次按钮靠全局 opacity:.5，远程动作按钮用 --sunken + --faint，深浅不一致；
+    // 现在三条档位共用同一组声明，只有低权重按钮还保留透明度兜底。
+    const formula = {
+      background: 'var(--sunken)',
+      'border-color': 'var(--line)',
       color: 'var(--faint)',
-    })
+      opacity: '1',
+    }
+    expect(
+      declarations(
+        styles,
+        '.primary-button:disabled,.primary-action:disabled,.secondary-button:disabled,.secondary-action:disabled,.sync-action:disabled,.remote-actions button:disabled',
+      ),
+    ).toMatchObject(formula)
+    // 远端按钮不允许再有一套自己的禁用底色（它只出现在上面那条共用规则里）。
+    expect(declarations(styles, '.remote-actions button:disabled')).toBeNull()
+    expect(declarations(styles, '.secondary-button:disabled,.secondary-action:disabled,.sync-action:disabled')).toBeNull()
   })
 
   it('gives the secondary tier a 1px neutral border and a 32px height', () => {
@@ -221,7 +249,7 @@ describe('Design tokens: 按钮三档（dbx 度量）', () => {
     ]) {
       expect(declarations(styles, selector), selector).not.toBeNull()
     }
-    // 禁用只降透明度（dbx disabled:opacity-50）：不写 width/height/padding/margin/border，避免禁用态改变布局。
+    // 低权重按钮仍只降透明度（dbx disabled:opacity-50）：不写 width/height/padding/margin/border，避免禁用态改变布局。
     const disabled = declarations(styles, 'button:disabled')
     expect(disabled).toMatchObject({
       cursor: 'not-allowed',
