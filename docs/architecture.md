@@ -100,6 +100,16 @@ Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout a
 
 Hooks receive the IPC bridge as a `gitglass` argument instead of reading `window`, so they can be unit tested with a plain object. The JSX, class names, `aria-*` attributes and Chinese copy are unchanged from the single-file version — the rendered tests in `tests/ui/*.test.mjs` assert them.
 
+### Command ledger rendering
+
+The ledger keeps up to 300 records in memory and re-reads all of them through `getLedger()` on every refresh, but only one or two of them are new. Three cheap mechanisms keep that from turning into a full re-render:
+
+1. `reuseUnchangedRecords(previous, next)` in `src/workbench-ledger.js` keeps the previous object identity for a record whose fields did not change, so a refresh only replaces the objects that actually changed.
+2. `CommandLedger`, `LedgerEntry`, `RefreshGroup` and `Output` are `memo`ized, and the ledger callbacks in `main.jsx` are `useCallback`s, so unrelated App state (notices, command palette, panel resize) no longer walks the record list.
+3. A record's details panel (`ledger-details`, stdout/stderr, technical details) is only mounted while that record is expanded.
+
+`tests/ui/ledger-rendering.test.mjs` pins both properties: expanding one record mounts exactly one details block, and an unrelated App re-render reads zero record fields (measured through a `Proxy`; the same probe read 3600 fields for 120 records before the change). No virtual list: with 300 two-line rows the DOM is not the bottleneck, and windowing would cost keyboard reachability and scroll-position fidelity.
+
 ## V0.5.6 history query boundary
 
 `history:query(filters)` accepts only `{ keyword, author, branch, filePath }`; unknown keys, non-strings, NUL/control characters and overlong text are rejected in the main process and recorded as a background local validation rejection. `branch` is rechecked against `git branch --format=…`; `filePath` must be a repository-relative safe path and pass `git ls-files --error-unmatch -- <path>`. Only then does `RepositoryService` construct fixed-structure `git log -200 --date=iso-strict --regexp-ignore-case …`; keyword-only queries add `--fixed-strings`, while queries containing an author use Git's regex matcher with both author and keyword safely escaped as literals. It never accepts renderer-supplied argv or a command string, never uses `--all`, and never exposes remote branch or rewrite operations.
