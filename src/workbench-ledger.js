@@ -146,3 +146,43 @@ export function groupBackgroundRecords(records) {
 
   return groups
 }
+
+// 字段值比较：命令记录里只有字符串、数字、布尔与 argv 这类字符串数组。
+function sameFieldValue(left, right) {
+  if (left === right) return true
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => item === right[index])
+  }
+  return false
+}
+
+function sameRecord(left, right) {
+  const keys = Object.keys(right)
+  if (keys.length !== Object.keys(left).length) return false
+  return keys.every((key) => sameFieldValue(left[key], right[key]))
+}
+
+/**
+ * 账本刷新时复用「内容没变」的记录对象。
+ *
+ * 每次 `getLedger()` 都会从 IPC 收到一整套新对象，但账本上限 300 条、一次刷新通常只多出
+ * 一两条新记录：如果整列都换身份，`React.memo` 就救不了任何一条，300 条记录每次自动刷新
+ * 都要全部重渲染。这里按 `id` 找回上一份对象，字段逐个比较，没变就复用旧对象。
+ *
+ * @param {Array<Record<string, unknown>> | null | undefined} previous 上一份记录
+ * @param {Array<Record<string, unknown>>} next 新收到的记录
+ * @returns {Array<Record<string, unknown>>} 尽量复用旧对象的新数组
+ */
+export function reuseUnchangedRecords(previous, next) {
+  if (!Array.isArray(next)) return []
+  if (!Array.isArray(previous) || !previous.length) return next
+  const byId = new Map()
+  for (const record of previous) {
+    if (record?.id !== undefined) byId.set(record.id, record)
+  }
+  if (!byId.size) return next
+  return next.map((record) => {
+    const existing = byId.get(record?.id)
+    return existing && sameRecord(existing, record) ? existing : record
+  })
+}

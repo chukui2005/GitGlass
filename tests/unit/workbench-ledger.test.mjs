@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, recordDurationLabel, recordStatusLabel, recordTypeLabel } from '../../src/workbench-ledger.js'
+import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, recordDurationLabel, recordStatusLabel, recordTypeLabel, reuseUnchangedRecords } from '../../src/workbench-ledger.js'
 
 // 用 String.fromCharCode 构造控制字符，避免测试源码里出现不可见字符。
 const RS = String.fromCharCode(30) // 0x1e 记录分隔符
@@ -105,5 +105,59 @@ describe('V0.5.2 ledger output formatting', () => {
     expect(formatLedgerOutput(raw)).toBe('subject\nauthor')
     // 原始字符串保持原样，账本记录仍是真实 stdout。
     expect(raw).toBe(`subject${RS}author`)
+  })
+})
+
+describe('Ledger record identity across refreshes', () => {
+  // 每次 getLedger() 都是新对象：内容没变的记录要复用上一份身份，
+  // 否则 React.memo 会失效，300 条记录每次自动刷新都要全部重渲染。
+  const base = {
+    id: 'status',
+    source: 'background',
+    intent: 'Read working tree status',
+    displayCommand: 'git status --porcelain=v1 -z',
+    argv: ['status', '--porcelain=v1', '-z'],
+    stdout: ' M src/main.jsx',
+    stderr: '',
+    exitCode: 0,
+    ok: true,
+    startedAt: '2026-11-19T02:00:00.000Z',
+    endedAt: '2026-11-19T02:00:00.120Z',
+  }
+
+  it('reuses the previous object when every field is unchanged', () => {
+    const previous = [base, { ...base, id: 'branches' }]
+    const next = [{ ...base }, { ...base, id: 'branches' }]
+    const merged = reuseUnchangedRecords(previous, next)
+    expect(merged).toHaveLength(2)
+    expect(merged[0]).toBe(previous[0])
+    expect(merged[1]).toBe(previous[1])
+  })
+
+  it('keeps the new object as soon as one field differs', () => {
+    const changedExit = { ...base, exitCode: 1, ok: false }
+    expect(reuseUnchangedRecords([base], [changedExit])[0]).toBe(changedExit)
+    // argv 是数组：值相同就复用，值不同就换新对象。
+    expect(reuseUnchangedRecords([base], [{ ...base, argv: [...base.argv] }])[0]).toBe(base)
+    const changedArgv = { ...base, argv: ['status', '--short'] }
+    expect(reuseUnchangedRecords([base], [changedArgv])[0]).toBe(changedArgv)
+    // 多出/少掉一个字段（例如补上 refreshCycleId）也算变化。
+    const grouped = { ...base, refreshCycleId: 'cycle-1' }
+    expect(reuseUnchangedRecords([base], [grouped])[0]).toBe(grouped)
+  })
+
+  it('keeps the incoming order and passes new records through untouched', () => {
+    const fresh = { ...base, id: 'fresh' }
+    const merged = reuseUnchangedRecords([base], [fresh, { ...base }])
+    expect(merged.map((record) => record.id)).toEqual(['fresh', 'status'])
+    expect(merged[0]).toBe(fresh)
+    expect(merged[1]).toBe(base)
+  })
+
+  it('falls back to the incoming list when there is no previous state', () => {
+    const next = [{ ...base }]
+    expect(reuseUnchangedRecords(undefined, next)).toBe(next)
+    expect(reuseUnchangedRecords([], next)).toBe(next)
+    expect(reuseUnchangedRecords([base], [])).toEqual([])
   })
 })

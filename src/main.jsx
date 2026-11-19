@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
@@ -18,6 +18,7 @@ import {
   countBySource,
   filterLedgerRecords,
   groupBackgroundRecords,
+  reuseUnchangedRecords,
 } from "./workbench-ledger.js";
 import {
   binaryDiffPattern,
@@ -285,6 +286,14 @@ export function App() {
     () => groupBackgroundRecords(visibleRecords),
     [visibleRecords],
   );
+  // CommandLedger 是 memo 的：这几个回调必须保持稳定引用，否则每次 App 重渲染都会
+  // 让整列（最多 300 条）记录跟着重渲染。行为与内联箭头函数完全一致。
+  const toggleLedger = useCallback(() => setLedgerOpen((value) => !value), []);
+  const openLedgerPanel = useCallback(() => setLedgerOpen(true), []);
+  const changeLedgerFilter = useCallback((tab) => {
+    setLedgerFilter(tab);
+    setFocusedOperationId(null);
+  }, []);
   const latestRecord = records[0];
   const preview = !repo
     ? "git status --porcelain=v1 -z --untracked-files=all"
@@ -409,17 +418,20 @@ export function App() {
   }
   async function refreshLedger(cycle) {
     const next = await window.gitglass.getLedger();
-    setRecords(
-      next.map((record) => {
-        if (
-          record.source === "background" &&
-          cycle &&
-          !refreshCycles.current.has(record.id)
-        )
-          refreshCycles.current.set(record.id, cycle);
-        const refreshCycleId = refreshCycles.current.get(record.id);
-        return refreshCycleId ? { ...record, refreshCycleId } : record;
-      }),
+    setRecords((previous) =>
+      reuseUnchangedRecords(
+        previous,
+        next.map((record) => {
+          if (
+            record.source === "background" &&
+            cycle &&
+            !refreshCycles.current.has(record.id)
+          )
+            refreshCycles.current.set(record.id, cycle);
+          const refreshCycleId = refreshCycles.current.get(record.id);
+          return refreshCycleId ? { ...record, refreshCycleId } : record;
+        }),
+      ),
     );
   }
   function clearStaleRepositoryState(failure) {
@@ -1403,14 +1415,11 @@ export function App() {
       </div>}
       <CommandLedger
         open={ledgerOpen}
-        onToggle={() => setLedgerOpen(!ledgerOpen)}
-        onOpen={() => setLedgerOpen(true)}
+        onToggle={toggleLedger}
+        onOpen={openLedgerPanel}
         latestRecord={latestRecord}
         filter={ledgerFilter}
-        onFilter={(tab) => {
-          setLedgerFilter(tab);
-          setFocusedOperationId(null);
-        }}
+        onFilter={changeLedgerFilter}
         counts={ledgerCounts}
         totalRecords={records.length}
         groups={ledgerGroups}
