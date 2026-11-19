@@ -19,6 +19,10 @@ const startupProbe = createStartupProbe()
 // GitGlass does not report its own writes back to the renderer as an external
 // change.
 const WATCH_SILENCE_MS = 1500
+// Reads such as `repo:state` run `git status`, which may rewrite .git/index. The
+// index events of our own command are never an external change, but HEAD/ref
+// events still are, so reads silence only `index` instead of everything.
+const WATCH_INDEX_SILENCE_MS = 1000
 const REPOSITORY_WRITE_CHANNELS = new Set([
   'git:operate',
   'remote:execute',
@@ -84,11 +88,16 @@ function startWatching(repositoryPath) {
 function handleRepository(channel, handler) {
   ipcMain.handle(channel, (event, ...args) => {
     assertMainFrame(event)
-    if (!REPOSITORY_WRITE_CHANNELS.has(channel)) return operationGate.run(() => handler(event, ...args))
+    const silenceOwnIndexWrites = () => watcher?.notifyIgnored(WATCH_INDEX_SILENCE_MS, { reasons: ['index'] })
+    silenceOwnIndexWrites()
+    if (!REPOSITORY_WRITE_CHANNELS.has(channel)) return operationGate.run(() => handler(event, ...args)).finally(silenceOwnIndexWrites)
     // Silent before and after: the command may take seconds (network) and the
     // watcher must not report the files it writes as an external change.
     watcher?.notifyIgnored(WATCH_SILENCE_MS)
-    return operationGate.run(() => handler(event, ...args)).finally(() => watcher?.notifyIgnored(WATCH_SILENCE_MS))
+    return operationGate.run(() => handler(event, ...args)).finally(() => {
+      watcher?.notifyIgnored(WATCH_SILENCE_MS)
+      silenceOwnIndexWrites()
+    })
   })
 }
 
