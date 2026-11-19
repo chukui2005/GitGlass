@@ -42,7 +42,7 @@ import {
 import { BrandMark } from "./brand-mark.jsx";
 import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { presentDiff } from "./diff-presentation.js";
-import { executionNotice, GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
+import { GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
 import { riskLabel } from "./plan-risk.js";
 import { AUTO_DISMISS_MS, createNoticeTimer, syncNoticeTimer } from "./notice-lifecycle.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
@@ -64,6 +64,7 @@ import "./styles.css";
 import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 import { useHistoryReview } from "./use-history-review.js";
 import { branchName, useSafetyPlans } from "./use-safety-plans.js";
+import { useRemoteOverview } from "./use-remote-overview.js";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
 const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
@@ -1209,8 +1210,6 @@ export function App() {
   // 拆成两个标志，避免"鼠标离开但焦点还在横幅里"被误判成可以继续计时。
   const [noticeHovered, setNoticeHovered] = useState(false);
   const [noticeFocused, setNoticeFocused] = useState(false);
-  const [remotePlan, setRemotePlan] = useState(null);
-  const [remote, setRemote] = useState(null);
   const [branches, setBranches] = useState([]);
   const [records, setRecords] = useState([]);
   const [ledgerFilter, setLedgerFilter] = useState("user");
@@ -1320,6 +1319,27 @@ export function App() {
   } = useSafetyPlans({
     gitglass: window.gitglass,
     branch: state.branch,
+    loading,
+    setLoading,
+    refreshLedger,
+    refreshAll,
+    setNotice,
+    openLedger,
+    setFocusedOperationId,
+  });
+  // 远程域：overview 与 fetch / push / pull 的计划。
+  const {
+    remote,
+    applyOverview,
+    remotePlan,
+    setRemotePlan,
+    fetch: fetchRemote,
+    push: pushRemote,
+    pull: pullRemote,
+    confirmRemote,
+  } = useRemoteOverview({
+    gitglass: window.gitglass,
+    repo,
     loading,
     setLoading,
     refreshLedger,
@@ -1600,7 +1620,7 @@ export function App() {
     setStageSelection(new Set());
     setBranches([]);
     resetHistoryState();
-    setRemote(null);
+    applyOverview(null);
   }
   async function runRefresh(preference, options) {
     const sequence = ++refreshSequence.current;
@@ -1631,7 +1651,7 @@ export function App() {
     ]);
     setBranches(branchResult.branches || []);
     applyQueryResultIfCurrent(queryToken, commitResult);
-    setRemote(remoteResult);
+    applyOverview(remoteResult);
     await refreshLedger(cycle);
     return resolved;
   }
@@ -1776,45 +1796,6 @@ export function App() {
     setFocusedOperationId(result.execution?.operationId || null);
     setNotice(operationNotice(action, result));
     if (result.commit) setMessage("");
-    await refreshAll();
-    setLoading(false);
-  }
-  async function requestRemote(kind) {
-    if (!repo || loading) return;
-    setLoading(true);
-    const prepared = await window.gitglass.prepareRemote(kind);
-    await refreshLedger();
-    setRemote(prepared.overview || remote);
-    setRemotePlan(
-      prepared.plan
-        ? {
-            ...prepared,
-            kind,
-            operationId: prepared.plan.operationId,
-            displayCommand: prepared.plan.displayCommand,
-          }
-        : { ...prepared, kind, blocked: true },
-    );
-    setLoading(false);
-  }
-  async function confirmRemote() {
-    if (!remotePlan?.plan) return;
-    setLoading(true);
-    setLedgerOpen(true);
-    const result = await window.gitglass.executeRemote(
-      remotePlan.kind,
-      remotePlan.operationId,
-    );
-    setFocusedOperationId(
-      result.execution?.operationId || remotePlan.operationId,
-    );
-    const remoteSuccess = {
-      fetch: "已获取远程更新。",
-      push: "已将当前分支推送到远程仓库。",
-      pull: "已以快进方式拉取远程更新。",
-    };
-    setNotice(executionNotice(remoteSuccess[remotePlan.kind] || "远程操作已完成。", result.execution));
-    if (result.execution?.ok) setRemotePlan(null);
     await refreshAll();
     setLoading(false);
   }
@@ -2073,7 +2054,7 @@ export function App() {
             aria-label="获取远程更新（先查看计划）"
             title="获取远程更新（先查看计划，不会立即执行）"
             disabled={!repo || loading || !remote?.remotes?.length}
-            onClick={() => requestRemote("fetch")}
+            onClick={fetchRemote}
           >
             <ArrowClockwise size={15} />
             <span className="top-action-label">获取…</span>
@@ -2526,9 +2507,9 @@ export function App() {
                 remote={remote}
                 files={state.files}
                 loading={loading}
-                onFetch={() => requestRemote("fetch")}
-                onPush={() => requestRemote("push")}
-                onPull={() => requestRemote("pull")}
+                onFetch={fetchRemote}
+                onPush={pushRemote}
+                onPull={pullRemote}
               />
             </>
           ) : (
