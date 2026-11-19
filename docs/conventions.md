@@ -72,6 +72,7 @@ tests/
 - **两条渲染路线，先选便宜的**：断言组件自身的行为/结构/可访问名称时，用 `@testing-library/react` 真渲染（0.6.5 起），文件头写 `// @vitest-environment jsdom`，用 `tests/support/render-app.mjs` 里的 `renderApp()` 装上 `window.gitglass` 假桥（`tests/support/gitglass-stub.mjs`）再挂载 `<App />`；需要真实 Electron 才能验证的东西（窗口拖拽、CSS 计算样式、安装器、contextBridge）才写 `tests/support/*-preload.cjs` + 真启动探针。
 - **不读源码文本**：`expect(source).toContain('<div className=…')` 这类断言删一行文案就会红、逻辑失效却不会红，禁止新增。只有**样式契约**（CSS 规则本身：哪一格滚动、窄到什么程度隐藏哪段）才读 `src/styles.css`，统一放在 `tests/ui/style-contracts.test.cjs`。
 - **禁止固定延时**：UI 探针统一用轮询（参考 `tests/support/update-ui.cjs` 里的 `waitUntil`），渲染测试用 `await waitFor(...)` / `findBy*`，超时信息里带最后观测值——CI 冷启动比本地慢，`pause(250)` 一定会翻车。
+- **探针窗口 ≠ 产品窗口**：`tests/support/*.cjs` 自己建 `BrowserWindow`，**不复制** `titleBarStyle` / `titleBarOverlay` / `icon`，也不移除原生菜单，所以弹出来的窗口是原生 Windows 标题栏 + Electron 的原子图标。看真实外观请跑 `npm run dist:win` 后的 `release/win-unpacked/GitGlass.exe`，不要用探针窗口下结论（外壳的自动化覆盖见 [improvement-plan.md](improvement-plan.md) 第 18 条）。
 - **禁止版本硬编码**：测试不得写死当前版本号。需要版本时从 `package.json` 读（`tests/release/release-checksums.test.mjs` 是范例）——版本一改，硬编码的测试必红。
 - **不访问外网**：需要网络的逻辑用本地 `http://127.0.0.1:<port>` 假服务或 mock。
 
