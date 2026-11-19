@@ -24,6 +24,7 @@
     "src/diff-presentation.js",
     "src/shortcut-policy.js",
     "src/command-palette-model.js",
-    "src/history-*.js"
+    "src/history-*.js",
+    "src/use-*.js"
   ]
 }

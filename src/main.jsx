@@ -37,7 +37,6 @@ import {
   changeOf,
   fullLocalTime,
   isHeadCommit,
-  orderComparePair,
   relativeTime,
 } from "./history-search.js";
 import { BrandMark } from "./brand-mark.jsx";
@@ -50,7 +49,6 @@ import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./
 import { shouldRefreshOnChange } from "./auto-refresh.js";
 import { isBlockingContextOpen, resolveShortcut, shortcutLabel } from "./shortcut-policy.js";
 import { commandAvailability } from "./command-palette-model.js";
-import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
 import {
   PANEL_BOUNDS,
   PANEL_WIDTH_STORAGE_KEY,
@@ -64,6 +62,7 @@ import {
 } from "./panel-resize.js";
 import "./styles.css";
 import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
+import { useHistoryReview } from "./use-history-review.js";
 
 const isDarwin = /Macintosh/.test(navigator.userAgent);
 const iconFor = { added: "+", modified: "M", deleted: "−", renamed: "R" };
@@ -1200,15 +1199,6 @@ function CommandPalette({ commands, platform, onClose, onExecute }) {
 // See tests/support/render-app.mjs.
 export function App() {
   const updates = useAppUpdates();
-  const [historyMode, setHistoryMode] = useState(false);
-  const [historySelected, setHistorySelected] = useState(null);
-  const [historyDetail, setHistoryDetail] = useState(null);
-  const [historyResult, setHistoryResult] = useState(null);
-  const [historyCompare, setHistoryCompare] = useState({ base: null, target: null });
-  const [historyFile, setHistoryFile] = useState(null);
-  const [historyDraft, setHistoryDraft] = useState(emptyHistoryFilters);
-  const [historyApplied, setHistoryApplied] = useState(null);
-  const [commitsReason, setCommitsReason] = useState("");
   const [repo, setRepo] = useState(null);
   // 最近打开仓库：[{ path, name, exists }]，由主进程在每次读取时重算 exists。
   const [recentRepositories, setRecentRepositories] = useState([]);
@@ -1235,7 +1225,6 @@ export function App() {
   const [acknowledgement, setAcknowledgement] = useState("");
   const [remote, setRemote] = useState(null);
   const [branches, setBranches] = useState([]);
-  const [commits, setCommits] = useState([]);
   const [records, setRecords] = useState([]);
   const [ledgerFilter, setLedgerFilter] = useState("user");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -1267,11 +1256,56 @@ export function App() {
     });
   }
   const refreshCycles = useRef(new Map());
-  const historySearchRef = useRef(null);
-  const historyQuerySequence = useRef(0);
   const paletteTriggerRef = useRef(null);
   const paletteReturnFocusRef = useRef(null);
-  const detailCache = useRef(new Map());
+  // 历史审查领域的状态与动作都在 hook 里；这里保留原有变量名，JSX 不用改。
+  const {
+    historyMode,
+    setHistoryMode,
+    historySelected,
+    historyDetail,
+    historyResult,
+    historyFile,
+    historyCompare,
+    historyDraft,
+    historyApplied,
+    commits,
+    commitsReason,
+    historyFiltersDirty,
+    historySearchRef,
+    detailSubject,
+    detailAuthor,
+    detailEmail,
+    detailTime,
+    historyTitle,
+    historySubtitle,
+    historyNotice,
+    updateDraft,
+    applySelectedFile,
+    applyHistoryFilters,
+    beginQuery,
+    applyQueryResultIfCurrent,
+    selectHistoryCommit,
+    viewParentCommit,
+    readHistoryDiff,
+    openCommitFileDiff,
+    openFileEntryDiff,
+    openFileHistory,
+    pinCompare,
+    swapCompare,
+    readCompare,
+    clearCompare,
+    dismissResult,
+    handleEscape,
+    resetAll: resetHistoryState,
+    resetReview: resetHistoryReview,
+  } = useHistoryReview({
+    gitglass: window.gitglass,
+    repo,
+    loading,
+    setLoading,
+    refreshLedger,
+  });
   const getPanelLimits = (side, widths = panelWidths) =>
     panelLimits(side, widths, workspaceRef.current?.clientWidth || window.innerWidth);
   const setPanelWidth = (side, requestedWidth) => {
@@ -1476,7 +1510,6 @@ export function App() {
       window.removeEventListener("focus", onWindowFocus);
     };
   }, []);
-  const historyFiltersDirty = !sameHistoryFilters(historyDraft, historyApplied || emptyHistoryFilters);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
   useEffect(() => {
@@ -1544,18 +1577,8 @@ export function App() {
     setDiffMessage("");
     setStageSelection(new Set());
     setBranches([]);
-    setCommits([]);
-    setCommitsReason("");
-    setHistoryDraft(emptyHistoryFilters);
-    setHistoryApplied(null);
+    resetHistoryState();
     setRemote(null);
-    setHistoryMode(false);
-    setHistorySelected(null);
-    setHistoryDetail(null);
-    setHistoryResult(null);
-    setHistoryFile(null);
-    setHistoryCompare({ base: null, target: null });
-    detailCache.current.clear();
   }
   async function runRefresh(preference, options) {
     const sequence = ++refreshSequence.current;
@@ -1578,14 +1601,14 @@ export function App() {
     setRepo(next.path || repo);
     await applyState(next, preference, cycle);
     if (sequence !== refreshSequence.current) return { ok: false, stale: true };
-    const querySequence = ++historyQuerySequence.current;
+    const queryToken = beginQuery();
     const [branchResult, commitResult, remoteResult] = await Promise.all([
       window.gitglass.getBranches(),
       historyApplied ? window.gitglass.queryHistory(historyApplied) : window.gitglass.getCommits(),
       window.gitglass.getRemoteOverview(),
     ]);
     setBranches(branchResult.branches || []);
-    if (querySequence === historyQuerySequence.current) applyHistoryQueryResult(commitResult);
+    applyQueryResultIfCurrent(queryToken, commitResult);
     setRemote(remoteResult);
     await refreshLedger(cycle);
     return resolved;
@@ -1608,36 +1631,6 @@ export function App() {
       setLoading(false);
     }
   }
-  function applyHistoryQueryResult(result) {
-    const nextCommits = result.commits || [];
-    const hashes = new Set(nextCommits.map((commit) => commit.hash));
-    setCommits(nextCommits);
-    setCommitsReason(result.reason || "");
-    if (historySelected && !hashes.has(historySelected.hash)) {
-      setHistorySelected(null); setHistoryDetail(null); setHistoryResult(null); setHistoryFile(null);
-    }
-    setHistoryCompare((previous) => ({
-      base: previous.base && hashes.has(previous.base.hash) ? previous.base : null,
-      target: previous.target && hashes.has(previous.target.hash) ? previous.target : null,
-    }));
-    detailCache.current.clear();
-  }
-  async function applyHistoryFilters(next = historyDraft, reset = false) {
-    if (loading || !repo) return;
-    const filters = reset ? emptyHistoryFilters : { ...next };
-    setLoading(true);
-    const sequence = ++historyQuerySequence.current;
-    try {
-      const result = reset ? await window.gitglass.getCommits() : await window.gitglass.queryHistory(filters);
-      if (sequence !== historyQuerySequence.current) return;
-      setHistoryApplied(reset ? null : filters);
-      setHistoryDraft(filters);
-      applyHistoryQueryResult(result);
-      await refreshLedger();
-    } finally {
-      if (sequence === historyQuerySequence.current) setLoading(false);
-    }
-  }
   async function loadDiff(file, cycle) {
     setSelected(file);
     setDiff("");
@@ -1657,129 +1650,6 @@ export function App() {
       setDiffMessage("");
     }
     await refreshLedger(cycle);
-  }
-  async function selectHistoryCommit(commit) {
-    // 选择同一提交时不重复请求：已选中且详情已显示则直接返回；
-    // 提交详情按 SHA 缓存，再次查看不再执行 Git 命令。
-    if (!commit) return;
-    if (historySelected?.hash === commit.hash && historyDetail) {
-      setHistoryFile(null);
-      setHistoryResult(null);
-      return;
-    }
-    setHistorySelected(commit);
-    setHistoryFile(null);
-    setHistoryResult(null);
-    const cached = detailCache.current.get(commit.hash);
-    if (cached) {
-      setHistoryDetail(cached);
-      return;
-    }
-    setLoading(true);
-    setHistoryDetail(null);
-    const result = await window.gitglass.getCommitDetail(commit.hash);
-    detailCache.current.set(commit.hash, result);
-    setHistoryDetail(result);
-    await refreshLedger();
-    setLoading(false);
-  }
-
-  function viewParentCommit(parentHash) {
-    if (!parentHash) return;
-    const known = commits.find((entry) => entry.hash === parentHash);
-    selectHistoryCommit(
-      known || {
-        hash: parentHash,
-        shortHash: parentHash.slice(0, 7),
-        subject: "正在读取父提交…",
-        parents: [],
-        author: "",
-        authoredAt: "",
-        refs: [],
-      },
-    );
-  }
-
-  async function readHistoryDiff() {
-    if (!historySelected) return;
-    setLoading(true);
-    const result = await window.gitglass.getCommitDiff(historySelected.hash);
-    setHistoryResult({ ...result, kind: "commit" });
-    await refreshLedger();
-    setLoading(false);
-  }
-
-  async function openCommitFileDiff(file) {
-    if (!historySelected || !file) return;
-    setLoading(true);
-    const result = await window.gitglass.getFileHistoryDiff(
-      historySelected.hash,
-      file.path,
-    );
-    setHistoryResult({
-      ...result,
-      kind: "file",
-      path: file.path,
-      shortHash: historySelected.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
-  }
-
-  async function openFileEntryDiff(commit) {
-    if (!historyFile || !commit) return;
-    setLoading(true);
-    const result = await window.gitglass.getFileHistoryDiff(
-      commit.hash,
-      historyFile.path,
-    );
-    setHistoryResult({
-      ...result,
-      kind: "file",
-      path: historyFile.path,
-      shortHash: commit.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
-  }
-
-  async function openFileHistory(path) {
-    setLoading(true);
-    const result = await window.gitglass.getFileHistory(path);
-    setHistoryFile(result);
-    setHistoryResult(null);
-    await refreshLedger();
-    setLoading(false);
-  }
-
-  function pinCompare(commit) {
-    setHistoryCompare((value) => {
-      if (!value.base) return { base: commit, target: null };
-      if (value.base.hash === commit.hash) return { base: null, target: null };
-      if (value.target?.hash === commit.hash) return { ...value, target: null };
-      if (value.target) return { base: commit, target: null };
-      // 默认基准为较早提交、对比为较晚提交；用户随后仍可交换。
-      return orderComparePair(value.base, commit);
-    });
-  }
-
-  function swapCompare() {
-    setHistoryCompare((value) => ({ base: value.target, target: value.base }));
-  }
-
-  async function readCompare() {
-    const { base, target } = historyCompare;
-    if (!base || !target) return;
-    setLoading(true);
-    const result = await window.gitglass.compareCommits(base.hash, target.hash);
-    setHistoryResult({
-      ...result,
-      kind: "compare",
-      baseShort: base.shortHash,
-      targetShort: target.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
   }
   async function loadRecentRepositories() {
     try {
@@ -1817,14 +1687,7 @@ export function App() {
     }
     setRepo(result.path);
     // 切换仓库后清空历史审阅状态，避免旧仓库的选中提交与缓存混入。
-    detailCache.current.clear();
-    setHistorySelected(null);
-    setHistoryDetail(null);
-    setHistoryResult(null);
-    setHistoryFile(null);
-    setHistoryCompare({ base: null, target: null });
-    setHistoryDraft(emptyHistoryFilters);
-    setHistoryApplied(null);
+    resetHistoryReview();
     // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
     setStageSelection(new Set());
     const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
@@ -2137,13 +2000,8 @@ export function App() {
     if (branchPlan) { setBranchPlan(null); return; }
     if (remotePlan) { setRemotePlan(null); return; }
     if (recoveryOpen) { setRecoveryOpen(false); return; }
-    if (historyResult || historyFile) { setHistoryResult(null); setHistoryFile(null); return; }
-    if (historyMode) {
-      const next = resolveHistoryEscape(historyDraft, historyApplied);
-      if (next.kind === "discard-draft") setHistoryDraft(next.filters);
-      else if (next.kind === "reset-applied") applyHistoryFilters(undefined, true);
-      else setHistoryMode(false);
-    }
+    // 历史模式自己决定 Esc 的三段语义（关 Diff → 丢草稿 → 还原筛选 → 退出模式）。
+    handleEscape();
   }
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -2247,37 +2105,6 @@ export function App() {
       platform={shortcutPlatform}
     />
   );
-  const detailSubject = historyDetail?.subject || historySelected?.subject || "";
-  const detailAuthor = historyDetail?.authorName || historySelected?.author || "";
-  const detailEmail = historyDetail?.authorEmail || "";
-  const detailTime = historyDetail?.authoredAt || historySelected?.authoredAt || "";
-  const historyTitle = historyFile
-    ? "文件历史"
-    : historyResult?.kind === "compare"
-      ? "提交比较"
-      : historyResult?.kind === "file"
-        ? "文件 Diff"
-        : historyResult
-          ? "提交 Diff"
-          : "提交历史";
-  const historySubtitle = historyFile
-    ? historyFile.path
-    : historyResult?.kind === "compare"
-      ? `基准 ${historyResult.baseShort} → 对比 ${historyResult.targetShort}`
-      : historyResult?.kind === "file"
-        ? `${historyResult.path} @ ${historyResult.shortHash}`
-        : historyResult
-          ? historySelected?.subject || ""
-          : historySelected?.subject || "选择提交以查看审阅详情";
-  const historyNotice = loading
-    ? "正在读取历史…"
-    : historyResult?.truncated
-      ? "Diff 已截断，可在命令账本复制真实命令后在终端查看完整输出。"
-      : historyResult?.kind === "compare" && historyResult.ok
-        ? `比较方向「基准 → 对比」：${historyResult.baseShort} → ${historyResult.targetShort}`
-        : historyResult?.binary && historyResult.ok
-          ? "结果中包含二进制文件，Git 无法为它们生成文本 Diff。"
-          : "";
   return (
     <main
       className={`app-shell ${ledgerOpen ? "ledger-open" : "ledger-closed"} ${isDarwin ? "platform-darwin" : ""} ${workspaceBanner ? "has-banner" : ""}`}
@@ -2420,10 +2247,10 @@ export function App() {
             selectedFile={selected}
             loading={loading}
             dirty={historyFiltersDirty}
-            onChange={(field, value) => setHistoryDraft((draft) => ({ ...draft, [field]: value }))}
+            onChange={(field, value) => updateDraft(field, value)}
             onApply={() => applyHistoryFilters()}
             onReset={() => applyHistoryFilters(undefined, true)}
-            onUseSelected={() => selected && setHistoryDraft((draft) => ({ ...draft, filePath: selected.path }))}
+            onUseSelected={() => applySelectedFile(selected)}
           />
           <section className="branch-list compare-panel">
             <div className="section-label"><span>双提交比较</span></div>
@@ -2471,7 +2298,7 @@ export function App() {
                 className="text-action"
                 aria-label="清除比较选择"
                 title="清除比较选择"
-                onClick={() => setHistoryCompare({ base: null, target: null })}
+                onClick={clearCompare}
               >
                 清除比较选择
               </button>
@@ -2502,7 +2329,7 @@ export function App() {
                 className="secondary-action"
                 aria-label="返回提交列表"
                 title="返回提交列表"
-                onClick={() => { setHistoryResult(null); setHistoryFile(null); }}
+                onClick={dismissResult}
               >
                 返回列表
               </button>
@@ -2511,14 +2338,14 @@ export function App() {
           <div className="main-content"><div className="history-notice" role="status" aria-live="polite">{historyNotice}</div>
             <div className="history-view">
               {historyResult ? (
-                <HistoryResult result={historyResult} onBack={() => { setHistoryResult(null); setHistoryFile(null); }} />
+                <HistoryResult result={historyResult} onBack={dismissResult} />
               ) : (
                 <div className="history-browser">
                   {!historyFile && (
                     <>
                       <HistorySearch
                         value={historyDraft.keyword}
-                        onChange={(keyword) => setHistoryDraft((draft) => ({ ...draft, keyword }))}
+                        onChange={(keyword) => updateDraft("keyword", keyword)}
                         onSubmit={() => applyHistoryFilters()}
                         inputRef={historySearchRef}
                         total={commits.length}
@@ -2592,7 +2419,7 @@ export function App() {
             <div className="inspector-flow">
               <div className="inspector-heading"><span>文件历史</span><h2 title={historyFile.path}>{historyFile.path}</h2></div>
               <p className="inspector-copy">点击左侧列表中的提交，可查看该文件在对应提交中的真实 Diff。</p>
-              <button type="button" className="text-action" onClick={() => { setHistoryFile(null); setHistoryResult(null); }}>
+              <button type="button" className="text-action" onClick={dismissResult}>
                 返回提交详情
               </button>
             </div>
