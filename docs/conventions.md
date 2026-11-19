@@ -95,10 +95,10 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 
 - **不要用 `eslint-disable` 大面积压规则。** 确需 disable 时只覆盖最小范围，并在同一行写 `-- 理由`（例：`// eslint-disable-next-line no-control-regex -- 这里就是要匹配控制字符`）。
 - **不要用 `// @ts-ignore`。** 只有第三方类型边界确实无法标注时才用，且同一行写理由；优先补 JSDoc `@param` / `@returns` / `@typedef`。
-- `tsc` 的 `include` 只覆盖**主进程 + 已经有单测的纯逻辑模块**。`src/main.jsx` 暂不纳入：JSX 类型化要等 0.6.5 把 hook 拆出去之后再做（见 [improvement-plan.md](improvement-plan.md)）。
-- 覆盖率 `include` 是 `src/**/*.{js,jsx}` + `electron/**/*.cjs`；`exclude` 只有 `src/main.jsx`、`electron/main.cjs`、`electron/preload.cjs` —— 这三个是只在 Electron 子进程里运行的入口，v8 的进程内覆盖率看不到它们，实际覆盖由 `tests/ui/` 的真实启动探针负责。**新增 exclude 必须在 [improvement-plan.md](improvement-plan.md) 里写明理由。**
+- `tsc` 的 `include` 覆盖**主进程 + 已经有单测的纯逻辑模块 + `src/use-*.js` 的领域 hook**。`src/main.jsx` 与 `src/workbench-ui.jsx` 暂不纳入：JSX 类型化要先补 `@types/react` / `@types/react-dom`（见 [improvement-plan.md](improvement-plan.md)）。
+- 覆盖率 `include` 是 `src/**/*.{js,jsx}` + `electron/**/*.cjs`；`exclude` 只剩 `electron/main.cjs`、`electron/preload.cjs` —— 这两个只在 Electron 子进程里运行，v8 的进程内覆盖率看不到，实际覆盖由 `tests/ui/` 的真实启动探针负责。`src/main.jsx` 在 0.6.5 拆成 hook + 展示组件后已纳入统计（由 `tests/ui/*.test.mjs` 的真渲染用例覆盖）。**新增 exclude 必须在 [improvement-plan.md](improvement-plan.md) 里写明理由。**
 - 普通 `npm test` / `npm run build` 不带覆盖率、不生成 `coverage/`；`coverage/` 已在 `.gitignore` 里。
-- 门槛先定 50%（实测值见 [improvement-plan.md](improvement-plan.md) 的交付记录），`main.jsx` 拆完后往上提。
+- 门槛目前是 50%（实测值见 [improvement-plan.md](improvement-plan.md) 的交付记录）。`main.jsx` 拆完后四项仍在 69% 以上，下一步可以往 70% 提；提之前先给 `workbench-ui.jsx` 里没被渲染到的那几个面板（安全计划、恢复中心、命令面板）补真渲染用例。
 
 ## 6. 源码规范（摘要）
 
@@ -160,8 +160,9 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 - `.gitignore` 增补 `*.log`、`.tmp-*`、`Thumbs.db`、`Desktop.ini`、`.idea/`、`*.iml`、`coverage/`、`.vitest/`。
 - 工程门槛（0.6.4-beta.2）：根目录新增 `eslint.config.mjs`、`tsconfig.json`（均已登记进第 1 节白名单），`vite.config.mjs` 增加 `test.coverage`；CI 在 `npm test` 之后增加 `lint` / `typecheck` / `test:coverage` 三步，`tests/release/ci-cd-workflows.test.cjs` 同步断言。第 5 节记录了命令与阈值。
 - 为过 lint 做的等价改动：`UpdateService` 的 `Object.assign(this, …)` 改为逐条属性赋值；`src/{app-updates,recent-repositories-menu,main}.jsx` 删掉 React 19 新 JSX 转换下已无用的 `import React` 与两个未使用的图标导入；`main.jsx` 命令行提示里的 U+3000 改成显式 `{"\u3000"}`。
+- 渲染层拆分（0.6.5-beta.1）：`src/main.jsx` 3027 → 1441 行，拆出 `src/use-history-review.js`、`src/use-safety-plans.js`、`src/use-remote-overview.js`、`src/use-panel-resize.js` 与 `src/workbench-ui.jsx`（26 个展示组件）；`src/` 从 12 个文件变成 17 个，第 2 节的"~15 个文件时再按 feature 拆分"因此提上日程。
 
 ### 待办（需要单独 PR）
 
-- `src/` 目前 12 个文件仍是扁平结构；到 ~15 个文件时按 `src/features/<area>/` 拆分。
+- `src/` 现在 17 个文件仍是扁平结构（0.6.5 拆出 4 个 hook + 1 个展示组件模块）：下一步可按 `src/features/<area>/` 归位（history / safety / remote / workspace）。
 - `docs/assets/readme/logo.svg` 与 `public/logo.svg` 内容相同：若想彻底去重，把 README 图片改指向 `public/logo.svg`，并放宽 `tests/docs/readme-language-parity.test.cjs` 的图片前缀断言。
