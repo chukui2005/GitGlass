@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.5-beta.3](https://github.com/chukui2005/GitGlass/compare/v0.6.5-beta.2...v0.6.5-beta.3) (2026-11-19)
+
+### Performance
+
+* stop re-rendering the whole command ledger ([f2ab5da](https://github.com/chukui2005/GitGlass/commit/f2ab5da2409c658a2550388d0a87817e14104e25))
+* coalesce repository watcher events in large repositories ([4ea2d76](https://github.com/chukui2005/GitGlass/commit/4ea2d7621b0e8aa889df5799e0fa8fd28dcacd80))
+
+### 运行时优化（行为不变）
+
+* **`.git` watcher 修好了整类漏报**：`fs.watch` 在 `refs/heads` 上只报裸文件名，旧分类只认 `HEAD` / `index` / `packed-refs`，于是 200 个分支、`git fetch` 的远端 refs 全部被丢掉（改前测量：约 1200 个原始事件 → **0 次通知**）。现在按目录分类，`refs/` 下任何名字都算 `refs`。
+* **事件合并**：首事件立即触发 + 尾随 800 ms + 硬上限 2 s，reason 按 `head > refs > index` 合并；原始事件数不再放大成通知数（1200 → 2）。外部 `git add` / `git commit` / `git checkout -b` 的界面更新从约 1.0–1.2 s 降到 **165–195 ms**。
+* **读命令的 index-only 静默窗**：`repo:state` 的 `git status` 会写 `.git/index`，此前「首事件立即」会让它自己触发刷新；现在只静默 index，head/refs 仍即时上报。空闲 4 s 的事件数与账本增长均为 0。
+* **命令账本不再整列重渲染**：记录对象身份复用（`reuseUnchangedRecords`）+ `CommandLedger`/`LedgerEntry`/`RefreshGroup`/`Output` 记忆化 + 稳定回调。一次与账本无关的 App 重渲染，120 条记录的字段读取从 **3600 次降到 0**。没有做虚拟列表——300 条两行结构的 DOM 不是瓶颈，窗口化会牺牲键盘可达性。
+
 ## [0.6.5-beta.2](https://github.com/chukui2005/GitGlass/compare/v0.6.5-beta.1...v0.6.5-beta.2) (2026-11-19)
 
 ### Refactors
