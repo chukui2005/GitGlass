@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.6-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.5...v0.6.6-beta.1) (2026-11-20)
+
+### Features
+
+* surface watcher failures and downgrade the refresh button (#21) ([db7aae0](https://github.com/chukui2005/GitGlass/commit/db7aae0978fab37fb3db4394d9a1da0d2e640467))
+* drop the dead workspace commit graph and guide to files or history (#20) ([45b6abf](https://github.com/chukui2005/GitGlass/commit/45b6abf1a6fefe6c47b7ebcc59516e50f8b9dbda))
+* remember window size and position across restarts (#19) ([f0a58ef](https://github.com/chukui2005/GitGlass/commit/f0a58ef3bb51c5b4d4e16be6a3528f3f53a5bfbe))
+
+### Bug Fixes
+
+* make the window state probe deterministic on small displays ([6946177](https://github.com/chukui2005/GitGlass/commit/6946177b2f9c006b00c442bf666224ce419a09dd))
+
 ## [0.6.5](https://github.com/chukui2005/GitGlass/compare/v0.6.3...v0.6.5) (2026-11-19)
 
 > 这是自 v0.6.3 之后的第一个稳定版。中间经过 5 个 beta（`0.6.4-beta.1/2`、`0.6.5-beta.1/2/3`），下面按「用户能感知的变化」归并，不列 beta 编号。
