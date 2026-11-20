@@ -815,28 +815,34 @@ export function App() {
     />
   ) : !repo ? (
     <NoRepositoryGuide loading={loading} onOpen={chooseRepo} />
-  ) : selected ? (
-    <FileInspector
-      file={selected}
-      loading={loading}
-      onStage={(file) =>
-        operate(file.area === "staged" ? "unstage" : "stage", {
-          path: file.path,
-        })
-      }
-      onDiscard={requestDiscard}
-    />
   ) : (
-    <CommitInspector
-      staged={staged}
-      unstaged={unstaged}
-      message={message}
-      loading={loading}
-      onMessage={setMessage}
-      onOperate={operate}
-      preview={preview}
-      platform={shortcutPlatform}
-    />
+    <>
+      {/* 选中文件的详情与「创建提交」表单并存：右栏此前是三选一，而应用总是自动
+          选中第一个改动文件，导致提交表单（提交按钮、提交说明）几乎永远不可见
+          （0.6.6-beta 验收反馈）。 */}
+      {selected && (
+        <FileInspector
+          file={selected}
+          loading={loading}
+          onStage={(file) =>
+            operate(file.area === "staged" ? "unstage" : "stage", {
+              path: file.path,
+            })
+          }
+          onDiscard={requestDiscard}
+        />
+      )}
+      <CommitInspector
+        staged={staged}
+        unstaged={unstaged}
+        message={message}
+        loading={loading}
+        onMessage={setMessage}
+        onOperate={operate}
+        preview={preview}
+        platform={shortcutPlatform}
+      />
+    </>
   );
   return (
     <main

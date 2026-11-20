@@ -376,6 +376,20 @@ describe('workbench structure (rendered)', () => {
       .toHaveAttribute('title', '联网拉取远程更新（先生成计划，不会立即执行）')
   })
 
+  it('keeps the commit form available next to the file inspector while a file is selected', async () => {
+    const { container } = await renderWorkspace()
+    const panel = container.querySelector('.context-panel')
+
+    // 选中文件的详情与提交表单并存：右栏此前是三选一，自动选中导致提交表单消失。
+    expect(within(panel).getByRole('heading', { name: 'src/main.jsx' })).toBeInTheDocument()
+    expect(within(panel).getByRole('heading', { name: '创建提交' })).toBeInTheDocument()
+    const commit = within(panel).getByRole('button', { name: '提交' })
+    expect(commit).toBeInTheDocument()
+    // 没有已暂存文件时提交不可用，但按钮本身必须在。
+    expect(commit).toBeDisabled()
+    expect(within(panel).getByRole('button', { name: '暂存全部' })).toBeInTheDocument()
+  })
+
   it('shows a guide block instead of the commit form when no repository is open', async () => {
     const user = userEvent.setup()
     // 默认假桥就是「还没有打开仓库」：getState 返回 ok:false。
