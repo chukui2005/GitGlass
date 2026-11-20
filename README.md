@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme/logo.svg" width="88" alt="GitGlass logo" />
+  <img src="public/logo.svg" width="88" alt="GitGlass logo" />
 </p>
 
 <h1 align="center">GitGlass</h1>

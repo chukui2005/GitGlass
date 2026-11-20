@@ -45,8 +45,14 @@ describe('Bilingual README parity', () => {
   it('uses committed public README images only and never references output/', () => {
     for (const readme of [english, chinese]) {
       expect(readme).not.toContain('output/')
-      for (const image of imagePaths(readme)) {
-        expect(image).toMatch(/^docs\/assets\/readme\//)
+      // markdown 图语法与 <img> 标签都算引用：logo 去重后直接指向 public/，
+      // 其余截图仍在 docs/assets/readme/；两个前缀之外的路径一律拒绝。
+      const referenced = [
+        ...imagePaths(readme),
+        ...[...readme.matchAll(/<img[^>]*src="([^"]+)"/g)].map((match) => match[1]),
+      ]
+      for (const image of referenced) {
+        expect(image).toMatch(/^(docs\/assets\/readme\/|public\/)/)
         expect(fs.existsSync(path.join(root, image))).toBe(true)
       }
     }
