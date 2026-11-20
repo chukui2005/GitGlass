@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, Menu, screen } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { GitCommandService } = require('./git-command-service.cjs')
@@ -10,6 +10,7 @@ const { UpdateService, pendingUpdateState } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
 const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
 const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
+const { WindowStateStore, resolveLaunchBounds, trackWindowBounds } = require('./window-state.cjs')
 // 启动探针（scripts/report-startup.mjs 用）：GITGLASS_STARTUP_PROBE 未设置时是空函数，
 // 下面的 startupProbe() 调用在正常运行与打包产物里都不产生任何副作用。
 const { createStartupProbe } = require('./startup-probe.cjs')
@@ -256,6 +257,9 @@ if (primaryInstance) app.whenReady().then(async () => {
   if (process.env.GITGLASS_REPOSITORY && fs.existsSync(process.env.GITGLASS_REPOSITORY)) repoPath = path.resolve(process.env.GITGLASS_REPOSITORY)
   recentRepositories = new RecentRepositories(path.join(app.getPath('userData'), 'recent-repos.json'))
   updateStore = new UpdateStore(path.join(app.getPath('userData'), 'updates.json'))
+  // Window bounds live next to the other userData stores; `screen` is safe
+  // here because the whole block runs inside app.whenReady().
+  const windowState = new WindowStateStore(path.join(app.getPath('userData'), 'window-state.json'))
   const resume = updateStore.value.resume
   // An update restart draft names the repository it belongs to, so it wins.
   if (!repoPath && typeof resume?.repoPath === 'string' && fs.existsSync(resume.repoPath)) repoPath = resume.repoPath
@@ -270,7 +274,18 @@ if (primaryInstance) app.whenReady().then(async () => {
     ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#FFFFFF', symbolColor: '#344054', height: 48 } }
     : { titleBarStyle: 'hiddenInset' }
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'
-  mainWindow = new BrowserWindow({ width: 1500, height: 940, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', iconFile), ...titleBarOptions, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  // Launch bounds come from userData/window-state.json when they still fit a
+  // display; otherwise the window falls back to a work-area-relative default
+  // size, centered (issue #19: the old fixed 1500×940 overflowed 1366×768
+  // laptops and user resizes were forgotten on every launch).
+  const launchBounds = resolveLaunchBounds(windowState.value, {
+    primaryWorkArea: screen.getPrimaryDisplay().workArea,
+    workAreas: screen.getAllDisplays().map((display) => display.workArea),
+    minWidth: 1024,
+    minHeight: 680,
+  })
+  mainWindow = new BrowserWindow({ ...launchBounds, minWidth: 1024, minHeight: 680, backgroundColor: '#f7f8fa', icon: path.join(__dirname, '..', 'public', iconFile), ...titleBarOptions, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  trackWindowBounds(mainWindow, windowState)
   startupProbe('window-created')
   // ready-to-show 是 BrowserWindow 的事件（不是 webContents 的）；did-finish-load 更稳定，
   // 两者都记，脚本优先用 ready-to-show，缺失时退到 did-finish-load。

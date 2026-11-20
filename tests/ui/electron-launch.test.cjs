@@ -6,7 +6,7 @@ const opener = fs.readFileSync(path.join(__dirname, '..', '..', 'electron', 'rep
 
 describe('Electron launch configuration', () => {
   it('removes the default application menu on Windows only', () => {
-    expect(main).toContain("const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron')")
+    expect(main).toContain("const { app, BrowserWindow, dialog, ipcMain, Menu, screen } = require('electron')")
     expect(main).toContain("if (process.platform === 'win32') Menu.setApplicationMenu(null)")
   })
 
