@@ -50,8 +50,8 @@ tests/               见第 4 节
 - **语言**：根目录 README 必须中英成对、`<!-- section:xxx -->` 顺序一致（`tests/docs/readme-language-parity.test.cjs` 会校验）；`docs/` 面向外部读者用英文；`CONTRIBUTING.md` 与本文件面向维护者用中文。
 - **单一事实来源**：发版流程只写在 `docs/releasing.md`，其他文档只能链接过去，不得复述步骤。
 - **过时文档**：不要直接删掉仍在 README 里被引用的文档；先移入 `docs/archive/` 并同步改链接，确认无人引用后再删。
-- **图片**：只允许 `docs/assets/readme/` 下的文件名出现在 README 的图片语法里，且文件必须已提交。
-  `public/logo.svg` 与 `docs/assets/readme/logo.svg` 是同一份 SVG 的两个用途副本（应用 favicon / README 配图），改图标时两处一起改。
+- **图片**：README 里引用的图片（markdown 图语法与 `<img>` 标签都算）只允许 `docs/assets/readme/` 与 `public/` 两个前缀，且文件必须已提交（`tests/docs/readme-language-parity.test.cjs` 校验）。
+  `public/logo.svg` 是唯一副本：README 的 logo `<img>` 直接指向它，改图标只改这一处（原先的 `docs/assets/readme/logo.svg` 副本已删除）。
 
 ## 4. 测试规范
 
@@ -166,4 +166,4 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 ### 待办（需要单独 PR）
 
 - `src/` 现在 17 个文件仍是扁平结构（0.6.5 拆出 4 个 hook + 1 个展示组件模块）：下一步可按 `src/features/<area>/` 归位（history / safety / remote / workspace）。
-- `docs/assets/readme/logo.svg` 与 `public/logo.svg` 内容相同：若想彻底去重，把 README 图片改指向 `public/logo.svg`，并放宽 `tests/docs/readme-language-parity.test.cjs` 的图片前缀断言。
+- ✅ logo 去重已落地（2026-11-20）：README 的 logo `<img>` 改指 `public/logo.svg`，`docs/assets/readme/logo.svg` 删除，`readme-language-parity` 的断言覆盖 `<img>` 标签并放行 `public/` 前缀；`public/logo-mono.svg`（全仓库零引用，暗色模式未排期）一并删除，需要时从 git 历史找回。
