@@ -7,6 +7,8 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import {
+  OTHER_REPOSITORY_PATH,
+  REPOSITORY_PATH,
   commitFixture,
   fileFixture,
   ledgerRecordFixture,
@@ -293,6 +295,58 @@ describe('workbench structure (rendered)', () => {
     await waitFor(() => {
       expect(screen.getByText('尚无命令记录')).toBeInTheDocument()
     })
+  })
+
+  it('replaces the dead commit graph with a purposeful empty state when the worktree is clean', async () => {
+    const { container } = renderApp({
+      ...workspaceStub(),
+      getState: async () => repositoryState({ files: [] }),
+      getLedger: async () => [],
+    })
+
+    const empty = await waitFor(() => {
+      const element = container.querySelector('.workspace-empty')
+      expect(element).toBeInTheDocument()
+      return element
+    })
+    expect(empty).toHaveTextContent('工作区没有未提交的改动')
+    expect(empty).toHaveTextContent('从左侧文件列表选择文件查看差异')
+    expect(empty).toHaveTextContent('查看提交历史请切换到「历史审查」')
+
+    const toolbar = container.querySelector('.main-toolbar')
+    expect(toolbar.querySelector('h2')).toHaveTextContent('文件差异')
+    expect(toolbar).toHaveTextContent('未选择文件')
+
+    // 死区不再存在：既没有提交图，也没有点不动的 graph-row。
+    expect(container.querySelector('.commit-graph')).toBeNull()
+    expect(container.querySelectorAll('.graph-row')).toHaveLength(0)
+  })
+
+  it('selects the first changed file automatically after opening a repository', async () => {
+    const user = userEvent.setup()
+    // getState 跟随“当前仓库”：打开另一个仓库后，refreshAll 读到的就是新仓库的状态。
+    let current = { path: REPOSITORY_PATH, files: [fileFixture({ path: 'src/main.jsx' })] }
+    const { container } = renderApp({
+      ...workspaceStub(),
+      getState: async () => repositoryState({ path: current.path, files: current.files }),
+      chooseRepository: async () => {
+        current = { path: OTHER_REPOSITORY_PATH, files: [fileFixture({ path: 'README.md' })] }
+        return { ok: true, path: current.path, state: repositoryState({ path: current.path, files: current.files }) }
+      },
+    })
+    await waitFor(() => {
+      expect(container.querySelector('.diff-content')).toBeInTheDocument()
+    })
+
+    const topbar = within(container.querySelector('header.topbar'))
+    await user.click(topbar.getByRole('button', { name: '打开仓库' }))
+    const diffMeta = await waitFor(() => {
+      const element = container.querySelector('.diff-meta')
+      expect(element).toHaveTextContent('README.md')
+      return element
+    })
+    expect(diffMeta).toHaveTextContent('工作区差异')
+    expect(screen.getByRole('button', { name: '选择文件 README.md' })).toBeInTheDocument()
   })
 
   it('shows a guide block instead of the commit form when no repository is open', async () => {

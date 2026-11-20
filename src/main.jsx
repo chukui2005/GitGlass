@@ -44,7 +44,6 @@ import { usePanelResize } from "./use-panel-resize.js";
 import {
   BatchStageToolbar,
   BranchContext,
-  CommitGraph,
   CommitInspector,
   CommitRow,
   CommandLedger,
@@ -62,6 +61,7 @@ import {
   RemotePlanContext,
   SafetyContext,
   SidebarRemote,
+  WorkspaceEmptyState,
   isDarwin,
   titleFor,
 } from "./workbench-ui.jsx";
@@ -1372,12 +1372,9 @@ export function App() {
         <section className="main-panel">
           <div className="main-toolbar">
             <div>
-              <h2>{selected ? "文件差异" : "提交历史"}</h2>
-              <span title={selected?.path || (commits.length ? `最近 ${commits.length} 个提交` : "选择仓库后读取提交记录")}>
-                {selected?.path ||
-                  (commits.length
-                    ? `最近 ${commits.length} 个提交`
-                    : "选择仓库后读取提交记录")}
+              <h2>文件差异</h2>
+              <span title={selected?.path || "未选择文件"}>
+                {selected?.path || "未选择文件"}
               </span>
             </div>
             {selected && (
@@ -1407,7 +1404,7 @@ export function App() {
               )}
             </div>
           ) : (
-            <CommitGraph commits={commits} />
+            <WorkspaceEmptyState hasChanges={staged.length + unstaged.length > 0} />
           )}
         </section>
         <PanelSplitter side="right" value={panelWidths.right} limits={getPanelLimits("right")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />

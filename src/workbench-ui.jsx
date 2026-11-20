@@ -427,27 +427,14 @@ export const RefreshGroup = memo(function RefreshGroup({ group }) {
     </section>
   );
 });
-export function CommitGraph({ commits }) {
+// 工作区中间栏在「没有选中文件」时的空态。历史审查有自己的可交互提交行，
+// 这里绝不能退化成一列点不动的提交记录（0.6.5 验收反馈 #20）。
+export function WorkspaceEmptyState({ hasChanges = false }) {
   return (
-    <div className="commit-graph">
-      {commits.length ? (
-        commits.map((commit, index) => (
-          <div className="graph-row" key={commit.hash || index}>
-            <span className="graph-line">
-              <i />
-            </span>
-            <code>{commit.shortHash || commit.hash?.slice(0, 7)}</code>
-            <strong>{commit.subject || commit.message}</strong>
-            <span>{commit.author}</span>
-          </div>
-        ))
-      ) : (
-        <div className="graph-empty">
-          <GitCommit size={28} />
-          <p>提交历史将在这里显示</p>
-          <span>打开仓库后读取最近的真实提交记录。</span>
-        </div>
-      )}
+    <div className="workspace-empty" role="status" aria-live="polite">
+      <GitCommit size={28} />
+      <p>{hasChanges ? "未选择要查看的文件" : "工作区没有未提交的改动"}</p>
+      <span>从左侧文件列表选择文件查看差异；查看提交历史请切换到「历史审查」。</span>
     </div>
   );
 }
