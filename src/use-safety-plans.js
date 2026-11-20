@@ -82,7 +82,7 @@ const rescueName = (entry) =>
  * @property {(cycle?: string) => Promise<void>} refreshLedger
  * @property {() => Promise<unknown>} refreshAll 执行成功后整体刷新
  * @property {(notice: { type: string, text: string }) => void} setNotice
- * @property {(tab?: "user" | "background") => void} openLedger 打开命令账本（可同时切到某个筛选）
+ * @property {(tab?: "user" | "background") => void} presetLedger 预设命令账本筛选（不再自动弹出面板）
  * @property {(operationId: string | null) => void} setFocusedOperationId 账本聚焦到本次操作
  */
 
@@ -99,7 +99,7 @@ export function useSafetyPlans({
   refreshLedger,
   refreshAll,
   setNotice,
-  openLedger,
+  presetLedger,
   setFocusedOperationId,
 }) {
   const [safetyPlan, setSafetyPlan] = useState(/** @type {SafetyPlan | null} */ (null));
@@ -132,7 +132,7 @@ export function useSafetyPlans({
   async function confirmBranch() {
     if (!branchPlan?.plan) return;
     setLoading(true);
-    openLedger();
+    presetLedger();
     const result = await gitglass.executeBranch(branchPlan.name, branchPlan.create, branchPlan.operationId);
     setFocusedOperationId(result.execution?.operationId || branchPlan.operationId || null);
     setNotice(
@@ -228,7 +228,7 @@ export function useSafetyPlans({
   async function confirmSafety() {
     if (!safetyPlan?.plan) return;
     setLoading(true);
-    openLedger("user");
+    presetLedger("user");
     let result;
     if (safetyPlan.kind === "discard")
       result = await gitglass.executeDiscard(safetyPlan.path, safetyPlan.operationId);
