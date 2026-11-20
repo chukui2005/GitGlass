@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.7-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.6...v0.6.7-beta.1) (2026-11-20)
+
+### Bug Fixes
+
+* slim the notice strip and repair diff metadata rows ([991cde0](https://github.com/chukui2005/GitGlass/commit/991cde01fe821a3d677985ae98faf0ef5f0f21b8))
+* stop auto-opening the command ledger on operations ([b399eff](https://github.com/chukui2005/GitGlass/commit/b399efff3d1fbb20bb0e688b4fba9bf2b46c0d3b))
+* keep the commit form visible while a file is selected ([fc53294](https://github.com/chukui2005/GitGlass/commit/fc5329474d3c1c19a45bd860bbe29c19f6d02986))
+
 ## [0.6.6](https://github.com/chukui2005/GitGlass/compare/v0.6.5...v0.6.6) (2026-11-20)
 
 > 0.6.5 验收反馈的三项全部落地，随 `0.6.6-beta.1` 经过一轮用户验收。下面按「用户能感知的变化」归并。

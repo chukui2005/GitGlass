@@ -1,6 +1,6 @@
 {
   "name": "gitglass",
-  "version": "0.6.6",
+  "version": "0.6.7-beta.1",
   "private": true,
   "description": "A transparent Git commit workbench",
   "main": "electron/main.cjs",
