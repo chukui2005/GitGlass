@@ -213,9 +213,9 @@ export function App() {
     setLoading,
     refreshLedger,
   });
-  // 打开命令账本（可顺带切到某个筛选）；计划类操作执行时统一走这里。
-  const openLedger = (tab) => {
-    setLedgerOpen(true);
+  // 计划类操作只预设账本筛选，不再自动弹出（0.6.6-beta 验收反馈：任何操作都不要
+  // 直接弹账本）。用户按 J 或顶栏按钮打开时，直接落在对应的筛选上。
+  const presetLedger = (tab) => {
     if (tab) setLedgerFilter(tab);
   };
   // 计划类操作（撤销 / 删除分支 / 救援分支 / 切换分支）与恢复中心。
@@ -245,7 +245,7 @@ export function App() {
     refreshLedger,
     refreshAll,
     setNotice,
-    openLedger,
+    presetLedger,
     setFocusedOperationId,
   });
   // 远程域：overview 与 fetch / push / pull 的计划。
@@ -266,7 +266,7 @@ export function App() {
     refreshLedger,
     refreshAll,
     setNotice,
-    openLedger,
+    presetLedger,
     setFocusedOperationId,
   });
   const staged = useMemo(
@@ -646,9 +646,8 @@ export function App() {
   async function operate(action, payload = {}) {
     if (!repo || loading) return;
     setLoading(true);
-    setLedgerOpen(true);
-    setLedgerFilter("user");
-    setFocusedOperationId(null);
+    // 0.6.6-beta 验收反馈：操作不再自动弹出命令账本；成功与否由通知横幅表达，
+    // 收起态的账本摘要行（最近：xx）仍然可见，需要细节时用户自己展开。
     const result = await window.gitglass.operate(action, payload);
     setFocusedOperationId(result.execution?.operationId || null);
     setNotice(operationNotice(action, result));

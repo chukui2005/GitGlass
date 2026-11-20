@@ -50,7 +50,7 @@ import { executionNotice } from "./user-notices.js";
  * @property {(cycle?: string) => Promise<void>} refreshLedger
  * @property {() => Promise<unknown>} refreshAll
  * @property {(notice: { type: string, text: string }) => void} setNotice
- * @property {(tab?: "user" | "background") => void} openLedger
+ * @property {(tab?: "user" | "background") => void} presetLedger
  * @property {(operationId: string | null) => void} setFocusedOperationId
  */
 
@@ -66,7 +66,7 @@ export function useRemoteOverview({
   refreshLedger,
   refreshAll,
   setNotice,
-  openLedger,
+  presetLedger,
   setFocusedOperationId,
 }) {
   const [remote, setRemote] = useState(/** @type {RemoteOverview | null} */ (null));
@@ -98,7 +98,7 @@ export function useRemoteOverview({
   async function confirmRemote() {
     if (!remotePlan?.plan) return;
     setLoading(true);
-    openLedger();
+    presetLedger();
     const result = await gitglass.executeRemote(remotePlan.kind, remotePlan.operationId);
     setFocusedOperationId(result.execution?.operationId || remotePlan.operationId || null);
     const remoteSuccess = {
