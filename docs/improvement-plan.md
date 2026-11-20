@@ -296,6 +296,30 @@ GitGlass 目前只有「启动 / 操作成功 / 手动 ⟳」三个刷新时机�
 3. Release 正文统一模板：下载项、`SHA256SUMS.txt` 校验步骤、Windows x64 / 未签名 / 需自备 Git 三条说明（对齐成熟项目做法）。
 4. 可选：增加 `sync-changelog` 类似流程，把 `CHANGELOG.md` 同步到 Release 正文，避免两套叙述。
 
+## 仓库整理（2026-11-20 排期，0.6.6 稳定版发完后执行）
+
+维护者拍板的清理窗口。本机部分当天已完成，仓库部分按「一个主题一个 PR」在 0.6.6 稳定版之后做。
+
+### 已完成（本机，2026-11-20，不涉及仓库）
+
+- 删除 `D:\GitGlass-wt`（遗留 worktree 目录，删除前复核已无 `.git` 与 junction）
+- 删除 `D:\gg-accept`（0.6.5 验收用的四个测试仓库：bad-remote / big-diff / empty / merge-conflict）
+- 删除项目内 `coverage/`、`dist/` 与旧日志 `.tmp-cov*.log`、`.tmp-pr-body.md`
+- 清理 `%TEMP%` 里 762 个 `gitglass-*` 测试残留（探针被杀时 afterEach 没跑的积累）
+- 保留：`.tmp-gh.ps1` / `.tmp-pr.ps1` / `.tmp-pr.mjs`（本机发 PR 助手，gitignore，长期存在）
+
+### 待办：文档整理 PR（`docs/…` 分支）
+
+- 清理过时内容：「0.6.3 发现但没修的小问题」表逐条复核后再动（其中「最近仓库菜单 10px」已被 #50 修掉，见交接记录）；0.6.5 验收反馈三项已全部落地，把该节收尾成历史记录；版本路线表补齐 0.6.6 的 beta/稳定版演进
+- 整合重复叙述：`releasing.md` / `updates.md` / `architecture.md` / `conventions.md` 里互相复述的段落收敛到单一事实来源（conventions 第 3 节的规矩），过时文档按第 3 节流程先进 `docs/archive/`
+- 更新：README 双语是否要为新行为（窗口尺寸记忆、工作区空态、刷新语义）补一句用户可见的说明；`docs/design.md` 的顶栏线框核对 ⟳ 移除后的按钮清单
+
+### 待办：脚本与图片整理 PR（`chore/…` 分支，属代码级改动）
+
+- `scripts/`：核对每个脚本仍有对应测试（conventions 第 2 节的硬规矩），无主脚本与重复逻辑该删的删、该合并的合并
+- 图片：`public/logo.svg` 与 `docs/assets/readme/logo.svg` 双副本去重（conventions 第 11 节待办；若去重需同步放宽 `tests/docs/readme-language-parity.test.cjs` 的图片前缀断言）
+- `docs/assets/readme/` 只留 README 实际引用的图（有测试校验前缀），孤儿图片删除
+
 ## 不建议现在做的事
 
 - 扩展 merge / rebase / 冲突解决界面：与当前"拒绝而非自动修复"的安全模型冲突，且维护成本远高于收益。
