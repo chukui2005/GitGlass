@@ -131,6 +131,8 @@ The recovery reader uses `git reflog -20 --date=iso --pretty=format:%H%x1f%h%x1f
 
 `RecentRepositories` (`electron/recent-repositories.cjs`) keeps the last five opened repository roots in `userData/recent-repos.json`; only local paths are stored. Startup order is: `GITGLASS_REPOSITORY`, then an update restart draft, then the most recent path that still exists on disk. A missing, oversized or damaged list is ignored rather than blocking launch. `chooseRepository` records the resolved worktree root, not the folder the user picked.
 
+`WindowStateStore` (`electron/window-state.cjs`) keeps the main window's last bounds in `userData/window-state.json` under the same fault-tolerance rules: a missing, oversized or damaged file falls back to defaults instead of blocking launch. `resolveLaunchBounds()` turns that state into launch options — the default size is 80% of the primary work area capped at 1400×940 and never below `minWidth`/`minHeight` (1024×680), so a 1366×768 laptop gets a window that fits. A saved position only survives when the saved rectangle still intersects some display's work area by at least 200×100 px with at least half of a 64px title strip visible; otherwise the window is centered again and the size falls back to the default. Sizes are clamped against the display the window will actually appear on, so a window saved on a now-disconnected large monitor shrinks to the primary work area. `trackWindowBounds()` records `resize`/`move` readings while skipping maximized, minimized and full-screen states (the Windows `-32000` minimized coordinates and maximized bounds must never reach the file) and writes the last normal bounds once on `close`; a failed write never blocks closing.
+
 ## 0.6.3 additions
 
 ### Recent repositories switcher
