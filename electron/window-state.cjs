@@ -143,6 +143,11 @@ function trackWindowBounds(window, store) {
   window.on('move', capture)
   capture()
   window.once('close', () => {
+    // Final read at close time: move/resize events can lag behind the OS (on a
+    // cold runner the initial placement confirmation may arrive after the
+    // last resize), so the last event capture may be stale. getBounds() at
+    // close is authoritative.
+    capture()
     if (!bounds) return
     try {
       store.save(bounds)

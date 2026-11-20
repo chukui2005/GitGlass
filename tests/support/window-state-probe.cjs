@@ -6,7 +6,7 @@
 // 不调用 buildApplication。
 //
 // GITGLASS_PROBE_PHASE=save：等主窗口出现 → 打印首启 bounds → setBounds 到固定矩形 →
-//   等 move/resize 事件派发完 → close → 读回 window-state.json → 打印。
+//   轮询 getBounds 到目标值（容忍 DIP 取整）→ close → 读回 window-state.json → 打印。
 // GITGLASS_PROBE_PHASE=restore：等主窗口出现 → 打印实际 bounds（应与上次保存的一致）。
 // 阶段一拦截 before-quit：main.cjs 在 window-all-closed 里会 app.quit()，探针必须
 // 先读到落盘文件，最后用 app.exit(0) 直接结束。
@@ -45,15 +45,6 @@ function waitUntil(check, { timeout = 30_000, step = 50, label = '条件' } = {}
   })
 }
 
-function onceEvent(emitter, event, timeout = 10_000) {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => { clearTimeout(timer); emitter.off(event, handler) }
-    const timer = setTimeout(() => { cleanup(); reject(new Error(`等待 ${event} 事件超时`)) }, timeout)
-    const handler = () => { cleanup(); resolve() }
-    emitter.once(event, handler)
-  })
-}
-
 if (!userData) {
   console.error('[WINDOW-STATE-FAILED] 缺少 GITGLASS_PROBE_USERDATA')
   app.exit(1)
@@ -80,11 +71,15 @@ if (!userData) {
       }
       const initial = window.getBounds()
       const target = { x: 120, y: 80, width: 1100, height: 700 }
-      // 先挂事件监听再 setBounds；Windows 上 move/resize 由系统确认后异步派发，
-      // 两个事件都落地才关窗，保证 trackWindowBounds 记下的是新 bounds。
-      const settled = Promise.allSettled([onceEvent(window, 'move'), onceEvent(window, 'resize')])
+      // Windows 上 setBounds 由系统确认后异步生效，move/resize 事件可能乱序到达
+      //（冷 CI 上初始摆放的确认能比 setBounds 还晚）。轮询 getBounds 到目标值
+      //（±2 容忍 DIP 取整）再关窗；close 时主进程会做最后一次权威读取。
       window.setBounds(target)
-      await settled
+      await waitUntil(() => {
+        const bounds = window.getBounds()
+        return Math.abs(bounds.x - target.x) <= 2 && Math.abs(bounds.y - target.y) <= 2
+          && Math.abs(bounds.width - target.width) <= 2 && Math.abs(bounds.height - target.height) <= 2
+      }, { label: 'setBounds 生效' })
       window.close()
       const stateFile = path.join(userData, 'window-state.json')
       const saved = await waitUntil(() => JSON.parse(fs.readFileSync(stateFile, 'utf8')), { label: 'window-state.json 落盘' })
