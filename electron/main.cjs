@@ -308,7 +308,28 @@ if (primaryInstance) app.whenReady().then(async () => {
   if (process.env.GITGLASS_STARTUP_PROBE) {
     const markRendered = (mark) => () => startupProbe(mark, { memory: app.getAppMetrics().map((metric) => ({ type: metric.type, workingSetKb: metric.memory.workingSetSize })) })
     mainWindow.once('ready-to-show', markRendered('ready-to-show'))
-    mainWindow.webContents.once('did-finish-load', markRendered('did-finish-load'))
+    mainWindow.webContents.once('did-finish-load', async () => {
+      markRendered('did-finish-load')()
+      // 外壳冒烟测试（tests/ui/electron-shell.test.cjs）需要只能在真实打包产物上验证的
+      // 事实：exe 名（不是 electron.exe）、打包版本、无原生菜单、自绘标题栏，以及渲染层
+      // 自己确认的 Window Controls Overlay 可见性。任何失败都写进探针文件——静默吞掉
+      // 会让冒烟测试只留下一个 60s 超时（第一次实现就踩过：getTitleBarStyle 不存在）。
+      try {
+        const overlayVisible = await mainWindow.webContents.executeJavaScript('navigator.windowControlsOverlay ? navigator.windowControlsOverlay.visible : null')
+        startupProbe('shell-facts', {
+          shell: {
+            version: app.getVersion(),
+            isPackaged: app.isPackaged,
+            exeName: path.basename(app.getPath('exe')),
+            hasApplicationMenu: Menu.getApplicationMenu() !== null,
+            titleBarStyle: titleBarOptions.titleBarStyle,
+            overlayVisible,
+          },
+        })
+      } catch (error) {
+        startupProbe('shell-facts-error', { error: String((error && error.message) || error) })
+      }
+    })
   }
   mainWindow.on('closed', () => stopWatching())
   const devUrl = process.env.VITE_DEV_SERVER_URL

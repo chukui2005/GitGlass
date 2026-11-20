@@ -25,6 +25,7 @@ describe('GitHub CI/CD workflow configuration', () => {
         'npm run build',
         'npm run dist:win',
         'npm run verify:release',
+        'npx vitest run tests/ui/electron-shell.test.cjs',
       ])
     expect(release.jobs['build-windows-release'].steps.find((step) => step.run === 'npm run verify:release').env)
       .toEqual({ TAG_NAME: '${{ github.ref_name }}' })

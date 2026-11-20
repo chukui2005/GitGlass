@@ -45,3 +45,8 @@ jobs:
         run: npm run dist:win
       - name: Verify release artifacts and updater metadata
         run: npm run verify:release
+      # Runs the packaged shell smoke test against the artifacts this job just
+      # built: GitGlass.exe (not electron.exe), packaged version, hidden title
+      # bar with a visible overlay and no native menu (issues #12/#18).
+      - name: Packaged shell smoke test
+        run: npx vitest run tests/ui/electron-shell.test.cjs
