@@ -93,7 +93,9 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 @media(max-width:1080px){.topbar{padding-left:12px;padding-right:calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) + 12px)}.top-actions{gap:5px}.top-action,.toolbar-button,.sync-action,.secondary-button{min-width:30px;padding:0 7px}.top-action-label{display:none}}
 
 /* Diff 审阅坐标：左右标尺分别指向旧版与新版，方便直接定位改动。 */
-.diff-line{display:grid;grid-template-columns:46px 46px 24px max-content}.diff-line>.diff-line-number{width:auto;padding-right:10px;color:var(--muted);text-align:right;user-select:none}.diff-line>.diff-marker{width:auto;padding-right:0;color:var(--muted);text-align:center;user-select:none}.diff-line.plus .diff-line-number,.diff-line.plus .diff-marker{background:var(--green-soft);color:var(--green)}.diff-line.minus .diff-line-number,.diff-line.minus .diff-marker{background:var(--red-soft);color:var(--red)}.diff-line.hunk{color:var(--blue)}.diff-line.metadata,.diff-line.binary{grid-template-columns:112px max-content;margin-top:2px;padding:3px 28px 3px 20px;color:var(--muted);font-size:12px}.diff-line.binary{background:var(--orange-soft);color:var(--orange-ink)}.diff-label{padding-right:10px;color:var(--muted);font-weight:600;text-align:right}
+.diff-line{display:grid;grid-template-columns:46px 46px 24px max-content}.diff-line>.diff-line-number{width:auto;padding-right:10px;color:var(--muted);text-align:right;user-select:none}.diff-line>.diff-marker{width:auto;padding-right:0;color:var(--muted);text-align:center;user-select:none}.diff-line.plus .diff-line-number,.diff-line.plus .diff-marker{background:var(--green-soft);color:var(--green)}.diff-line.minus .diff-line-number,.diff-line.minus .diff-marker{background:var(--red-soft);color:var(--red)}.diff-line.hunk{color:var(--blue)}.diff-line.metadata,.diff-line.binary{grid-template-columns:112px max-content;margin-top:2px;padding:3px 28px 3px 20px;color:var(--muted);font-size:12px}
+.diff-line.metadata>.diff-line-number,.diff-line.metadata>.diff-marker,
+.diff-line.binary>.diff-line-number,.diff-line.binary>.diff-marker{display:none}.diff-line.binary{background:var(--orange-soft);color:var(--orange-ink)}.diff-label{padding-right:10px;color:var(--muted);font-weight:600;text-align:right}
 /* Application updates use a native modal so focus and repository interaction
    stay contained while a user explicitly prepares a restart. */
 .update-trigger{position:relative;min-width:30px;justify-content:center}
@@ -124,7 +126,7 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 
 /* 应用级提示条：发生在标题栏下方的常驻通知（合并/变基进行中等）。
    对齐 dbx：不整行染色——白底 + 左侧 2px 色条 + 发丝下边框，正文用对应状态的 ink 色。 */
-.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}.app-shell.has-banner.ledger-open{grid-template-rows:48px auto minmax(0,1fr) minmax(250px,39vh)}.app-notice{flex:none}.app-notice{display:flex;align-items:center;gap:7px;padding:7px 14px;border-bottom:1px solid var(--line);background:var(--surface);font-size:var(--font-secondary)}.app-notice.success{border-left:2px solid var(--green);color:var(--green-ink)}.app-notice.error{border-left:2px solid var(--red);color:var(--red-ink)}.app-notice span{flex:1}.app-notice-dismiss{background:none;border:0;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}.app-notice-pin{flex:none;padding:1px 7px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux);cursor:pointer}.app-notice-pin:hover{border-color:var(--line-strong);background:var(--hover);color:var(--text)}.app-notice-pin[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
+.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}.app-shell.has-banner.ledger-open{grid-template-rows:48px auto minmax(0,1fr) minmax(250px,39vh)}.app-notice{flex:none}.app-notice{display:flex;align-items:center;gap:7px;padding:2px 14px;border-bottom:1px solid var(--line);background:var(--surface);font-size:var(--font-secondary)}.app-notice.success{border-left:2px solid var(--green);color:var(--green-ink)}.app-notice.error{border-left:2px solid var(--red);color:var(--red-ink)}.app-notice span{flex:1}.app-notice-dismiss{background:none;border:0;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}.app-notice-pin{flex:none;padding:1px 7px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux);cursor:pointer}.app-notice-pin:hover{border-color:var(--line-strong);background:var(--hover);color:var(--text)}.app-notice-pin[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
 
 /* 最近仓库切换器：顶栏「打开仓库」旁的下拉菜单。 */
 .recent-repositories{position:relative;display:flex}
@@ -196,9 +198,6 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .diff-line{grid-template-columns:40px 40px 20px max-content}
 .diff-line>.diff-line-number{padding-right:8px}
 .diff-line.metadata,.diff-line.binary{grid-template-columns:96px max-content;margin-top:0;padding:2px 28px 2px 12px;font-size:var(--font-secondary);line-height:1.5}
-.diff-line.metadata>.diff-line-number,.diff-line.metadata>.diff-marker,
-.diff-line.binary>.diff-line-number,.diff-line.binary>.diff-marker{display:none}
-/* 标签要占满 96px 的标签列：基础规则里的 .diff-line>span{width:38px} 会把 5 字标签挤成三行。 */
 .diff-line.metadata>.diff-label,.diff-line.binary>.diff-label{width:auto;white-space:nowrap}
 .diff-line.file{display:flex;align-items:baseline;gap:8px;margin-top:6px;padding:4px 28px 4px 12px;border-bottom:1px solid var(--line);background:var(--code);color:var(--text);font-size:var(--font-secondary);font-weight:600;line-height:1.5}
 .diff-line.file code{overflow-wrap:anywhere}
