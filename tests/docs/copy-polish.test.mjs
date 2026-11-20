@@ -101,7 +101,8 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(styles).toContain('.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}')
     expect(renderer).toContain('disabled={loading}')
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
-    expect(renderer).toContain('onClick={refreshFromUser}')
+    // ⟳ 常驻按钮已降级为命令面板命令（#21）：手动刷新经 actions.refreshFromUser 接线。
+    expect(renderer).toContain('run: actions.refreshFromUser')
     expect(styles).toContain('button:disabled{cursor:not-allowed;pointer-events:none}')
     // 没有打开仓库时右栏是引导块（结构由 tests/ui/workbench-structure.test.mjs 真渲染守住），
     // 这里只守它的中文说明文案。

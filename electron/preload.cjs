@@ -23,6 +23,17 @@ contextBridge.exposeInMainWorld('gitglass', {
     ipcRenderer.on('repo:changed', listener)
     return () => ipcRenderer.removeListener('repo:changed', listener)
   },
+  // fs.watch can fail silently (network drives, restricted filesystems); the
+  // renderer only ever receives { active }, never a path or handle.
+  getWatcherState: () => ipcRenderer.invoke('watcher:state'),
+  onWatcherChanged: (callback) => {
+    const listener = (_event, payload) => {
+      if (typeof callback !== 'function') return
+      callback({ active: payload?.active === true })
+    }
+    ipcRenderer.on('watcher:changed', listener)
+    return () => ipcRenderer.removeListener('watcher:changed', listener)
+  },
   chooseRepository: () => ipcRenderer.invoke('repo:choose'),
   openRepository: (repositoryPath) => ipcRenderer.invoke('repo:open', repositoryPath),
   getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),

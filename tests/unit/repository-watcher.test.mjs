@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RepositoryWatcher, classifyWatchEvent, createDebouncer, mergeReasons } from '../../electron/repository-watcher.cjs'
 
 // Deterministic timer + clock: the debounce and silent windows are asserted
@@ -260,6 +260,57 @@ describe('RepositoryWatcher', () => {
     watcher.close()
     expect(watcher.watch(path.join(directory, 'missing'), () => {})).toBe(false)
     expect(watcher.watching).toBe(false)
+  })
+
+  it('reports unavailable when every fs.watch call throws synchronously', () => {
+    const gitDirectory = gitDirectoryFixture()
+    const onError = vi.fn()
+    const throwingWatch = () => { throw new Error('EPERM: operation not permitted') }
+    const { watcher } = createWatcher({ watch: throwingWatch, options: { onError } })
+    expect(watcher.watch(gitDirectory, () => {})).toBe(false)
+    expect(watcher.watching).toBe(false)
+    // 同步失败走 watch() 的返回值，不走 onError。
+    expect(onError).not.toHaveBeenCalled()
+    watcher.close()
+  })
+
+  it('stays available when only some directories fail to watch', () => {
+    const gitDirectory = gitDirectoryFixture()
+    const watch = (target, options, listener) => {
+      if (/refs|logs/.test(target)) throw new Error('EACCES')
+      const handle = { target, listener, closed: false, close() { this.closed = true } }
+      return handle
+    }
+    const { watcher } = createWatcher({ watch })
+    expect(watcher.watch(gitDirectory, () => {})).toBe(true)
+    // git 目录本身还在监视：HEAD 与 index 的变化仍能看到。
+    expect(watcher.watching).toBe(true)
+    watcher.close()
+  })
+
+  it('reports total loss once every handle errors asynchronously', () => {
+    const gitDirectory = gitDirectoryFixture()
+    const onError = vi.fn()
+    const handles = []
+    const watch = (target, options, listener) => {
+      const handle = { target, listener, closed: false, close() { this.closed = true }, on(event, callback) { handle.fail = callback } }
+      handles.push(handle)
+      return handle
+    }
+    const { watcher } = createWatcher({ watch, options: { onError } })
+    watcher.watch(gitDirectory, () => {})
+    expect(watcher.watching).toBe(true)
+    // 部分句柄死亡仍是可用：剩下的目录继续监视。
+    handles[0].fail(new Error('ENOENT'))
+    expect(watcher.watching).toBe(true)
+    expect(onError).not.toHaveBeenCalled()
+    for (const handle of handles) if (handle.fail) handle.fail(new Error('ENOENT'))
+    expect(watcher.watching).toBe(false)
+    expect(onError).toHaveBeenCalledTimes(1)
+    // 迟到的重复 error（已拆除的句柄）不再触发。
+    for (const handle of handles) if (handle.fail) handle.fail(new Error('ENOENT'))
+    expect(onError).toHaveBeenCalledTimes(1)
+    watcher.close()
   })
 
   it('reports the first filesystem event immediately and coalesces the rest', () => {

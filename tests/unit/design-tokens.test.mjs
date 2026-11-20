@@ -307,7 +307,8 @@ describe('Design tokens: 顶栏层次', () => {
     const iconButtons = [...renderer.matchAll(/<button\b[^>]*>/g)]
       .map((match) => match[0])
       .filter((tag) => tag.includes('"icon-button"'))
-    expect(iconButtons.length).toBeGreaterThanOrEqual(3)
+    // ⟳ 降级为命令面板命令（#21）后，main.jsx 的 icon-only 按钮减少一枚。
+    expect(iconButtons.length).toBeGreaterThanOrEqual(2)
     for (const tag of iconButtons) {
       expect(tag).toContain('aria-label')
       expect(tag).toMatch(/\btitle=/)
