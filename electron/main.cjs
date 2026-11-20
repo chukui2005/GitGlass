@@ -37,6 +37,10 @@ let mainWindow
 let repoPath = null
 let recentRepositories = null
 let watcher = null
+// Whether fs.watch actually watches the open repository. It fails silently on
+// network drives and restricted filesystems, and the renderer needs to know
+// because then automatic refresh never happens (issue #21).
+let watcherActive = false
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
 app.on('second-instance', () => {
@@ -72,6 +76,12 @@ function stopWatching() {
   watcher = null
 }
 
+function setWatcherStatus(active) {
+  if (watcherActive === active) return
+  watcherActive = active
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('watcher:changed', { active })
+}
+
 // Started whenever repoPath changes (startup restore and every openRepository()
 // success) and stopped on window close, quit and repository switch, so a watcher
 // never outlives the repository it points at.
@@ -80,10 +90,13 @@ function startWatching(repositoryPath) {
   if (!repositoryPath) return
   const gitDirectory = resolveGitDirectory(repositoryPath)
   if (!gitDirectory) return
-  watcher = new RepositoryWatcher()
-  watcher.watch(gitDirectory, ({ reason }) => {
+  watcher = new RepositoryWatcher({ onError: () => setWatcherStatus(false) })
+  // watch() returns false when no directory could be watched at all (sync
+  // failure); async handle deaths arrive through onError above.
+  const started = watcher.watch(gitDirectory, ({ reason }) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('repo:changed', { reason })
   })
+  setWatcherStatus(started)
 }
 
 function handleRepository(channel, handler) {
@@ -209,6 +222,9 @@ handleUpdate('repo:recent:forget', (candidate) => {
   return describeRecent(recentRepositories?.forget(candidate) ?? [])
 })
 handleRepository('repo:state', () => repository.state())
+// Cheap local read (no gate): the renderer polls this once on mount and then
+// follows the watcher:changed pushes to know whether automatic refresh lives.
+handleUpdate('watcher:state', () => ({ active: watcherActive }))
 handleRepository('repo:diff', (_event, file) => repository.diff(file))
 handleRepository('repo:ledger', () => commandService.history())
 handleRepository('repo:branches', () => repository.branches())

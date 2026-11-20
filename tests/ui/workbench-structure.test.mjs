@@ -349,6 +349,33 @@ describe('workbench structure (rendered)', () => {
     expect(screen.getByRole('button', { name: '选择文件 README.md' })).toBeInTheDocument()
   })
 
+  it('offers the manual refresh command only while automatic refresh is unavailable', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderWorkspace({
+      getWatcherState: async () => ({ active: false }),
+    })
+
+    // 常驻 ⟳ 按钮已降级（#21 ①）：侧栏不再有「刷新状态」。
+    expect(screen.queryByRole('button', { name: '刷新状态' })).toBeNull()
+    // watcher 不可用：打开仓库即提示一次（#21 ②）。
+    expect(await screen.findByText('自动刷新不可用（无法监视仓库变化），请从命令面板手动刷新。')).toBeInTheDocument()
+
+    await user.click(within(container.querySelector('header.topbar')).getByRole('button', { name: '命令面板' }))
+    const command = screen.getByRole('option', { name: '重新读取本地状态（不联网）' })
+    expect(command).toBeEnabled()
+  })
+
+  it('keeps the manual refresh command out of the palette while automatic refresh works', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderWorkspace()
+
+    await user.click(within(container.querySelector('header.topbar')).getByRole('button', { name: '命令面板' }))
+    expect(screen.queryByRole('option', { name: '重新读取本地状态（不联网）' })).toBeNull()
+    // 两个入口的 title 区分（#21 ③）：「获取…」写明联网与先生成计划。
+    expect(within(container.querySelector('header.topbar')).getByRole('button', { name: '获取远程更新（先查看计划）' }))
+      .toHaveAttribute('title', '联网拉取远程更新（先生成计划，不会立即执行）')
+  })
+
   it('shows a guide block instead of the commit form when no repository is open', async () => {
     const user = userEvent.setup()
     // 默认假桥就是「还没有打开仓库」：getState 返回 ok:false。

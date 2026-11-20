@@ -51,6 +51,9 @@ export function createGitglassStub(overrides = {}) {
     getState: vi.fn(async () => ({ ok: false, path: '', branch: '', files: [] })),
     getLedger: vi.fn(async () => []),
     onRepositoryChanged: vi.fn(unsubscribe),
+    // watcher 可用性（fs.watch 在网络盘等场景会静默失败；默认乐观可用）
+    getWatcherState: vi.fn(async () => ({ active: true })),
+    onWatcherChanged: vi.fn(unsubscribe),
 
     // 工作区
     getBranches: vi.fn(async () => ({ branches: [] })),

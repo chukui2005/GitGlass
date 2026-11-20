@@ -81,11 +81,16 @@ function buildPaletteCommands({
   commandShortcut,
   ledgerShortcut,
   historySearchShortcut,
+  watcherActive = true,
   actions,
 }) {
   return [
     { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: actions.chooseRepo },
-    { id: "refresh", label: "刷新工作区", keywords: "刷新 状态", ...availability.refresh, run: actions.refreshFromUser },
+    // ⟳ 常驻按钮已降级（0.6.5 验收反馈 #21）：自动刷新正常时没有手动入口，
+    // watcher 不可用时才在面板里提供手动重读；label 写明「不联网」以区别「获取…」。
+    ...(watcherActive
+      ? []
+      : [{ id: "refresh", label: "重新读取本地状态（不联网）", keywords: "刷新 状态 手动", ...availability.refresh, run: actions.refreshFromUser }]),
     { id: "workspace", label: "前往工作区", keywords: "工作区 文件", ...availability.workspace, run: () => actions.setHistoryMode(false) },
     { id: "history", label: "前往历史审查", keywords: "历史 提交", ...availability.history, run: () => actions.setHistoryMode(true) },
     { id: "ledger", label: ledgerOpen ? "收起命令账本" : "展开命令账本", shortcut: ledgerShortcut, keywords: "账本 命令", ...availability.ledger, run: () => actions.setLedgerOpen((value) => !value) },
@@ -132,6 +137,10 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusedOperationId, setFocusedOperationId] = useState(null);
   const [newBranch, setNewBranch] = useState("");
+  // watcher 可用性：fs.watch 在网络盘 / 受限文件系统上会静默失败，主进程把
+  // watch() 的结果（与句柄异步死亡）推给渲染层；不可用时命令面板才提供手动
+  // 刷新，并在打开仓库时提示一次（0.6.5 验收反馈 #21）。挂载时先乐观置 true。
+  const [watcherActive, setWatcherActive] = useState(true);
   const refreshSequence = useRef(0);
   // 自动刷新（窗口重新聚焦 / 主进程看到 .git 变化）用的最新闭包与订阅状态：
   // 订阅只建立一次，所以 refreshAll 必须通过 ref 取用，不能闭包住首帧的仓库。
@@ -372,6 +381,31 @@ export function App() {
       window.removeEventListener("focus", onWindowFocus);
     };
   }, []);
+  // watcher 状态：挂载时读一次 + 订阅推送。不可用时只提示一次（同一段失败不
+  // 重复打扰），恢复可用后重新武装；没有打开仓库时不提示（没有东西可刷新）。
+  useEffect(() => {
+    let disposed = false;
+    window.gitglass.getWatcherState?.()
+      .then((status) => {
+        if (!disposed) setWatcherActive(status?.active !== false);
+      })
+      .catch(() => { /* 查询失败保持乐观值，下一次推送会纠正。 */ });
+    const unsubscribe = window.gitglass.onWatcherChanged?.((payload) => setWatcherActive(payload?.active !== false));
+    return () => {
+      disposed = true;
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, []);
+  const watcherNoticeArmed = useRef(true);
+  useEffect(() => {
+    if (watcherActive) {
+      watcherNoticeArmed.current = true;
+      return;
+    }
+    if (!repo || !watcherNoticeArmed.current) return;
+    watcherNoticeArmed.current = false;
+    setNotice({ type: "error", text: "自动刷新不可用（无法监视仓库变化），请从命令面板手动刷新。" });
+  }, [watcherActive, repo]);
   // 刷新、暂存成功、切换仓库后：把勾选集合与当前未暂存列表重新对齐，
   // 移除已不存在于未暂存区的幽灵选择。
   useEffect(() => {
@@ -727,6 +761,7 @@ export function App() {
     }),
     ledgerOpen,
     selected,
+    watcherActive,
     commandShortcut,
     ledgerShortcut,
     historySearchShortcut,
@@ -891,7 +926,7 @@ export function App() {
             type="button"
             className="secondary-button"
             aria-label="获取远程更新（先查看计划）"
-            title="获取远程更新（先查看计划，不会立即执行）"
+            title="联网拉取远程更新（先生成计划，不会立即执行）"
             disabled={!repo || loading || !remote?.remotes?.length}
             onClick={fetchRemote}
           >
@@ -1229,18 +1264,6 @@ export function App() {
         <aside className="status-panel">
           <div className="panel-heading">
             <h2>工作区</h2>
-            {repo && (
-              <button
-                type="button"
-                className="icon-button"
-                onClick={refreshFromUser}
-                aria-label="刷新状态"
-                title="刷新状态"
-                disabled={loading}
-              >
-                <ArrowClockwise size={15} />
-              </button>
-            )}
           </div>
           {repo ? (
             <>

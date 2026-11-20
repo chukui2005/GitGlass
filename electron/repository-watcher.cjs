@@ -172,6 +172,7 @@ class RepositoryWatcher {
     now = Date.now,
     setTimeout: schedule = setTimeout,
     clearTimeout: cancel = clearTimeout,
+    onError = null,
   } = {}) {
     this.debounceMs = debounceMs
     this.maxWaitMs = maxWaitMs
@@ -181,6 +182,9 @@ class RepositoryWatcher {
     this.now = now
     this.schedule = schedule
     this.cancel = cancel
+    // Called when the last fs.watch handle dies asynchronously; the main process
+    // turns this into a renderer-visible "automatic refresh unavailable" signal.
+    this.onError = onError
     this.handles = []
     this.debouncer = null
     this.onChange = null
@@ -213,9 +217,16 @@ class RepositoryWatcher {
       if (!this.existsSync(target)) continue
       const kind = directory || 'git'
       try {
-        this.handles.push(this.watchFileSystem(target, { persistent: false }, (_event, filename) => this.handleEvent(filename, kind)))
+        const handle = this.watchFileSystem(target, { persistent: false }, (_event, filename) => this.handleEvent(filename, kind))
+        // fs.watch can also die asynchronously (network drive dropped, directory
+        // deleted): drop the dead handle and report when the last one is gone,
+        // so the app can tell the user automatic refresh is unavailable (#21).
+        if (typeof handle.on === 'function') handle.on('error', () => this.handleWatchFailure(handle))
+        this.handles.push(handle)
       } catch {
-        // The directory can disappear between existsSync and watch().
+        // The directory can disappear between existsSync and watch(); a watch()
+        // that throws for every directory leaves zero handles, which the return
+        // value reports as unavailable.
       }
     }
     return this.handles.length > 0
@@ -255,6 +266,21 @@ class RepositoryWatcher {
     const current = this.now()
     this.ignoredWindows = this.ignoredWindows.filter((window) => window.until > current)
     return this.ignoredWindows.some((window) => window.reasons === null || window.reasons.has(reason))
+  }
+
+  // One fs.watch handle died asynchronously. Total loss (no handles left) is
+  // reported through onError so the main process can downgrade the UI; partial
+  // loss keeps watching the remaining directories.
+  handleWatchFailure(handle) {
+    const index = this.handles.indexOf(handle)
+    if (index === -1) return
+    this.handles.splice(index, 1)
+    try {
+      handle.close()
+    } catch {
+      // Already dead; nothing to release.
+    }
+    if (!this.handles.length && this.debouncer && typeof this.onError === 'function') this.onError()
   }
 
   // Idempotent: safe to call on every window close, quit and repository switch.
