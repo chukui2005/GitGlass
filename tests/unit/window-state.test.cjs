@@ -178,6 +178,16 @@ describe('trackWindowBounds', () => {
     expect(records).toEqual([{ x: 100, y: 60, width: 1100, height: 700 }])
   })
 
+  it('reads the bounds once more at close time, so a late OS confirmation cannot leave stale values', () => {
+    const records = []
+    const { win, state } = fakeWindow()
+    trackWindowBounds(win, recordingStore(records))
+    // 不发事件、直接改 bounds：模拟 move/resize 尚未派发完就关窗的竞态。
+    Object.assign(state, { x: 120, y: 80, width: 1100, height: 700 })
+    win.emit('close')
+    expect(records).toEqual([{ x: 120, y: 80, width: 1100, height: 700 }])
+  })
+
   it('skips maximized readings and keeps the restored normal bounds', () => {
     const records = []
     const { win, state } = fakeWindow({ x: 10, y: 20, width: 1200, height: 800 })
