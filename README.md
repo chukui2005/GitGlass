@@ -10,7 +10,7 @@
 
 <p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
 
-<p align="center"><a href="https://github.com/chukui2005/GitGlass/releases">View beta builds on Releases</a></p>
+<p align="center"><a href="https://github.com/chukui2005/GitGlass/releases/latest">Download the latest stable release</a></p>
 
 <!-- section:hero -->
 
@@ -55,19 +55,17 @@ Start with a familiar review flow: select a changed file, inspect its real Git D
 - Discard only one tracked, unstaged file after reviewing its Diff and typing its name.
 - Delete merged non-current local branches and create rescue branches from reflog entries.
 
-### Current beta limits
+### Current limits
 
-- Windows x64 Beta only. You must install Git yourself and make `git` available on the command line.
+- Windows x64. Install Git and make `git` available on the command line.
 - GitGlass does not support force push, remote-branch deletion, automatic merge, rebase, stash, or `reset --hard`.
-- The first Beta is unsigned; Windows SmartScreen may show an “Unknown publisher” warning.
+- Windows builds are unsigned, so Windows SmartScreen may show an “Unknown publisher” warning.
 
 <!-- section:download -->
 
 ## Download and install
 
-<!-- release-link: replace this Releases-page link with versioned asset links after publication -->
-
-Beta builds will be published on the [Releases page](https://github.com/chukui2005/GitGlass/releases). Until a release is published, use that page rather than a guessed version-specific URL.
+The [latest stable release](https://github.com/chukui2005/GitGlass/releases/latest) includes a Windows x64 installer and a portable ZIP.
 
 ### NSIS installer
 
