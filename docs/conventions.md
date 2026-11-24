@@ -162,6 +162,7 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 - 工程门槛（0.6.4-beta.2）：根目录新增 `eslint.config.mjs`、`tsconfig.json`（均已登记进第 1 节白名单），`vite.config.mjs` 增加 `test.coverage`；CI 在 `npm test` 之后增加 `lint` / `typecheck` / `test:coverage` 三步，`tests/release/ci-cd-workflows.test.cjs` 同步断言。第 5 节记录了命令与阈值。
 - 为过 lint 做的等价改动：`UpdateService` 的 `Object.assign(this, …)` 改为逐条属性赋值；`src/{app-updates,recent-repositories-menu,main}.jsx` 删掉 React 19 新 JSX 转换下已无用的 `import React` 与两个未使用的图标导入；`main.jsx` 命令行提示里的 U+3000 改成显式 `{"\u3000"}`。
 - 渲染层拆分（0.6.5-beta.1）：`src/main.jsx` 3027 → 1441 行，拆出 `src/use-history-review.js`、`src/use-safety-plans.js`、`src/use-remote-overview.js`、`src/use-panel-resize.js` 与 `src/workbench-ui.jsx`（26 个展示组件）；`src/` 从 12 个文件变成 17 个，第 2 节的"~15 个文件时再按 feature 拆分"因此提上日程。
+- 工作台改版（0.7）：新增 `src/file-labels.js`（路径展示名 + `area + path` 寻址的纯函数），验收证据见 [ui-redesign-acceptance.md](ui-redesign-acceptance.md)。真窗口验收新增 `tests/support/workbench-acceptance.cjs` + `tests/support/workbench-preload.cjs`（真实临时 Git 仓库作桥）与 `tests/ui/workbench-window.test.cjs`；截图写到 `.screenshots/ui-redesign/`（已忽略），交付用的三张另存 `docs/assets/ui-redesign/`。
 
 ### 待办（需要单独 PR）
 
