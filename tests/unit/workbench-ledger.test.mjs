@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, recordDurationLabel, recordStatusLabel, recordTypeLabel, reuseUnchangedRecords } from '../../src/workbench-ledger.js'
+import { countBySource, filterLedgerRecords, formatLedgerOutput, glanceSummary, groupBackgroundRecords, intentLabel, ledgerGlanceRecord, recordDurationLabel, recordStatusLabel, recordTypeLabel, reuseUnchangedRecords } from '../../src/workbench-ledger.js'
 
 // 用 String.fromCharCode 构造控制字符，避免测试源码里出现不可见字符。
 const RS = String.fromCharCode(30) // 0x1e 记录分隔符
@@ -43,6 +43,17 @@ describe('Workbench ledger presentation', () => {
     expect(recordStatusLabel({ ok: true, stderr: 'warning' })).toBe('警告')
     expect(intentLabel({ source: 'background' })).toBe('系统读取')
     expect(glanceSummary(null)).toBe('尚无命令记录')
+  })
+
+  it('puts the newest user action in the collapsed summary regardless of the panel filter', () => {
+    // 记录按时间倒序：后台刷新刚写入，用户操作排在后面。
+    const latest = { id: 'bg-new', source: 'background', intent: 'Read working tree status' }
+    const withRefresh = [latest, ...records]
+    expect(ledgerGlanceRecord(withRefresh)).toBe(records[0])
+    // 还没有用户操作时才回退到最近一条系统读取。
+    expect(ledgerGlanceRecord([latest])).toBe(latest)
+    expect(ledgerGlanceRecord(records.filter((record) => record.source === 'background'))).toBe(records[1])
+    expect(ledgerGlanceRecord([])).toBeNull()
   })
 })
 

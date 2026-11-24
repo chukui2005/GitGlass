@@ -22,6 +22,8 @@
     "src/repository-refresh.js",
     "src/user-notices.js",
     "src/diff-presentation.js",
+    "src/file-labels.js",
+    "src/command-display.js",
     "src/shortcut-policy.js",
     "src/command-palette-model.js",
     "src/history-*.js",

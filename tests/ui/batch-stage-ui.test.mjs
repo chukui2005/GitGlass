@@ -59,16 +59,18 @@ describe('batch stage UI (rendered)', () => {
   it('selects all, clears the selection, and keeps a live count', async () => {
     const { user } = await renderBatch()
 
-    expect(screen.getByText('已选择 0 个')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '全选未暂存' }))
+    // 未选中时只有一行操作 + 一行原因，没有「已选择 0 个」这种空计数。
+    expect(screen.queryByText('已选择 0 个')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '全选' }))
     expect(checkbox('src/main.jsx')).toBeChecked()
     expect(checkbox('docs/design.md')).toBeChecked()
     expect(screen.getByText('已选择 2 个')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '清除选择' }))
+    await user.click(screen.getByRole('button', { name: '清除' }))
     expect(checkbox('src/main.jsx')).not.toBeChecked()
     expect(checkbox('docs/design.md')).not.toBeChecked()
-    expect(screen.getByText('已选择 0 个')).toBeInTheDocument()
+    expect(screen.queryByText('已选择 2 个')).toBeNull()
+    expect(screen.getByText('先勾选要暂存的文件')).toBeInTheDocument()
 
     // 单条勾选也更新计数。
     await user.click(checkbox('docs/design.md'))
@@ -78,15 +80,16 @@ describe('batch stage UI (rendered)', () => {
   it('explains the disabled primary action with visible text, not only the title', async () => {
     const { user } = await renderBatch()
 
-    const stage = screen.getByRole('button', { name: '暂存所选 0 个' })
+    const stage = screen.getByRole('button', { name: '暂存所选' })
     expect(stage).toBeDisabled()
-    expect(stage).toHaveAttribute('title', '先在上方勾选要暂存的文件')
+    expect(stage).toHaveAttribute('title', '先勾选要暂存的文件')
     // 禁用原因同时是可见文字，不依赖 hover 才出现的 title。
-    expect(screen.getByText('先在上方勾选要暂存的文件。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '清除选择' })).toBeDisabled()
+    expect(screen.getByText('先勾选要暂存的文件')).toBeInTheDocument()
+    // 「清除」只在选中后出现，未选中时不给一个永远禁用的入口。
+    expect(screen.queryByRole('button', { name: '清除' })).toBeNull()
 
     await user.click(checkbox('src/main.jsx'))
-    expect(screen.queryByText('先在上方勾选要暂存的文件。')).toBeNull()
+    expect(screen.queryByText('先勾选要暂存的文件')).toBeNull()
     expect(screen.getByRole('button', { name: '暂存所选 1 个' })).toHaveAttribute(
       'title',
       '将暂存所选 1 个文件',
@@ -146,8 +149,8 @@ describe('batch stage UI (rendered)', () => {
       expect(checkbox('src/main.jsx')).toBeDisabled()
     })
     expect(screen.getByRole('button', { name: '暂存所选 1 个' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '全选未暂存' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '清除选择' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '全选' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '清除' })).toBeDisabled()
     // 单文件行上的“暂存 / 取消暂存”同样禁用：加载期间两个分区都不能半途改状态。
     expect(screen.getByRole('button', { name: '暂存 src/main.jsx' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '取消暂存 electron/main.cjs' })).toBeDisabled()
@@ -173,7 +176,7 @@ describe('batch stage UI (rendered)', () => {
       }),
     })
 
-    await user.click(screen.getByRole('button', { name: '全选未暂存' }))
+    await user.click(screen.getByRole('button', { name: '全选' }))
     expect(screen.getByText('已选择 2 个')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '暂存所选 2 个' }))
 
@@ -213,7 +216,8 @@ describe('batch stage UI (rendered)', () => {
       expect(screen.getByRole('checkbox', { name: '选择暂存 README.md' })).toBeInTheDocument()
     })
     // 换仓库后勾选集合清空：旧仓库的选择不能渗进新仓库。
-    expect(screen.getByText('已选择 0 个')).toBeInTheDocument()
+    expect(screen.queryByText('已选择 1 个')).toBeNull()
+    expect(screen.getByText('先勾选要暂存的文件')).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: '选择暂存 src/main.jsx' })).toBeNull()
   })
 
@@ -225,7 +229,7 @@ describe('batch stage UI (rendered)', () => {
       })),
     })
 
-    await user.click(screen.getByRole('button', { name: '全选未暂存' }))
+    await user.click(screen.getByRole('button', { name: '全选' }))
     await user.click(screen.getByRole('button', { name: '暂存所选 2 个' }))
 
     const notice = await waitFor(() => {
@@ -248,7 +252,7 @@ describe('batch stage UI (rendered)', () => {
       })),
     })
 
-    await user.click(screen.getByRole('button', { name: '全选未暂存' }))
+    await user.click(screen.getByRole('button', { name: '全选' }))
     await user.click(screen.getByRole('button', { name: '暂存所选 2 个' }))
 
     const notice = await waitFor(() => {

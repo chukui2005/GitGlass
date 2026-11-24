@@ -3,7 +3,7 @@
 // 真渲染断言：用假的 `window.gitglass` 桥挂载真实 <App />，断言渲染出来的 DOM、
 // 可访问名称与交互结果，而不是断言 `src/main.jsx` 里出现了哪段源码字符串。
 // 样式契约（CSS 声明本身）见 tests/ui/style-contracts.test.cjs。
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import {
@@ -86,30 +86,32 @@ describe('workbench structure (rendered)', () => {
     expect(workspace.contains(shell.querySelector('section.command-ledger'))).toBe(false)
   })
 
-  it('keeps the selected file diff inside a two-row diff view with review line numbers', async () => {
+  it('keeps the selected file diff inside a scrolling diff view with review line numbers', async () => {
     const { container } = await renderWorkspace()
 
-    const view = container.querySelector('.diff-view')
-    expect(view.querySelector('.diff-meta')).toHaveTextContent('工作区差异')
-    expect(view.querySelector('.diff-meta')).toHaveTextContent('src/main.jsx')
-    expect(view.querySelector('.diff-content')).toBeInTheDocument()
+    // 中央只有一条标题：面包屑给路径，右侧给差异范围与文件状态，不再有第二行完整路径。
+    const title = container.querySelector('.diff-title')
+    expect(title).toHaveTextContent('src/main.jsx')
+    expect(title).toHaveTextContent('未暂存差异')
+    expect(title).toHaveTextContent('修改')
+    expect(title.querySelector('h2')).toHaveTextContent('文件差异')
+    expect(container.querySelector('.diff-meta')).toBeNull()
+    expect(container.querySelector('.diff-content')).toBeInTheDocument()
 
     // 行号槽带读屏用的定位：删掉的那行只有原文件行号，新增的那行只有新文件行号。
     expect(screen.getByLabelText('原文件第 1 行')).toHaveTextContent('1')
     expect(screen.getByLabelText('新文件第 1 行')).toHaveTextContent('1')
+    const view = container.querySelector('.diff-view')
     expect(view.querySelectorAll('.diff-line.plus')).toHaveLength(1)
     expect(view.querySelectorAll('.diff-line.minus')).toHaveLength(1)
   })
 
-  it('renders the diff file header as one breadcrumb row', async () => {
+  it('drops the patch file header when the single-file title already carries the path', async () => {
     const { container } = await renderWorkspace()
-    const headers = container.querySelectorAll('.diff-line.file')
 
-    // 一个文件只占一行：路径直接放在面包屑里，没有「文件 / 原文件 / 新文件」三行。
-    expect(headers).toHaveLength(1)
-    expect(headers[0]).toHaveTextContent('src/main.jsx')
-    expect(headers[0].querySelector('.diff-label')).toBeNull()
-    expect(container.querySelectorAll('.diff-line.file-path')).toHaveLength(0)
+    // 工作区普通单文件：标题里的面包屑已经指向同一个路径，patch 的文件头不再重复渲染。
+    expect(container.querySelectorAll('.diff-line.file')).toHaveLength(0)
+    expect(container.querySelector('.diff-content')).toHaveTextContent('const modern = true')
   })
 
   it('renders a rename as one「旧 → 新」breadcrumb row', async () => {
@@ -164,13 +166,128 @@ describe('workbench structure (rendered)', () => {
       expect(element).toBeInTheDocument()
       return element
     })
-    expect(glance).toHaveTextContent('最近：暂存文件')
+    // 摘要四要素：来源 · 意图 · 结果 · 时间。
+    expect(glance.querySelector('.ledger-glance-source')).toHaveTextContent('用户执行')
+    expect(glance.querySelector('.ledger-glance-text')).toHaveTextContent('暂存文件')
     expect(glance).toHaveTextContent('成功')
-    expect(glance.querySelector('.ledger-glance-text')).toHaveTextContent('最近：暂存文件')
+    expect(glance.querySelector('time')).toBeInTheDocument()
     // 收起态只给人话摘要：原始命令与 argv 只出现在展开后的技术详情里。
     expect(glance).not.toHaveTextContent('git add -- src/main.jsx')
     expect(glance).not.toHaveTextContent('"add"')
     expect(glance).toHaveAttribute('title', '最近：暂存文件 · 成功')
+  })
+
+  it('prefers the newest user action for the glance even when system reads arrived later', async () => {
+    const { container } = await renderWorkspace({
+      getLedger: async () => [
+        ledgerRecordFixture({
+          id: 'bg-latest',
+          source: 'background',
+          intent: 'Read working tree status',
+          displayCommand: 'git status --porcelain=v1 -z',
+          startedAt: new Date().toISOString(),
+        }),
+        ledgerRecordFixture({ id: 'user-older' }),
+      ],
+    })
+    const glance = await waitFor(() => {
+      const element = container.querySelector('.ledger-glance')
+      expect(element).toBeInTheDocument()
+      return element
+    })
+    expect(glance.querySelector('.ledger-glance-text')).toHaveTextContent('暂存文件')
+    expect(glance.querySelector('.ledger-glance-source')).toHaveTextContent('用户执行')
+    expect(glance).not.toHaveTextContent('读取工作区状态')
+  })
+
+  it('keeps the collapsed summary on the newest user action across filter switches and background refreshes', async () => {
+    const user = userEvent.setup()
+    // 场景复现：首次打开（只有系统读取）→ 切到「系统读取」→ 收起 → 暂存一个文件 → 外部 Git 刷新。
+    let records = [
+      ledgerRecordFixture({
+        id: 'bg-initial',
+        source: 'background',
+        intent: 'Read working tree status',
+        displayCommand: 'git status --porcelain=v1 -z',
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+      }),
+    ]
+    let files = [fileFixture({ path: 'src/main.jsx' })]
+    let changeHandler = null
+    const { container } = renderApp({
+      ...workspaceStub(),
+      getState: async () => repositoryState({ files }),
+      getLedger: async () => records,
+      onRepositoryChanged: (callback) => {
+        changeHandler = callback
+        return () => {}
+      },
+      operate: vi.fn(async () => {
+        // 暂存成功：文件进入已暂存区，同时后台刷新写入了一条比用户操作更新的系统读取。
+        files = [fileFixture({ path: 'src/main.jsx', area: 'staged' })]
+        records = [
+          ledgerRecordFixture({
+            id: 'bg-after-stage',
+            source: 'background',
+            intent: 'Read working tree status',
+            displayCommand: 'git status --porcelain=v1 -z',
+            startedAt: new Date().toISOString(),
+          }),
+          ledgerRecordFixture({ id: 'user-stage', intent: 'Stage file', displayCommand: 'git add -- src/main.jsx' }),
+        ]
+        return { execution: { ok: true, argv: ['add', '--', 'src/main.jsx'] }, state: repositoryState({ files }) }
+      }),
+    })
+
+    const ledgerToggle = () => screen.getByRole('button', { name: '命令账本' })
+    const glance = () => container.querySelector('.ledger-glance')
+
+    // 1. 还没有用户操作：摘要回退到最近的系统读取。
+    await waitFor(() => {
+      expect(glance()).toHaveTextContent('系统读取')
+    })
+
+    // 2. 展开 → 切到「系统读取」→ 收起。
+    await user.click(ledgerToggle())
+    await user.click(screen.getByRole('button', { name: /系统读取/ }))
+    await user.click(ledgerToggle())
+    expect(ledgerToggle()).toHaveAttribute('aria-expanded', 'false')
+
+    // 3. 暂存一个文件：摘要必须指向刚完成的用户操作，而不是折叠前选中的系统读取。
+    await user.click(screen.getByRole('button', { name: '暂存 src/main.jsx' }))
+    await waitFor(() => {
+      expect(glance()).toHaveTextContent('暂存文件')
+    })
+    expect(glance().querySelector('.ledger-glance-source')).toHaveTextContent('用户执行')
+    expect(glance().querySelector('.ledger-glance-status')).toHaveTextContent('成功')
+    // 普通操作完成后，账本保持折叠。
+    expect(ledgerToggle()).toHaveAttribute('aria-expanded', 'false')
+
+    // 4. 外部 Git 刷新（refs 变化穿过渲染层静默窗）：后台读取更新，摘要仍指向暂存。
+    records = [
+      ledgerRecordFixture({
+        id: 'bg-external',
+        source: 'background',
+        intent: 'Read working tree status',
+        displayCommand: 'git status --porcelain=v1 -z',
+        startedAt: new Date(Date.now() + 1_000).toISOString(),
+      }),
+      ...records,
+    ]
+    await act(async () => {
+      changeHandler({ reason: 'refs' })
+    })
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ledger-glance')).toHaveLength(1)
+    })
+    expect(glance()).toHaveTextContent('暂存文件')
+    expect(glance()).not.toHaveTextContent('读取工作区状态')
+    expect(ledgerToggle()).toHaveAttribute('aria-expanded', 'false')
+
+    // 5. 点摘要：展开并切到这条记录对应的来源（用户操作）。
+    await user.click(glance())
+    expect(ledgerToggle()).toHaveAttribute('aria-expanded', 'true')
+    expect(container.querySelector('.ledger-filter button.active')).toHaveTextContent(/用户操作/)
   })
 
   it('explains a command record in Chinese and hides raw protocol fields in tech details', async () => {
@@ -340,12 +457,12 @@ describe('workbench structure (rendered)', () => {
 
     const topbar = within(container.querySelector('header.topbar'))
     await user.click(topbar.getByRole('button', { name: '打开仓库' }))
-    const diffMeta = await waitFor(() => {
-      const element = container.querySelector('.diff-meta')
+    const diffTitle = await waitFor(() => {
+      const element = container.querySelector('.diff-title')
       expect(element).toHaveTextContent('README.md')
       return element
     })
-    expect(diffMeta).toHaveTextContent('工作区差异')
+    expect(diffTitle).toHaveTextContent('未暂存差异')
     expect(screen.getByRole('button', { name: '选择文件 README.md' })).toBeInTheDocument()
   })
 
@@ -380,14 +497,78 @@ describe('workbench structure (rendered)', () => {
     const { container } = await renderWorkspace()
     const panel = container.querySelector('.context-panel')
 
-    // 选中文件的详情与提交表单并存：右栏此前是三选一，自动选中导致提交表单消失。
-    expect(within(panel).getByRole('heading', { name: 'src/main.jsx' })).toBeInTheDocument()
-    expect(within(panel).getByRole('heading', { name: '创建提交' })).toBeInTheDocument()
-    const commit = within(panel).getByRole('button', { name: '提交' })
-    expect(commit).toBeInTheDocument()
+    // 右栏固定两段：「当前文件」只影响这一个文件，「创建提交」影响整个暂存区。
+    const sections = [...panel.querySelectorAll(':scope > section.inspector-flow')]
+    expect(sections).toHaveLength(2)
+    expect(within(sections[0]).getByRole('heading', { name: '当前文件' })).toBeInTheDocument()
+    // 文件区的主标签是 basename，完整路径留在悬停提示与可访问名称里。
+    expect(within(sections[0]).getByRole('heading', { name: 'main.jsx' })).toHaveAttribute('title', 'src/main.jsx')
+    expect(within(sections[1]).getByRole('heading', { name: '创建提交' })).toBeInTheDocument()
+    // 暂存区为空：当前文件的「暂存文件」才是唯一的实心动作。
+    expect(within(sections[0]).getByRole('button', { name: '暂存文件' })).toHaveClass('primary-action')
+    expect(within(sections[0]).getByRole('button', { name: '丢弃改动…' })).toHaveClass('text-action')
+    // 可暂存的当前文件给出命令预览。
+    expect(sections[0].querySelector('.command-preview')).toHaveTextContent('暂存命令预览')
+    expect(sections[0].querySelector('.command-preview')).toHaveTextContent('git add -- src/main.jsx')
+
+    const commit = within(sections[1]).getByRole('button', { name: '提交' })
     // 没有已暂存文件时提交不可用，但按钮本身必须在。
     expect(commit).toBeDisabled()
-    expect(within(panel).getByRole('button', { name: '暂存全部' })).toBeInTheDocument()
+    expect(sections[1]).toHaveTextContent('已暂存 0 个文件')
+    expect(sections[1]).toHaveTextContent('先暂存要提交的文件')
+    expect(within(sections[1]).getByRole('button', { name: '暂存全部' })).toBeInTheDocument()
+  })
+
+  it('gives the commit button the staged count and explains why it is disabled', async () => {
+    const staged = fileFixture({ path: 'docs/quickstart.md', area: 'staged' })
+    const { container } = renderApp({
+      ...workspaceStub(),
+      getState: async () => repositoryState({ files: [fileFixture({ path: 'src/main.jsx' }), staged] }),
+    })
+
+    const panel = await waitFor(() => {
+      const element = container.querySelector('.context-panel')
+      expect(element).toBeInTheDocument()
+      return element
+    })
+    // 暂存区已有文件：提交按钮就位但说明为空，禁用原因写成可见文字。
+    const commit = await within(panel).findByRole('button', { name: '提交 1 个文件' })
+    expect(commit).toBeDisabled()
+    expect(panel).toHaveTextContent('已暂存 1 个文件')
+    expect(panel).toHaveTextContent('填写提交说明后即可提交')
+    // 单文件暂存降级为描边按钮：页面上只有一个高权重常规动作。
+    expect(within(panel).getByRole('button', { name: '暂存文件' })).toHaveClass('secondary-action')
+  })
+
+  it('shows the file name as the primary label and disambiguates duplicates by directory', async () => {
+    const { container } = renderApp({
+      ...workspaceStub(),
+      getState: async () => repositoryState({
+        files: [
+          fileFixture({ path: 'src/settings/configuration.ts' }),
+          fileFixture({ path: 'test/settings/configuration.ts' }),
+          fileFixture({ path: 'docs/quickstart.md', area: 'staged' }),
+        ],
+      }),
+    })
+
+    const rows = await waitFor(() => {
+      const found = container.querySelectorAll('.file-row')
+      expect(found.length).toBe(3)
+      return [...found]
+    })
+    const [first, second, third] = rows
+    // 主标签只有 basename；同名文件补最短可区分的父目录尾段。
+    expect(first.querySelector('.file-name')).toHaveTextContent('configuration.ts')
+    expect(first.querySelector('.file-dir')).toHaveTextContent('src/settings/')
+    expect(second.querySelector('.file-name')).toHaveTextContent('configuration.ts')
+    expect(second.querySelector('.file-dir')).toHaveTextContent('test/settings/')
+    // 没有冲突的文件不显示目录，完整路径留在悬停提示里。
+    expect(third.querySelector('.file-dir')).toBeNull()
+    expect(third.querySelector('.file-select')).toHaveAttribute('title', 'docs/quickstart.md')
+    // 状态符号在行尾，且读屏不重复朗读（由可访问名称承载完整路径）。
+    expect(first.querySelector('.status')).toHaveTextContent('M')
+    expect(first.querySelector('.status')).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('shows a guide block instead of the commit form when no repository is open', async () => {

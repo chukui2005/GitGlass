@@ -1,15 +1,77 @@
 const hunkPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: ?(.*))?$/
 
-// 只去掉 Git 的 a/ b/ 前缀；/dev/null 表示这一侧没有文件（新增或删除），面包屑里不显示。
+// Git 在 patch 头里用 C 风格引号包住「不寻常」的路径：中文、引号、控制字符都会这样输出，
+// 非 ASCII 字节写成八进制（core.quotePath 默认开启），例如：
+//   diff --git "a/\351\205\215\347\275\256.md" "b/\351\205\215\347\275\256.md"
+// 这里把它还原成真实路径。未加引号的路径原样返回——路径里的空格是文件名的一部分。
+const SIMPLE_ESCAPES = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+function decodeUtf8Bytes(bytes) {
+  if (typeof TextDecoder === "function") {
+    try {
+      return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+    } catch {
+      // 落到下面的兜底：至少不抛错，界面仍有可读内容。
+    }
+  }
+  return bytes.map((byte) => String.fromCharCode(byte)).join("");
+}
+
+// Git 只把「不寻常」的字符写成八进制，字面字符基本都是 ASCII；编码器缺失时按单字节处理即可。
+function encodeLiteralBytes(text) {
+  if (typeof TextEncoder === "function") return Array.from(new TextEncoder().encode(text));
+  return Array.from(text, (character) => character.charCodeAt(0) & 0xff);
+}
+
+function unquotePath(value) {
+  const text = String(value || "");
+  if (text.length < 2 || !text.startsWith('"') || !text.endsWith('"')) return text;
+  const body = text.slice(1, -1);
+  const bytes = [];
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character !== "\\") {
+      for (const byte of encodeLiteralBytes(character)) bytes.push(byte);
+      continue;
+    }
+    const next = body[index + 1];
+    if (next >= "0" && next <= "7") {
+      const octal = body.slice(index + 1, index + 4).match(/^[0-7]{1,3}/)[0];
+      bytes.push(Number.parseInt(octal, 8) & 0xff);
+      index += octal.length;
+      continue;
+    }
+    bytes.push(SIMPLE_ESCAPES[next] ?? (next ? next.charCodeAt(0) : 92));
+    index += 1;
+  }
+  return decodeUtf8Bytes(bytes);
+}
+
+// 取出 patch 头里的一个路径 token：
+// - 引号形式（Git 对非 ASCII / 含引号的路径会这样写）整条都在引号内；
+// - 未加引号时，Git 会用一个制表符把「含空格的路径」与后面的字段隔开，那个制表符是协议分隔符；
+// - 行尾的 \r 来自 CRLF 换行，同样不属于路径。
+function pathToken(value) {
+  const text = String(value ?? "");
+  if (text.startsWith('"')) {
+    const end = text.lastIndexOf('"');
+    return unquotePath(end > 0 ? text.slice(0, end + 1) : text);
+  }
+  return text.replace(/\r$/, "").replace(/\t$/, "");
+}
+
+// 只去掉一层 Git 的 a/ b/ 前缀（这是 patch 头的协议前缀，真实目录 a/、b/ 会因此保留下来）。
+// /dev/null 表示这一侧没有文件（新增或删除），面包屑里不显示。
 function pathLabel(path) {
-  const text = String(path || '').trim()
-  return text === '/dev/null' ? '' : text.replace(/^[ab]\//, '')
+  const text = pathToken(path);
+  if (text === "/dev/null") return "";
+  return text.replace(/^[ab]\//, "");
 }
 
 // rename from/to 的路径不带 a/ b/ 前缀，不能再剥，否则会把 "a/foo" 这类真实路径改坏。
 function rawPath(path) {
-  const text = String(path || '').trim()
-  return text === '/dev/null' ? '' : text
+  const text = pathToken(path);
+  return text === "/dev/null" ? "" : text;
 }
 
 // 一个文件只留一行面包屑：改动用路径本身，重命名用「旧 → 新」。
@@ -30,6 +92,18 @@ function metadataRow(line) {
   return { type: 'metadata', label: 'Git 信息', content: line }
 }
 
+// `diff --git <old> <new>`：两侧都可能带引号（非 ASCII / 含引号的路径），也可能都不带。
+// 未加引号时按最后一个 ` b/` 切开 —— 路径里的空格属于文件名，不能当分隔符。
+// 这个结果只用于「发现新文件 + 初始路径」；紧随其后的 ---/+++ 与 rename from/to 会给出更准的路径。
+function parseDiffGitPaths(line) {
+  const rest = line.slice('diff --git '.length)
+  const quoted = /^("(?:[^"\\]|\\.)*")\s+("(?:[^"\\]|\\.)*")$/.exec(rest)
+  if (quoted) return { old: quoted[1], new: quoted[2] }
+  const separator = rest.lastIndexOf(' b/')
+  if (separator <= 0) return null
+  return { old: rest.slice(0, separator), new: rest.slice(separator + 1) }
+}
+
 /**
  * One rendered diff row. The file row only carries the breadcrumb in `content`;
  * hunk and line rows add the review locators (`oldLine`/`newLine`/`marker`),
@@ -43,13 +117,29 @@ function metadataRow(line) {
  * @property {string} content
  */
 
+// 工作区单文件视图的标题已经承载了路径：此时 patch 里那行「一模一样」的文件头是重复信息。
+// 只有一条文件头、且路径与标题确认指向同一个文件时才去掉；重命名（含「旧 → 新」）、
+// 多文件结果一律保留各自的文件头。
+// 比较的是**解析后的完整仓库相对路径**：a/ b/ 前缀在解析时已经剥过一次，这里不再二次剥离，
+// 否则真实存在的 a/、b/ 目录会被误判成同一路径。
+const comparablePath = (value) => String(value || "").replace(/\r$/, "").replace(/\\/g, "/");
+
+export function redundantFileHeader(rows, path) {
+  const headers = rows.filter((row) => row.type === 'file');
+  if (headers.length !== 1) return null;
+  const [header] = headers;
+  if (!comparablePath(path)) return null;
+  return comparablePath(header.content) === comparablePath(path) ? header : null;
+}
+
 // 原始 patch 不会被修改；此处只把协议字段转为中文，并补上审阅定位所需的旧/新行号。
 // 文件头的 diff --git / --- / +++ / rename 四类行都写回同一个 row，所以头部只占一行面包屑。
 /**
  * @param {string} diff
+ * @param {{ dropFileHeaderFor?: string }} [options] 与标题重复的文件头路径
  * @returns {DiffRow[]}
  */
-export function presentDiff(diff) {
+export function presentDiff(diff, options = {}) {
   const lines = String(diff || '').split('\n')
   if (lines.at(-1) === '') lines.pop()
   /** @type {DiffRow[]} */
@@ -118,9 +208,9 @@ export function presentDiff(diff) {
       inHunk = false
     }
     if (line.startsWith('diff --git ')) {
-      const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+      const paths = parseDiffGitPaths(line)
       beginFile()
-      if (match) setPaths({ old: pathLabel(match[1]), new: pathLabel(match[2]) })
+      if (paths) setPaths({ old: pathLabel(paths.old), new: pathLabel(paths.new) })
       continue
     }
     // 没有 diff --git 头的 patch（例如 --no-prefix）：上一份文件头已完整时，这一行开始新文件。
@@ -147,5 +237,8 @@ export function presentDiff(diff) {
     const row = metadataRow(line)
     if (row) rows.push(row)
   }
-  return rows
+  const redundant = options.dropFileHeaderFor
+    ? redundantFileHeader(rows, options.dropFileHeaderFor)
+    : null
+  return redundant ? rows.filter((row) => row !== redundant) : rows
 }

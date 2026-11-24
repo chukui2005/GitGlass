@@ -98,7 +98,7 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(renderer).toContain('app-notice')
     // 多出的一行必须显式声明，否则 banner 会吃掉 workspace 的 1fr。
     expect(renderer).toContain('has-banner')
-    expect(styles).toContain('.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 44px}')
+    expect(styles).toContain('.app-shell.has-banner{grid-template-rows:48px auto minmax(0,1fr) 36px}')
     expect(renderer).toContain('disabled={loading}')
     expect(renderer).toContain('canStartRepositoryContextOperation(loading)')
     // ⟳ 常驻按钮已降级为命令面板命令（#21）：手动刷新经 actions.refreshFromUser 接线。
@@ -106,7 +106,7 @@ describe('V0.5.4 用户提示与技术诊断边界', () => {
     expect(styles).toContain('button:disabled{cursor:not-allowed;pointer-events:none}')
     // 没有打开仓库时右栏是引导块（结构由 tests/ui/workbench-structure.test.mjs 真渲染守住），
     // 这里只守它的中文说明文案。
-    expect(renderer).toContain('打开一个本地 Git 仓库后，这里会显示暂存状态、提交说明和下一条命令的预览。')
+    expect(renderer).toContain('打开一个本地 Git 仓库后，这里会显示当前文件的暂存动作、暂存状态与提交命令预览。')
     // 语义断言：行内动作禁用时用 --faint 文字 + 降低透明度，不再写死某个灰色。
     expect(declarations(styles, '.row-action:disabled')).toMatchObject({
       color: 'var(--faint)',

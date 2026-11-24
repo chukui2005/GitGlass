@@ -7,14 +7,19 @@ const path = require('node:path')
 // （哪一格滚动、哪一列自适应、窄到什么程度隐藏哪一段）。组件本身的行为断言在
 // 同目录的 *.test.mjs 里真渲染验证，两边不重复。
 const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'styles.css'), 'utf8')
-const { declarations, fontSize } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
+const { declarations } = require(path.join(__dirname, '..', 'support', 'css-inspect.cjs'))
 
 describe('workbench style contracts', () => {
-  it('keeps the diff view and the ledger on a two-row grid where only the body scrolls', () => {
+  it('keeps the diff body as the only scrolling cell and the ledger body the only scrolling list', () => {
+    // 中央只剩一条 56px 标题 + 一个滚动单元格（原先还有第二行 diff-meta）。
     expect(declarations(styles, '.diff-view')).toMatchObject({
       display: 'grid',
-      'grid-template-rows': 'auto minmax(0,1fr)',
+      'grid-template-rows': 'minmax(0,1fr)',
       'min-height': '0',
+    })
+    expect(declarations(styles, '.diff-title')).toMatchObject({
+      'min-height': '56px',
+      'padding': '0 20px',
     })
     expect(declarations(styles, '.diff-content')).toMatchObject({ 'min-height': '0', overflow: 'auto' })
     expect(declarations(styles, '.command-ledger')).toMatchObject({
@@ -32,24 +37,9 @@ describe('workbench style contracts', () => {
     })
   })
 
-  it('turns the top bar into the drag region and reserves the overlay safe area', () => {
-    const topbar = declarations(styles, '.topbar')
-    expect(topbar).toMatchObject({
-      display: 'flex',
-      'align-items': 'center',
-      background: 'var(--surface)',
-      'border-bottom': '1px solid var(--line)',
-      '-webkit-app-region': 'drag',
-    })
-    // 系统窗口控件在 Window Controls Overlay 安全区里，不写死宽度。
-    expect(topbar['padding-right']).toContain('env(titlebar-area-x,0px)')
-    expect(topbar['padding-right']).toContain('env(titlebar-area-width,100vw)')
-    // 交互控件退出拖拽区；macOS 保留左侧原生交通灯空间。
-    expect(styles).toContain('.topbar button,.topbar input,.top-state{-webkit-app-region:no-drag}')
-    expect(declarations(styles, '.platform-darwin .topbar')).toMatchObject({ 'padding-left': '78px' })
-  })
-
-  it('keeps the collapsed ledger glance on one stable nowrap line that sheds details as it narrows', () => {
+  it('keeps the collapsed ledger at 36px and lets the summary shed details as it narrows', () => {
+    expect(declarations(styles, '.app-shell')['grid-template-rows']).toBe('48px minmax(0,1fr) 36px')
+    expect(declarations(styles, '.ledger-bar')['min-height']).toBe('35px')
     expect(declarations(styles, '.ledger-glance')).toMatchObject({
       'container-type': 'inline-size',
       display: 'flex',
@@ -64,6 +54,26 @@ describe('workbench style contracts', () => {
     // 放不下时先隐藏时间，再隐藏状态徽标。
     expect(styles).toContain('@container (max-width:260px){.ledger-glance time{display:none}}')
     expect(styles).toContain('@container (max-width:180px){.ledger-glance-status{display:none}}')
+  })
+
+  it('turns the top bar into the drag region and reserves the overlay safe area', () => {
+    const topbar = declarations(styles, '.topbar')
+    expect(topbar).toMatchObject({
+      display: 'grid',
+      'align-items': 'center',
+      background: 'var(--surface)',
+      'border-bottom': '1px solid var(--line)',
+      '-webkit-app-region': 'drag',
+    })
+    // 系统窗口控件在 Window Controls Overlay 安全区里，不写死宽度。
+    expect(topbar['padding-right']).toContain('env(titlebar-area-x,0px)')
+    expect(topbar['padding-right']).toContain('env(titlebar-area-width,100vw)')
+    // 交互控件退出拖拽区；macOS 保留左侧原生交通灯空间。
+    expect(styles).toContain('.topbar button,.topbar input,.top-state{-webkit-app-region:no-drag}')
+    expect(declarations(styles, '.platform-darwin .topbar')).toMatchObject({ 'padding-left': '78px' })
+    // 1240px 以下先把文字标签折成图标，title / aria-label 仍在。
+    expect(styles).toContain('@media(max-width:1240px){.view-tab-label{display:none}')
+    expect(styles).toContain('@media(max-width:1240px){.top-action-label{display:none}}')
   })
 
   it('gives each ledger record two lines with two distinct type sizes', () => {
@@ -108,30 +118,32 @@ describe('workbench style contracts', () => {
     // 选中态覆盖整条提交行：整行浅底 + 左侧 2px 强调条。
     const selected = declarations(styles, '.history-row.selected')
     expect(selected).toMatchObject({ 'box-shadow': 'inset 2px 0 var(--blue)' })
-    expect(selected.background).toContain('color-mix')
-    expect(selected.background).toContain('var(--blue)')
+    expect(selected.background).toBe('var(--blue-soft)')
   })
 
-  it('styles the batch toolbar and its checkboxes with the restrained GitGlass visual language', () => {
+  it('styles the two-row batch toolbar and its checkboxes with the restrained visual language', () => {
     // 提示属于次级正文：字号不低于 11px，颜色走统一的 --muted。
     expect(declarations(styles, '.batch-hint')).toMatchObject({
       margin: '0',
       color: 'var(--muted)',
       'line-height': 'var(--line-secondary)',
     })
-    expect(fontSize(styles, '.batch-hint')).toBeGreaterThanOrEqual(11)
-    // 紧凑工具栏：单行按钮不换行。
-    expect(declarations(styles, '.batch-toolbar')).toMatchObject({ display: 'grid', gap: '4px' })
-    expect(declarations(styles, '.batch-tools-row')).toMatchObject({ display: 'flex', gap: '4px' })
+    expect(declarations(styles, '.batch-hint')['font-size']).toBe('var(--font-aux)')
+    // 两行以内：操作行（全选 / 暂存所选）+ 计数或原因行。
+    expect(declarations(styles, '.batch-toolbar')).toMatchObject({ display: 'grid', gap: '6px' })
+    expect(declarations(styles, '.batch-tools-row')).toMatchObject({ display: 'flex', gap: '6px' })
     expect(declarations(styles, '.batch-tool')).toMatchObject({
       flex: '1',
       'min-width': '0',
       overflow: 'hidden',
     })
-    // 「暂存所选」是次按钮（描边），三态齐全：hover 浅底、禁用灰、焦点中性环。
+    expect(declarations(styles, '.batch-stage-row')).toMatchObject({ display: 'flex', 'align-items': 'center' })
+    // 「全选 / 暂存所选」并排等宽：两者都撑满操作行，不换行。
+    expect(declarations(styles, '.batch-tools-row .batch-tool')).toMatchObject({ flex: '1', 'min-width': '0' })
+    expect(declarations(styles, '.batch-tools-row .batch-stage')).toMatchObject({ flex: '1', 'min-width': '0' })
+    // 「暂存所选」是次按钮（描边），三态齐全：hover 浅底、禁用灰、焦点环。
     expect(declarations(styles, '.batch-stage')).toMatchObject({
       display: 'inline-flex',
-      'min-height': '24px',
       border: '1px solid var(--line)',
       background: 'var(--surface)',
       color: 'var(--text)',
@@ -144,6 +156,8 @@ describe('workbench style contracts', () => {
       color: 'var(--faint)',
     })
     expect(declarations(styles, '.batch-stage:focus-visible')['outline']).toBe('2px solid var(--ring)')
+    // 「清除」是低权重文字动作，只出现在选中之后。
+    expect(declarations(styles, '.batch-clear')).toMatchObject({ 'font-size': 'var(--font-aux)' })
     // 复选框保留可见焦点与蓝色 accent（与 dbx 表格里的勾选一致）。
     expect(declarations(styles, '.stage-check')).toMatchObject({
       width: '13px',

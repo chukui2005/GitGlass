@@ -31,7 +31,7 @@ describe('V0.5.2 commit row layout', () => {
     // 选中态覆盖整行，而不是只覆盖左侧按钮：整行浅底 + 左侧 2px 强调条。
     const selected = declarations(styles, '.history-row.selected')
     expect(selected).toMatchObject({ 'box-shadow': 'inset 2px 0 var(--blue)' })
-    expect(selected.background).toContain('color-mix')
+    expect(selected.background).toBe('var(--blue-soft)')
     // 密度对齐 dbx：单行高度由 .commit-select 的 min-height 决定。
     expect(declarations(styles, '.commit-select')['min-height']).toBe('38px')
     // 两行字号：标题 13px 正文、元信息 11px 辅助。
