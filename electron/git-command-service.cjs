@@ -1,6 +1,7 @@
 const { spawn: nodeSpawn } = require('node:child_process')
 const { randomUUID } = require('node:crypto')
 const fs = require('node:fs')
+const { displayGitCommand } = require('./command-display.mjs')
 
 // Network commands can legitimately take minutes; everything else should fail
 // fast instead of leaving the UI (and the update gate) blocked forever.
@@ -32,15 +33,6 @@ function redactCredentials(value) {
   return text
     .replace(URL_CREDENTIALS, (match) => match.replace(/\/\/[^/\s@"']{1,512}@/, '//'))
     .replace(URL_QUERY_SECRETS, (_match, prefix) => `${prefix}<redacted>`)
-}
-
-function quoteForDisplay(value) {
-  const text = String(value)
-  return /[\s"']/.test(text) ? JSON.stringify(text) : text
-}
-
-function displayGitCommand(argv) {
-  return ['git', ...argv].map(quoteForDisplay).join(' ')
 }
 
 /**

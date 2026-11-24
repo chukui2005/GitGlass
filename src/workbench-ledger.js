@@ -93,6 +93,14 @@ export function glanceSummary(record) {
   return record ? `最近：${intentLabel(record)} · ${recordStatusLabel(record)}` : '尚无命令记录'
 }
 
+// 收起态摘要独立于展开面板的筛选状态：只要有用户操作，折叠条就显示最近一条用户操作；
+// 还没有用户操作时，才回退到最近的系统读取。否则「先切到系统读取 → 收起 → 暂存一个文件」
+// 会让刚完成的暂存被后台读取顶掉（0.7 验收反馈）。
+export function ledgerGlanceRecord(records) {
+  const all = Array.isArray(records) ? records : []
+  return all.find((record) => record?.source === 'user') || all[0] || null
+}
+
 // 账本第二行的“耗时”：只从记录自身的 startedAt/endedAt 计算，读不到时间就返回空串，
 // 由调用方退回显示时钟时间，绝不编造一个数字。
 export function recordDurationLabel(record) {

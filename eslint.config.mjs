@@ -66,7 +66,7 @@ export default [
 
   // Node, ESM: build/release scripts, the .mjs tests and the root tool configs.
   {
-    files: ['scripts/**/*.mjs', 'tests/**/*.mjs', '*.mjs'],
+    files: ['electron/**/*.mjs', 'scripts/**/*.mjs', 'tests/**/*.mjs', '*.mjs'],
     ...js.configs.recommended,
     languageOptions: {
       ecmaVersion: 'latest',

@@ -91,9 +91,9 @@ describe("Resizable workbench panels", () => {
 
   it("prioritizes legible file and branch names in the workspace sidebar", () => {
     // 按选择器读取生效声明，而不是锁定某一条规则的写法：
-    // 13px 主字号 + 26px 列表行 + 10px 分组留白（dbx 密度）。
+    // 13px 主字号 + 28px 文件行（交接稿的文件行高度）+ 10px 分组留白。
     const rows = declarations(styles, ".status-panel .file-select,.status-panel .branch-row");
-    expect(rows).toMatchObject({ "font-size": "13px", height: "26px", padding: "0 6px" });
+    expect(rows).toMatchObject({ "font-size": "13px", height: "28px", padding: "0 6px" });
     expect(declarations(styles, ".status-panel .section-label")).toMatchObject({
       "font-size": "12px",
       color: "var(--text)",
@@ -101,6 +101,10 @@ describe("Resizable workbench panels", () => {
     expect(declarations(styles, ".status-panel .branch-list,.status-panel .remote-summary")).toMatchObject({
       "margin-top": "10px",
       "padding-top": "10px",
+    });
+    // 面板标题 14px/600（交接稿的字号基线）。
+    expect(declarations(styles, ".status-panel .panel-heading h2")).toMatchObject({
+      "font-size": "var(--font-title)",
     });
   });
 });

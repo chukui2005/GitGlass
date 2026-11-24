@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowClockwise,
+  ArrowCounterClockwise,
   ArrowsLeftRight,
   CheckCircle,
   Copy,
@@ -9,7 +10,6 @@ import {
   FolderOpen,
   GitBranch,
   GitCommit,
-  Lifebuoy,
   MagnifyingGlass,
   Trash,
   WarningCircle,
@@ -18,6 +18,7 @@ import {
   countBySource,
   filterLedgerRecords,
   groupBackgroundRecords,
+  ledgerGlanceRecord,
   reuseUnchangedRecords,
 } from "./workbench-ledger.js";
 import {
@@ -27,6 +28,8 @@ import {
   fullLocalTime,
   relativeTime,
 } from "./history-search.js";
+import { basename, fileLabel, stageSelectionKey } from "./file-labels.js";
+import { displayGitCommand } from "./command-display.js";
 import { BrandMark } from "./brand-mark.jsx";
 import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
 import { GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
@@ -57,6 +60,7 @@ import {
   HistorySearch,
   NoRepositoryGuide,
   PanelSplitter,
+  PathBreadcrumb,
   RecoveryContext,
   RemotePlanContext,
   SafetyContext,
@@ -65,11 +69,6 @@ import {
   isDarwin,
   titleFor,
 } from "./workbench-ui.jsx";
-
-// 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
-const stageSelectionKey = (path) => `unstaged:${path}`;
-const basename = (value) =>
-  value?.split(/[\\/]/).filter(Boolean).at(-1) || "未打开仓库";
 
 // 命令面板条目：纯函数，输入是这次渲染的可用性与动作，输出 CommandPalette 要的数组。
 // 刻意不做 useMemo：每个 run 都闭包住最新的动作，依赖每帧都会变，
@@ -281,7 +280,7 @@ export function App() {
   const checkedForStaging = useMemo(
     () =>
       unstaged.filter((file) =>
-        stageSelection.has(stageSelectionKey(file.path)),
+        stageSelection.has(stageSelectionKey(file.area, file.path)),
       ),
     [unstaged, stageSelection],
   );
@@ -298,23 +297,31 @@ export function App() {
   // CommandLedger 是 memo 的：这几个回调必须保持稳定引用，否则每次 App 重渲染都会
   // 让整列（最多 300 条）记录跟着重渲染。行为与内联箭头函数完全一致。
   const toggleLedger = useCallback(() => setLedgerOpen((value) => !value), []);
-  const openLedgerPanel = useCallback(() => setLedgerOpen(true), []);
   const changeLedgerFilter = useCallback((tab) => {
     setLedgerFilter(tab);
     setFocusedOperationId(null);
   }, []);
-  const latestRecord = records[0];
-  const preview = !repo
-    ? "git status --porcelain=v1 -z --untracked-files=all"
-    : staged.length && message.trim()
-      ? `git commit -m ${JSON.stringify(message.trim())}`
-      : selected
-        ? selected.area === "staged"
-          ? `git restore --staged -- ${selected.path}`
-          : `git add -- ${selected.path}`
-        : unstaged.length
-          ? "git add -A"
-          : "git status --porcelain=v1 -z --untracked-files=all";
+  // 收起态摘要：与展开面板的筛选状态无关——有用户操作就显示最近一条，没有才回退系统读取。
+  const glanceRecord = useMemo(() => ledgerGlanceRecord(records), [records]);
+  // 点摘要展开账本，并切到这条记录对应的来源；用户操作还要定位到它自己的 operationId。
+  const openLedgerAt = useCallback(() => {
+    setLedgerOpen(true);
+    if (!glanceRecord) return;
+    setLedgerFilter(glanceRecord.source === "background" ? "background" : "user");
+    setFocusedOperationId(glanceRecord.source === "user" ? glanceRecord.operationId || null : null);
+  }, [glanceRecord]);
+  // 命令预览跟随动作：当前文件可暂存时用**账本同一套参数格式化**拼出 `git add -- …`，
+  // 含空格或引号的路径因此与账本里的记录逐字一致（例如 `git add -- "guide for project.md"`）。
+  // 已暂存文件的取消暂存取决于仓库是否有 HEAD（无 HEAD 时是另一条命令），现有状态无法确定参数，
+  // 所以预览只在能确定的场景出现（交接稿：界面应避免猜测）。
+  const stagePreview =
+    selected && selected.area === "unstaged"
+      ? displayGitCommand(["add", "--", selected.path])
+      : "";
+  const commitPreview =
+    staged.length > 0 && message.trim()
+      ? displayGitCommand(["commit", "-m", message.trim()])
+      : "";
   // 首屏恢复与自动刷新订阅都只建立一次，两者都要"最新一份" refreshAll：
   // 每次渲染先把最新的闭包与仓库 / loading 状态放进 ref，effect 里只读 ref。
   // 这个 effect 必须排在首屏恢复之前，挂载时才能保证 ref 已经就位。
@@ -412,7 +419,7 @@ export function App() {
     setStageSelection((previous) => {
       if (!previous.size) return previous;
       const valid = new Set(
-        unstaged.map((file) => stageSelectionKey(file.path)),
+        unstaged.map((file) => stageSelectionKey(file.area, file.path)),
       );
       let changed = false;
       const next = new Set();
@@ -425,7 +432,7 @@ export function App() {
   }, [unstaged]);
   function toggleStageSelection(file) {
     setStageSelection((previous) => {
-      const key = stageSelectionKey(file.path);
+      const key = stageSelectionKey(file.area, file.path);
       const next = new Set(previous);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -434,7 +441,7 @@ export function App() {
   }
   function selectAllUnstaged() {
     setStageSelection(
-      new Set(unstaged.map((file) => stageSelectionKey(file.path))),
+      new Set(unstaged.map((file) => stageSelectionKey(file.area, file.path))),
     );
   }
   function clearStageSelection() {
@@ -816,13 +823,15 @@ export function App() {
     <NoRepositoryGuide loading={loading} onOpen={chooseRepo} />
   ) : (
     <>
-      {/* 选中文件的详情与「创建提交」表单并存：右栏此前是三选一，而应用总是自动
-          选中第一个改动文件，导致提交表单（提交按钮、提交说明）几乎永远不可见
-          （0.6.6-beta 验收反馈）。 */}
-      {selected && (
+      {/* 右栏固定两段：上「当前文件」（只影响这一个文件），下「创建提交」（影响整个暂存区）。
+          文件区与提交区之间只用一条细线分隔，动作预览各自跟随上下文。 */}
+      {selected ? (
         <FileInspector
           file={selected}
+          label={fileLabel(selected.path)}
+          stagedCount={staged.length}
           loading={loading}
+          preview={stagePreview}
           onStage={(file) =>
             operate(file.area === "staged" ? "unstage" : "stage", {
               path: file.path,
@@ -830,6 +839,13 @@ export function App() {
           }
           onDiscard={requestDiscard}
         />
+      ) : (
+        <section className="inspector-flow current-file current-file-empty">
+          <div className="section-label">
+            <h2>当前文件</h2>
+          </div>
+          <p className="inspector-hint">从左侧文件列表选择文件后，这里显示它的暂存与丢弃动作。</p>
+        </section>
       )}
       <CommitInspector
         staged={staged}
@@ -838,7 +854,7 @@ export function App() {
         loading={loading}
         onMessage={setMessage}
         onOperate={operate}
-        preview={preview}
+        preview={commitPreview}
         platform={shortcutPlatform}
       />
     </>
@@ -850,37 +866,65 @@ export function App() {
       <a className="skip-link" href="#workspace-main">
         跳至主工作区
       </a>
+      {/* 顶栏三组：左「品牌 / 仓库 / 分支 / 改动」，中「工作区 / 历史审查」，右动作区。
+          当前视图用蓝色下划线与 aria-pressed 同时表达；1240px 以下先把文字标签折成图标。 */}
       <header className="topbar">
-        <div className="brand">
-          <BrandMark size={20} />
-          <h1>GitGlass</h1>
-          <span className="topbar-divider" />
-          <strong title={repo || ""}>{basename(repo)}</strong>
-        </div>
-        <div className="top-state">
-          <span>
-            <GitBranch size={14} />
-            <code>{state.branch || "—"}</code>
-          </span>
-          <span className={state.files.length ? "dirty" : "clean"}>
-            {repo
-              ? state.files.length
-                ? `${state.files.length} 个改动`
-                : "工作区干净"
-              : "等待仓库"}
-          </span>
-          {remote?.upstream && (
-            <span className="sync-counts">
-              <b className={remote.ahead > 0 ? "ahead" : ""}>
-                ↑ {remote.ahead}
-              </b>
-              <b className={remote.behind > 0 ? "behind" : ""}>
-                ↓ {remote.behind}
-              </b>
+        <div className="topbar-group topbar-left">
+          <div className="brand">
+            <BrandMark size={20} />
+            <h1>GitGlass</h1>
+            <span className="topbar-divider" aria-hidden="true" />
+            <strong title={repo || ""}>{repo ? basename(repo) : "未打开仓库"}</strong>
+          </div>
+          <div className="top-state">
+            <span>
+              <GitBranch size={14} aria-hidden="true" />
+              <code>{state.branch || "—"}</code>
             </span>
-          )}
+            <span className={state.files.length ? "dirty" : "clean"}>
+              {repo
+                ? state.files.length
+                  ? `${state.files.length} 个改动`
+                  : "工作区干净"
+                : "等待仓库"}
+            </span>
+            {remote?.upstream && (
+              <span className="sync-counts">
+                <b className={remote.ahead > 0 ? "ahead" : ""}>
+                  ↑ {remote.ahead}
+                </b>
+                <b className={remote.behind > 0 ? "behind" : ""}>
+                  ↓ {remote.behind}
+                </b>
+              </span>
+            )}
+          </div>
         </div>
-        <div className="top-actions">
+        <nav className="view-switch" aria-label="视图">
+          <button
+            type="button"
+            className="view-tab"
+            onClick={() => setHistoryMode(false)}
+            aria-label="工作区"
+            title="工作区"
+            aria-pressed={!historyMode}
+          >
+            <File size={15} aria-hidden="true" />
+            <span className="view-tab-label">工作区</span>
+          </button>
+          <button
+            type="button"
+            className="view-tab"
+            onClick={() => setHistoryMode(true)}
+            aria-label="历史审查"
+            title="历史审查"
+            aria-pressed={historyMode}
+          >
+            <GitCommit size={15} aria-hidden="true" />
+            <span className="view-tab-label">历史审查</span>
+          </button>
+        </nav>
+        <div className="topbar-group top-actions">
           <UpdateButton updates={updates} disabled={modalOpen} />
           <button
             type="button"
@@ -896,14 +940,6 @@ export function App() {
             <MagnifyingGlass size={15} />
             <span className="top-action-label">命令</span>
           </button>
-          <button type="button" className="toolbar-button" onClick={() => setHistoryMode(false)} aria-label="工作区" title="工作区" aria-pressed={!historyMode}>
-            <File size={15} aria-hidden="true" />
-            <span className="top-action-label">工作区</span>
-          </button>
-          <button type="button" className="toolbar-button" onClick={() => setHistoryMode(true)} aria-label="历史审查" title="历史审查" aria-pressed={historyMode}>
-            <GitCommit size={15} aria-hidden="true" />
-            <span className="top-action-label">历史审查</span>
-          </button>
           <button
             type="button"
             className="toolbar-button"
@@ -912,21 +948,23 @@ export function App() {
             disabled={!repo || loading}
             onClick={openRecovery}
           >
-            <Lifebuoy size={15} />
+            <ArrowCounterClockwise size={15} />
             <span className="top-action-label">恢复</span>
           </button>
           <span className="topbar-divider" aria-hidden="true" />
-          <button type="button" className="secondary-button" onClick={chooseRepo} aria-label="打开仓库" title="打开仓库" disabled={loading}>
-            <FolderOpen size={15} />
-            <span className="top-action-label">打开仓库</span>
-          </button>
-          <RecentRepositoriesMenu
-            repositories={recentRepositories}
-            currentPath={repo}
-            disabled={loading}
-            onOpen={openRecentRepository}
-            onForget={forgetRecentRepository}
-          />
+          <div className="open-repository">
+            <button type="button" className="secondary-button" onClick={chooseRepo} aria-label="打开仓库" title="打开仓库" disabled={loading}>
+              <FolderOpen size={15} />
+              <span className="top-action-label">打开仓库</span>
+            </button>
+            <RecentRepositoriesMenu
+              repositories={recentRepositories}
+              currentPath={repo}
+              disabled={loading}
+              onOpen={openRecentRepository}
+              onForget={forgetRecentRepository}
+            />
+          </div>
           <button
             type="button"
             className="secondary-button"
@@ -1295,7 +1333,7 @@ export function App() {
                 }
                 checkable
                 isChecked={(file) =>
-                  stageSelection.has(stageSelectionKey(file.path))
+                  stageSelection.has(stageSelectionKey(file.area, file.path))
                 }
                 onToggleCheck={toggleStageSelection}
                 busy={loading}
@@ -1398,37 +1436,34 @@ export function App() {
         </aside>
         <PanelSplitter side="left" value={panelWidths.left} limits={getPanelLimits("left")} onPointerDown={startPanelResize} onDoubleClick={resetPanelWidth} onKeyDown={resizePanelWithKeyboard} />
         <section className="main-panel">
-          <div className="main-toolbar">
-            <div>
-              <h2>文件差异</h2>
-              <span title={selected?.path || "未选择文件"}>
-                {selected?.path || "未选择文件"}
-              </span>
-            </div>
-            {selected && (
-              <span className={`file-kind ${selected.status}`}>
-                {titleFor[selected.status]}
-              </span>
+          {/* 中央只保留一条标题：面包屑承载路径，右侧是「未暂存 / 已暂存差异」与文件状态。
+              「文件差异」作为可访问标题保留给读屏，不再重复显示在视觉层。 */}
+          <div className="main-toolbar diff-title">
+            <h2 className="visually-hidden">文件差异</h2>
+            {selected ? (
+              <>
+                <PathBreadcrumb path={selected.path} className="diff-title-path" />
+                <div className="diff-title-meta">
+                  <span className={selected.area === "staged" ? "staged-diff-label" : ""}>
+                    {selected.area === "staged" ? "已暂存差异" : "未暂存差异"}
+                  </span>
+                  <span className={`file-kind ${selected.status}`}>
+                    {titleFor[selected.status]}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <span className="diff-title-empty">未选择文件</span>
             )}
           </div>
           {selected ? (
             <div className="diff-view">
-              <div className="diff-meta">
-                <span
-                  className={
-                    selected.area === "staged" ? "staged-diff-label" : ""
-                  }
-                >
-                  {selected.area === "staged" ? "已暂存差异" : "工作区差异"}
-                </span>
-                <code>{selected.path}</code>
-              </div>
               {diffMessage ? (
                 <div className="diff-empty" role="status" aria-live="polite">
                   <p>{diffMessage}</p>
                 </div>
               ) : (
-                <DiffContent diff={diff} />
+                <DiffContent diff={diff} titlePath={selected.path} />
               )}
             </div>
           ) : (
@@ -1441,8 +1476,8 @@ export function App() {
       <CommandLedger
         open={ledgerOpen}
         onToggle={toggleLedger}
-        onOpen={openLedgerPanel}
-        latestRecord={latestRecord}
+        onOpen={openLedgerAt}
+        latestRecord={glanceRecord}
         filter={ledgerFilter}
         onFilter={changeLedgerFilter}
         counts={ledgerCounts}

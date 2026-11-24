@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
 
     await waitUntil(() => js(`Boolean(document.querySelector('.top-actions'))`), '顶栏渲染')
 
-    // 顶栏：两个次按钮 + 四个低权重工具条，且没有任何实心主按钮。
+    // 顶栏右组：两个次按钮 + 两个低权重工具条（视图切换是独立的 .view-tab），没有任何实心主按钮。
     const topbar = await js(`(() => {
       const actions = document.querySelector('.top-actions')
       const buttons = [...actions.querySelectorAll('button')]
@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
         labels: buttons.map((button) => button.getAttribute('aria-label')),
       }
     })()`)
-    assert.equal(topbar.toolbar, 4, `顶栏应有 4 个图标 + 小字工具条：${JSON.stringify(topbar.labels)}`)
+    assert.equal(topbar.toolbar, 2, `顶栏右组应有两个低权重工具条（命令 / 恢复）：${JSON.stringify(topbar.labels)}`)
     assert.equal(topbar.secondary, 2, `顶栏应有「打开仓库」「获取…」两个次按钮：${JSON.stringify(topbar.labels)}`)
     // 没有可用更新时「更新」是 30×30 的纯图标按钮（检查更新），不占文字宽度。
     assert.equal(topbar.icons, 1, `顶栏应有一颗纯图标按钮（检查更新）：${JSON.stringify(topbar.labels)}`)
@@ -183,13 +183,13 @@ app.whenReady().then(async () => {
     assert.equal(empty.enabledPrimaries, 1, `空状态只能有一个可点的主按钮，实际 ${empty.enabledPrimaries} 个：${empty.enabledText}`)
     assert.equal(empty.enabledText, '打开仓库', '空状态唯一的主动作必须是「打开仓库」')
     assert.equal(empty.topbarPrimaries, 0, '顶栏不放主按钮')
-    assert.equal(empty.topbarToolbar, 4, '空状态顶栏同样保留 4 个低权重工具条')
+    assert.equal(empty.topbarToolbar, 2, '空状态顶栏同样保留 2 个低权重工具条')
     // 没有仓库时右栏是引导块，而不是一整套禁用的「创建提交」表单。
     assert.equal(empty.contextGuide, true, '空状态右栏应显示引导块')
     assert.equal(empty.contextForm, false, '空状态右栏不应再渲染禁用的提交表单')
     assert.ok(empty.overflow <= 1, `空状态不允许横向溢出，实际 ${empty.overflow}px`)
 
-    // 密度（对齐 dbx）：列表行 26px、分组标题 28px、账本单行 32px、Diff 行 20–21px。
+    // 密度（交接稿）：文件行 28px、分组标题 28px、账本单行 32px、Diff 行 22px。
     const density = await js(`(() => {
       const height = (selector) => {
         const element = document.querySelector(selector)

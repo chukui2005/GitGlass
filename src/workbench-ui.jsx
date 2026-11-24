@@ -1,13 +1,13 @@
 // 工作台的展示组件：只接收 props，不做 IPC 调用，所以从 main.jsx 抽出来单独成文件。
-// 结构与类名必须与拆分前逐字一致——真渲染测试、Electron 探针与样式契约都按 DOM 断言。
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+// 结构与类名由真渲染测试（tests/ui/*.test.mjs）、Electron 探针（tests/support/*.cjs）和
+// 样式契约（tests/ui/style-contracts.test.cjs）按 DOM 断言——改结构时同步更新这三处。
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   CaretDown,
   CheckCircle,
   CircleNotch,
   Copy,
-  File,
   FolderOpen,
   GitCommit,
   MagnifyingGlass,
@@ -20,6 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import { fullLocalTime, isHeadCommit, relativeTime } from "./history-search.js";
 import { presentDiff } from "./diff-presentation.js";
+import { basename, breadcrumbSegments, labelFiles, stageSelectionKey } from "./file-labels.js";
 import { riskLabel } from "./plan-risk.js";
 import { formatLedgerOutput, glanceSummary, intentLabel, recordDurationLabel, recordStatusLabel, recordTypeLabel } from "./workbench-ledger.js";
 import { shortcutLabel } from "./shortcut-policy.js";
@@ -40,10 +41,8 @@ export const time = (value) =>
         second: "2-digit",
       }).format(new Date(value))
     : "—";
-export const basename = (value) =>
-  value?.split(/[\\/]/).filter(Boolean).at(-1) || "未打开仓库";
-// 批量暂存选择集合的稳定键：区域 + 路径，与 Diff 选中状态完全解耦。
-export const stageSelectionKey = (path) => `unstaged:${path}`;
+// 路径展示与批量暂存寻址都收敛在 file-labels.js：主标签只放 basename，键一律是 area + path。
+export { basename, stageSelectionKey };
 
 
 export function PanelSplitter({ side, value, limits, onPointerDown, onDoubleClick, onKeyDown }) {
@@ -85,10 +84,15 @@ export function DiffLine({ row }) {
   );
 }
 
-export function DiffContent({ diff }) {
+export function DiffContent({ diff, titlePath }) {
+  // 工作区单文件视图：标题里已经有路径，patch 的同一行文件头不再重复（重命名与多文件仍保留）。
+  const rows = useMemo(
+    () => presentDiff(diff, titlePath ? { dropFileHeaderFor: titlePath } : undefined),
+    [diff, titlePath],
+  );
   return (
     <div className="diff-content">
-      {presentDiff(diff).map((row, index) => <DiffLine key={index} row={row} />)}
+      {rows.map((row, index) => <DiffLine key={index} row={row} />)}
     </div>
   );
 }
@@ -119,6 +123,7 @@ export const Output = memo(function Output({ title, body, danger, warning }) {
 });
 export function FileRow({
   file,
+  label,
   selected,
   onSelect,
   onStage,
@@ -129,6 +134,7 @@ export function FileRow({
 }) {
   const stageLabel =
     file.area === "staged" ? `取消暂存 ${file.path}` : `暂存 ${file.path}`;
+  const shown = label || { name: basename(file.path), dir: "", title: file.path };
   return (
     <div className={`file-row ${selected ? "selected" : ""}`}>
       {checkable && (
@@ -149,10 +155,14 @@ export function FileRow({
         title={file.path}
         onClick={() => onSelect(file)}
       >
-        <span className={`status ${file.status}`}>{iconFor[file.status]}</span>
-        <span className="file-path">
-          <File size={14} />
-          {file.path}
+        <span className="file-name">{shown.name}</span>
+        {shown.dir && (
+          <span className="file-dir" title={shown.dir}>
+            {shown.dir}
+          </span>
+        )}
+        <span className={`status ${file.status}`} aria-hidden="true">
+          {iconFor[file.status]}
         </span>
       </button>
       <button
@@ -181,6 +191,8 @@ export function FileSection({
   busy,
   emptyText,
 }) {
+  // 同名文件按需补父目录尾段；分组内比较，跨分组（未暂存 / 已暂存）各自独立。
+  const labels = useMemo(() => labelFiles(files), [files]);
   return (
     <section className="file-section">
       <div className="section-label">
@@ -192,6 +204,7 @@ export function FileSection({
         <FileRow
           key={`${file.area}-${file.path}-${index}`}
           file={file}
+          label={labels[index]}
           selected={
             selected?.area === file.area && selected?.path === file.path
           }
@@ -207,14 +220,15 @@ export function FileSection({
   );
 }
 
-// 未暂存区的批量选择工具栏：全选 / 清除 / 已选计数 / “暂存所选 N 个”主按钮。
-// 未选择时主按钮禁用并用 title 说明原因，不制造可点击假象。
+// 未暂存区的批量选择工具栏：压到两行以内。
+// 未选中时是「全选 / 暂存所选（禁用）」+ 一行可见原因；选中后第二行换成数量与清除入口。
 export function BatchStageToolbar({ total, count, loading, onSelectAll, onClear, onStageSelected }) {
+  const selected = count > 0;
   const stageTitle = loading
     ? "正在执行其他操作…"
-    : count
+    : selected
       ? `将暂存所选 ${count} 个文件`
-      : "先在上方勾选要暂存的文件";
+      : "先勾选要暂存的文件";
   return (
     <div className="batch-toolbar">
       <div className="batch-tools-row">
@@ -224,34 +238,35 @@ export function BatchStageToolbar({ total, count, loading, onSelectAll, onClear,
           onClick={onSelectAll}
           disabled={!total || loading}
         >
-          全选未暂存
+          全选
         </button>
-        <button
-          type="button"
-          className="batch-tool"
-          onClick={onClear}
-          disabled={!count || loading}
-        >
-          清除选择
-        </button>
-      </div>
-      <div className="batch-stage-row">
-        <span className="batch-count" aria-live="polite">
-          已选择 {count} 个
-        </span>
         <button
           type="button"
           className="batch-stage"
           onClick={onStageSelected}
-          disabled={!count || loading}
+          disabled={!selected || loading}
           title={stageTitle}
         >
-          暂存所选 {count} 个
+          {selected ? `暂存所选 ${count} 个` : "暂存所选"}
         </button>
       </div>
-      {/* 禁用原因以可见文字呈现，不依赖 disabled 按钮自身无法触发的 title。 */}
-      {!count && !loading && (
-        <p className="batch-hint">先在上方勾选要暂存的文件。</p>
+      {selected ? (
+        <div className="batch-stage-row">
+          <span className="batch-count" aria-live="polite">
+            已选择 {count} 个
+          </span>
+          <button
+            type="button"
+            className="text-action batch-clear"
+            onClick={onClear}
+            disabled={loading}
+          >
+            清除
+          </button>
+        </div>
+      ) : (
+        // 禁用原因用可见文字表达，不依赖 disabled 按钮无法触发的 title。
+        <p className="batch-hint">先勾选要暂存的文件</p>
       )}
     </div>
   );
@@ -617,46 +632,80 @@ export function SafetyContext({
     </PlannedContext>
   );
 }
-export function FileInspector({ file, loading, onStage, onDiscard }) {
-  const stageLabel = file.area === "staged" ? "取消暂存" : "暂存文件";
+// 面包屑：目录逐段省略前面的、文件名永远完整。悬停提示给出完整相对路径。
+export function PathBreadcrumb({ path, className = "" }) {
+  const segments = breadcrumbSegments(path);
+  if (!segments.length) return <span className={`path-breadcrumb ${className}`.trim()} />;
   return (
-    <section className="inspector-flow">
-      <div className="inspector-heading">
-        <span>文件详情</span>
-        <h2 title={file.path}>{file.path}</h2>
+    <span className={`path-breadcrumb ${className}`.trim()} title={path}>
+      {segments.map((segment, index) => {
+        const last = index === segments.length - 1;
+        return (
+          <Fragment key={`${segment}-${index}`}>
+            {index > 0 && (
+              <span className="path-separator" aria-hidden="true">
+                /
+              </span>
+            )}
+            <span className={last ? "path-name" : "path-dir"}>{segment}</span>
+          </Fragment>
+        );
+      })}
+    </span>
+  );
+}
+
+// 右栏「当前文件」区：文件名、所属区域、暂存 / 取消暂存与丢弃改动。
+// 只保留动作所需的信息——「已在中央显示差异」这类重复说明不在这里出现。
+// 主按钮权重由调用方决定：暂存区为空时它才是页面上唯一的实心动作。
+export function FileInspector({ file, label, stagedCount, loading, onStage, onDiscard, preview }) {
+  const isStaged = file.area === "staged";
+  const stageLabel = isStaged ? "取消暂存" : "暂存文件";
+  const shown = label || { name: basename(file.path), dir: "", title: file.path };
+  return (
+    <section className="inspector-flow current-file" aria-labelledby="current-file-heading">
+      <div className="section-label">
+        <h2 id="current-file-heading">当前文件</h2>
+        <b>{isStaged ? "已暂存" : "未暂存"}</b>
       </div>
-      <dl className="file-facts">
-        <div>
-          <dt>状态</dt>
-          <dd className={file.status}>{titleFor[file.status]}</dd>
-        </div>
-        <div>
-          <dt>区域</dt>
-          <dd>{file.area === "staged" ? "已暂存" : "未暂存"}</dd>
-        </div>
-      </dl>
-      <p className="inspector-copy">
-        已在中央工作区显示该文件的真实 Git Diff。
+      <h3 className="current-file-name" title={file.path}>
+        <span className="current-file-name-text">{shown.name}</span>
+        <span className={`status ${file.status}`} aria-hidden="true">
+          {iconFor[file.status]}
+        </span>
+      </h3>
+      <p className="current-file-path" title={file.path}>
+        {shown.dir || "仓库根目录"}
+        <span aria-hidden="true"> · </span>
+        {titleFor[file.status]}
       </p>
-      <button
-        type="button"
-        className="primary-action"
-        disabled={loading}
-        onClick={() => onStage(file)}
-      >
-        {file.area === "staged" ? <Minus size={16} /> : <Plus size={16} />}
-        {stageLabel}
-      </button>
-      {file.area === "unstaged" && (
+      <div className="current-file-actions">
         <button
           type="button"
-          className="danger-outline"
+          className={stagedCount > 0 ? "secondary-action" : "primary-action"}
           disabled={loading}
-          onClick={() => onDiscard(file.path)}
+          onClick={() => onStage(file)}
         >
-          <Trash size={15} />
-          丢弃此文件的未暂存改动
+          {isStaged ? <Minus size={15} /> : <Plus size={15} />}
+          {stageLabel}
         </button>
+        {!isStaged && (
+          <button
+            type="button"
+            className="text-action danger-text"
+            disabled={loading}
+            onClick={() => onDiscard(file.path)}
+          >
+            <Trash size={14} />
+            丢弃改动…
+          </button>
+        )}
+      </div>
+      {!isStaged && preview && (
+        <div className="command-preview">
+          <span>暂存命令预览</span>
+          <code>{preview}</code>
+        </div>
       )}
     </section>
   );
@@ -671,7 +720,7 @@ export function NoRepositoryGuide({ loading, onOpen }) {
         <h2>还没有打开仓库</h2>
       </div>
       <p className="inspector-copy">
-        打开一个本地 Git 仓库后，这里会显示暂存状态、提交说明和下一条命令的预览。
+        打开一个本地 Git 仓库后，这里会显示当前文件的暂存动作、暂存状态与提交命令预览。
       </p>
       <button
         type="button"
@@ -685,6 +734,8 @@ export function NoRepositoryGuide({ loading, onOpen }) {
     </section>
   );
 }
+// 右栏「创建提交」区：标题、已暂存数量、说明、紧凑的批量操作、提交按钮与必要的状态提示。
+// 「提交 N 个文件」直接来自已暂存数量；禁用原因用可见文字说明，不靠 hover 才出现的 title。
 export function CommitInspector({
   staged,
   unstaged,
@@ -695,16 +746,17 @@ export function CommitInspector({
   preview,
   platform,
 }) {
+  const ready = staged.length > 0 && Boolean(message.trim());
   const commitHint = !staged.length
-    ? "先暂存至少一个文件，才能创建提交。"
+    ? "先暂存要提交的文件"
     : !message.trim()
-      ? "请填写提交说明后再创建提交。"
-      : "";
+      ? "填写提交说明后即可提交"
+      : `${shortcutLabel("Enter", platform)} 提交`;
   return (
-    <section className="inspector-flow">
-      <div className="inspector-heading">
-        <span>工作区操作</span>
+    <section className="inspector-flow commit-panel">
+      <div className="section-label">
         <h2>创建提交</h2>
+        <b>已暂存 {staged.length} 个文件</b>
       </div>
       <label className="message-label" htmlFor="commit-message">
         提交说明
@@ -718,10 +770,10 @@ export function CommitInspector({
         placeholder="说明此次改动…"
         maxLength={4096}
       />
-      <div className="commit-actions">
+      <div className="commit-batch">
         <button
           type="button"
-          className="secondary-action"
+          className="text-action"
           disabled={!unstaged.length || loading}
           onClick={() => onOperate("stageAll")}
         >
@@ -729,7 +781,7 @@ export function CommitInspector({
         </button>
         <button
           type="button"
-          className="secondary-action"
+          className="text-action"
           disabled={!staged.length || loading}
           onClick={() => onOperate("unstageAll")}
         >
@@ -738,19 +790,21 @@ export function CommitInspector({
       </div>
       <button
         type="button"
-        className="primary-action"
-        disabled={!staged.length || !message.trim() || loading}
+        className="primary-action commit-submit"
+        disabled={!ready || loading}
         onClick={() => onOperate("commit", { message })}
         title={`${shortcutLabel("Enter", platform)} 提交`}
         aria-keyshortcuts={isDarwin ? "Meta+Enter" : "Control+Enter"}
       >
-        提交 {staged.length || ""}
+        {staged.length ? `提交 ${staged.length} 个文件` : "提交"}
       </button>
-      <p className="inspector-hint">{commitHint || `${shortcutLabel("Enter", platform)} 提交`}</p>
-      <div className="operation-preview">
-        <span>下一条命令</span>
-        <code>{preview}</code>
-      </div>
+      <p className="inspector-hint">{commitHint}</p>
+      {ready && preview && (
+        <div className="command-preview">
+          <span>提交命令预览</span>
+          <code>{preview}</code>
+        </div>
+      )}
     </section>
   );
 }
@@ -1202,8 +1256,12 @@ export const CommandLedger = memo(function CommandLedger({
                     <CheckCircle size={14} weight="fill" />
                   )}
                 </span>
+                {/* 来源先出现：摘要可能是用户操作，也可能是回退的系统读取。 */}
+                <span className="ledger-glance-source">
+                  {recordTypeLabel(latestRecord.source)}
+                </span>
                 <span className="ledger-glance-text">
-                  最近：{intentLabel(latestRecord)}
+                  {intentLabel(latestRecord)}
                 </span>
                 <span className="ledger-glance-status">
                   · {recordStatusLabel(latestRecord)}
