@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.8](https://github.com/chukui2005/GitGlass/compare/v0.6.7...v0.6.8) (2026-11-24)
+
+### Features
+
+* refine diff review, staging, commit controls, and the command ledger ([6f0b1c0](https://github.com/chukui2005/GitGlass/commit/6f0b1c0eb0f33dea4c710eacc2f7c0b707582fcf))
+
+### Bug Fixes
+
+* refresh the workspace after remote-tracking refs change ([cc996f3](https://github.com/chukui2005/GitGlass/commit/cc996f3c44e512901d00308c1a0fb22716579597))
+
 ## [0.6.7](https://github.com/chukui2005/GitGlass/compare/v0.6.6...v0.6.7) (2026-11-20)
 
 > 0.6.6-beta 验收反馈的三条修复，随 `0.6.7-beta.1` 经过用户验收。下面按「用户能感知的变化」归并。
