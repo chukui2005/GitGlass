@@ -10,7 +10,7 @@
 
 <p align="center"><a href="README.md">English</a> | 简体中文</p>
 
-<p align="center"><a href="https://github.com/chukui2005/GitGlass/releases">在 Releases 页面查看 Beta 安装包</a></p>
+<p align="center"><a href="https://github.com/chukui2005/GitGlass/releases/latest">下载最新稳定版</a></p>
 
 <!-- section:hero -->
 
@@ -55,19 +55,17 @@
 - 仅在查看 Diff 并输入文件名后，丢弃单个已跟踪、未暂存文件的改动。
 - 删除已合并且非当前的本地分支，并从 reflog 条目创建救援分支。
 
-### 当前 Beta 限制
+### 当前限制
 
-- 当前仅提供 Windows x64 Beta。请自行安装 Git，并确保命令行可以使用 `git`。
+- 当前支持 Windows x64。请安装 Git，并确保命令行可以使用 `git`。
 - GitGlass 不支持 force push、删除远程分支、自动 merge、rebase、stash 或 `reset --hard`。
-- 首个 Beta 尚未签名，Windows SmartScreen 可能显示“未知发布者”提示。
+- Windows 安装包尚未签名，Windows SmartScreen 可能显示“未知发布者”提示。
 
 <!-- section:download -->
 
 ## 下载与安装
 
-<!-- release-link: 发布后在此处把 Releases 页面链接替换为版本化资产链接 -->
-
-Beta 安装包将发布在 [Releases 页面](https://github.com/chukui2005/GitGlass/releases)。在正式发布前，请使用该页面，不要猜测具体版本的下载地址。
+[最新稳定版](https://github.com/chukui2005/GitGlass/releases/latest)提供 Windows x64 安装包和便携 ZIP。
 
 ### NSIS 安装包
 
