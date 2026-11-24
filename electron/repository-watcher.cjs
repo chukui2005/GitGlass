@@ -5,7 +5,7 @@ const path = require('node:path')
 // the working tree would report every editor save, so only the git directory
 // itself and the refs/logs directories Git rewrites on commit, checkout, merge,
 // rebase and stash are watched.
-const WATCHED_DIRECTORIES = ['', 'refs', 'refs/heads', 'logs']
+const WATCHED_DIRECTORIES = ['', 'refs', 'logs']
 const DEBOUNCE_MS = 800
 // A stream of writes (a 200-ref fetch, a batch of branches) must not postpone the
 // notification forever: after this long the batch is reported even if it never
@@ -212,12 +212,15 @@ class RepositoryWatcher {
     })
     for (const directory of WATCHED_DIRECTORIES) {
       const target = directory ? path.join(gitDirectory, ...directory.split('/')) : gitDirectory
-      // refs/heads can be absent (packed refs only) and rebase/merge state comes
+      // refs can be absent (packed refs only) and rebase/merge state comes
       // and goes while the app runs, so missing paths are expected.
       if (!this.existsSync(target)) continue
       const kind = directory || 'git'
       try {
-        const handle = this.watchFileSystem(target, { persistent: false }, (_event, filename) => this.handleEvent(filename, kind))
+        // Fetch writes remote-tracking refs below refs/remotes/<remote>, which
+        // a non-recursive watch on refs does not see on Windows.
+        const options = { persistent: false, recursive: directory === 'refs' }
+        const handle = this.watchFileSystem(target, options, (_event, filename) => this.handleEvent(filename, kind))
         // fs.watch can also die asynchronously (network drive dropped, directory
         // deleted): drop the dead handle and report when the last one is gone,
         // so the app can tell the user automatic refresh is unavailable (#21).
