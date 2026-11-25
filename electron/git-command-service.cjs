@@ -36,6 +36,19 @@ function redactCredentials(value) {
 }
 
 /**
+ * `git apply` reads its patch from stdin, so argv alone cannot say which
+ * repository file or which hunk an operation touched. Those two audit facts are
+ * added only when a caller supplies them; the patch text itself never enters the
+ * ledger.
+ */
+function auditTarget({ target = '', hunk = '' } = {}) {
+  const fields = {}
+  if (typeof target === 'string' && target) fields.target = target
+  if (typeof hunk === 'string' && hunk) fields.hunk = hunk
+  return fields
+}
+
+/**
  * The only module allowed to execute the local Git binary. Each attempt,
  * including inexpensive background reads, appends one immutable CommandRecord.
  */
@@ -79,13 +92,12 @@ class GitCommandService {
    * never having run: no exit code, and the visible command line states
    * the rejection so it can never be mistaken for an executed Git command.
    */
-  recordRejection({ argv = [], intent, source, cwd, stderr = '' }) {
-    const { userMessage = '' } = arguments[0] || {}
+  recordRejection({ argv = [], intent, source, cwd, stderr = '', userMessage = '', target = '', hunk = '' }) {
     const note = '本地校验拒绝，未执行 Git 命令'
     const record = {
       id: this.idFactory(), operationId: this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: note, command: note,
-      cwd: cwd || '', startedAt: this.now(), endedAt: this.now(),
+      cwd: cwd || '', ...auditTarget({ target, hunk }), startedAt: this.now(), endedAt: this.now(),
       stdout: '', stderr: redactCredentials(stderr), userMessage, exitCode: null, ok: false,
       outputTruncated: false, timedOut: false, rejected: true,
     }
@@ -94,13 +106,27 @@ class GitCommandService {
     return this.records[0]
   }
 
-  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null }) {
+  async run(request) { return (await this.execute(request)).record }
+
+  /**
+   * Same execution and audit record as run(), but it also hands back the raw
+   * stdout captured **before** credential redaction.
+   *
+   * Only patch construction may use this: a single-hunk patch has to reach Git
+   * byte for byte, and redaction would silently rewrite a line that merely looks
+   * like a credential URL. The CommandRecord stays redacted, so neither the
+   * ledger nor IPC ever sees the unredacted text — callers must not retain it.
+   */
+  async runCapturingOutput(request) { return this.execute(request) }
+
+  /** @returns {Promise<{ record: object, stdout: string }>} */
+  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
     const outputLimit = Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0 ? maxOutputBytes : this.defaultMaxOutputBytes
     const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
-      cwd: cwd || '', startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
+      cwd: cwd || '', ...auditTarget({ target, hunk }), startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
       outputTruncated: false, timedOut: false,
     }
     let settled = false
@@ -118,10 +144,13 @@ class GitCommandService {
         record.timedOut = true
         record.stderr += `\n命令执行超时（${Math.round(timeout / 1000)} 秒），已终止。`
       }
+      // 补丁必须逐字节回到 Git：先留一份脱敏前的 stdout。账本与 IPC 只看得到
+      // 下面这份脱敏后的记录，调用方拿到原始输出时也不得保存或外传。
+      const rawStdout = record.stdout
       // Some Git output legitimately contains a credential-bearing URL. Redact
       // before the immutable audit record is retained or sent over IPC, then let
       // the caller apply its own narrower redaction on top.
-      record.stdout = redactCredentials(record.stdout)
+      record.stdout = redactCredentials(rawStdout)
       record.stderr = redactCredentials(record.stderr)
       if (typeof redactOutput === 'function') {
         record.stdout = redactOutput(record.stdout)
@@ -132,7 +161,7 @@ class GitCommandService {
       record.endedAt = this.now()
       this.records.unshift(Object.freeze({ ...record }))
       if (this.records.length > this.maxRecords) this.records.length = this.maxRecords
-      return this.records[0]
+      return { record: this.records[0], stdout: rawStdout }
     }
     if (!cwd || !this.existsSync(cwd)) return finish(-1, 'No repository is open.')
     return new Promise((resolve) => {
@@ -168,6 +197,14 @@ class GitCommandService {
       child.stderr?.on('data', (data) => collect('stderr', data))
       child.on('error', (error) => settle(-1, error.message))
       child.on('close', (code) => settle(code ?? -1))
+      // Patch text is data, never argv: Git reads it from stdin, so it cannot be
+      // mistaken for a command line and never reaches the ledger. A broken pipe
+      // means Git already exited (a rejected patch, for example); its exit code
+      // and stderr are the answer, so the write error is deliberately ignored.
+      if (typeof input === 'string') {
+        child.stdin?.on?.('error', () => {})
+        child.stdin?.end?.(input)
+      }
       timer = this.setTimer(() => {
         if (settled) return
         timedOut = true

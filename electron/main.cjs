@@ -26,6 +26,7 @@ const WATCH_SILENCE_MS = 1500
 const WATCH_INDEX_SILENCE_MS = 1000
 const REPOSITORY_WRITE_CHANNELS = new Set([
   'git:operate',
+  'hunk:apply',
   'remote:execute',
   'branch:execute',
   'safety:discard:execute',
@@ -247,6 +248,13 @@ handleRepository('safety:branch-delete:execute', (_event, branch, operationId) =
 handleRepository('recovery:reflog', () => repository.reflog())
 handleRepository('recovery:rescue:prepare', (_event, hash, branch) => repository.prepareRescueBranch(hash, branch))
 handleRepository('recovery:rescue:execute', (_event, hash, branch, operationId) => repository.executeRescueBranch(hash, branch, operationId))
+// 按块操作只有一个入口：方向 + 界面读取时下发的块标识。渲染层不能提供
+// 命令、补丁或仓库路径；主进程重新读取真实 Diff 后自行构造补丁。
+handleRepository('hunk:apply', (_event, direction, locator) => {
+  if (direction === 'stage') return repository.stageHunk(locator)
+  if (direction === 'unstage') return repository.unstageHunk(locator)
+  return Promise.resolve({ ok: false, direction: '', area: '', path: '', hunk: null, execution: null, record: null, state: null, reason: '不支持的 Diff 块操作。' })
+})
 handleRepository('git:operate', async (_event, action, payload = {}) => {
   let execution
   if (action === 'stage') execution = await repository.stage(payload.path)

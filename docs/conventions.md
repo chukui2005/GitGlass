@@ -163,6 +163,7 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 - 为过 lint 做的等价改动：`UpdateService` 的 `Object.assign(this, …)` 改为逐条属性赋值；`src/{app-updates,recent-repositories-menu,main}.jsx` 删掉 React 19 新 JSX 转换下已无用的 `import React` 与两个未使用的图标导入；`main.jsx` 命令行提示里的 U+3000 改成显式 `{"\u3000"}`。
 - 渲染层拆分（0.6.5-beta.1）：`src/main.jsx` 3027 → 1441 行，拆出 `src/use-history-review.js`、`src/use-safety-plans.js`、`src/use-remote-overview.js`、`src/use-panel-resize.js` 与 `src/workbench-ui.jsx`（26 个展示组件）；`src/` 从 12 个文件变成 17 个，第 2 节的"~15 个文件时再按 feature 拆分"因此提上日程。
 - 工作台改版（0.7）：新增 `src/file-labels.js`（路径展示名 + `area + path` 寻址的纯函数），验收证据见 [ui-redesign-acceptance.md](ui-redesign-acceptance.md)。真窗口验收新增 `tests/support/workbench-acceptance.cjs` + `tests/support/workbench-preload.cjs`（真实临时 Git 仓库作桥）与 `tests/ui/workbench-window.test.cjs`；截图写到 `.screenshots/ui-redesign/`（已忽略），交付用的三张另存 `docs/assets/ui-redesign/`。
+- 按块暂存 PR 1（0.6.9）：新增 `electron/patch-hunks.cjs`（固定补丁参数、快照与块解析、单块补丁构造）；`RepositoryService.diff()` 改为用同一组固定参数读取并下发 `snapshot` / `hunkSupport`；按块操作只经 `hunk:apply` 一个通道，补丁由主进程构造后从 stdin 交给 `git apply`，账本用 `target` + `hunk` 补上 argv 无法表达的审计事实。边界与契约见 [architecture.md](architecture.md#diff-hunk-boundary-069)，真实 Git 验收在 `tests/integration/hunk-stage.integration.test.cjs`。
 
 ### 待办（需要单独 PR）
 

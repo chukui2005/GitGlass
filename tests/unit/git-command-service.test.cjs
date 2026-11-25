@@ -104,6 +104,112 @@ describe('GitCommandService', () => {
   })
 })
 
+describe('patch input on stdin', () => {
+  const patch = 'diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n'
+
+  function stdinChild({ code = 0, stderr = '' } = {}) {
+    const child = fakeChild({ code, stderr })
+    const written = []
+    child.stdin = {
+      on: (event, handler) => { if (event === 'error') child.stdin.errorHandler = handler },
+      end: (data) => { written.push(data) },
+    }
+    return { child, written }
+  }
+
+  it('sends the patch through stdin and keeps the target file and hunk in the record', async () => {
+    let written
+    const service = serviceWith(() => {
+      const harness = stdinChild()
+      written = harness.written
+      return harness.child
+    })
+    const record = await service.run({
+      argv: ['apply', '--cached', '-'],
+      intent: 'Stage diff hunk',
+      source: 'user',
+      cwd: 'D:/repo',
+      input: patch,
+      target: 'a.txt',
+      hunk: '@@ -1 +1 @@',
+    })
+    // 补丁是执行输入，不是命令：它不进 argv、不进账本，只经 stdin 交给 Git。
+    expect(written).toEqual([patch])
+    expect(record.argv).toEqual(['git', 'apply', '--cached', '-'])
+    expect(record).toMatchObject({ ok: true, target: 'a.txt', hunk: '@@ -1 +1 @@' })
+    expect(JSON.stringify(record)).not.toContain('+new')
+  })
+
+  it('adds no audit fields when a command has no patch target', async () => {
+    const service = serviceWith(() => fakeChild({}))
+    const record = await service.run({ argv: ['status'], intent: 'Read working tree status', source: 'background', cwd: 'D:/repo' })
+    expect(record).not.toHaveProperty('target')
+    expect(record).not.toHaveProperty('hunk')
+  })
+
+  it('keeps Git real exit code when the patch is refused before stdin is read', async () => {
+    const service = serviceWith(() => {
+      const harness = stdinChild({ code: 128, stderr: 'error: patch failed: a.txt:1\n' })
+      const end = harness.child.stdin.end
+      harness.child.stdin.end = (data) => {
+        end(data)
+        // Git 已经退出：写入补丁时管道断开，不能变成未处理的错误。
+        harness.child.stdin.errorHandler?.(new Error('EPIPE'))
+      }
+      return harness.child
+    })
+    const record = await service.run({ argv: ['apply', '--cached', '-'], intent: 'Stage diff hunk', source: 'user', cwd: 'D:/repo', input: patch, target: 'a.txt', hunk: '@@ -1 +1 @@' })
+    expect(record).toMatchObject({ ok: false, exitCode: 128 })
+    expect(record.stderr).toContain('patch failed')
+  })
+
+  it('records rejected hunk operations without executing anything', () => {
+    const service = serviceWith(() => { throw new Error('rejections must not spawn') })
+    const record = service.recordRejection({
+      argv: ['apply', '--cached', '-R', '-'],
+      intent: 'Unstage diff hunk',
+      source: 'user',
+      cwd: 'D:/repo',
+      stderr: 'Diff 已过期',
+      userMessage: 'Diff 已过期',
+      target: 'a.txt',
+      hunk: '@@ -1 +1 @@',
+    })
+    expect(record).toMatchObject({ rejected: true, exitCode: null, target: 'a.txt', hunk: '@@ -1 +1 @@', stderr: 'Diff 已过期' })
+    expect(record.displayCommand).toContain('本地校验拒绝，未执行 Git 命令')
+  })
+})
+
+describe('unredacted output capture', () => {
+  const diffWithToken = 'diff --git a/api.txt b/api.txt\n--- a/api.txt\n+++ b/api.txt\n@@ -1 +1,2 @@\n base\n+endpoint = https://api.example.test/x?access_token=SECRET-42\n'
+
+  it('hands the patch builder the bytes Git produced while the record stays redacted', async () => {
+    const service = serviceWith(() => fakeChild({ stdout: diffWithToken }))
+    const { record, stdout } = await service.runCapturingOutput({ argv: ['diff', '--', 'api.txt'], intent: 'Read hunk patch', source: 'background', cwd: 'D:/repo', maxOutputBytes: 1024 * 1024 })
+    // 补丁路径需要原始字节：行里只是「长得像」凭据，也不能被改写。
+    expect(stdout).toContain('SECRET-42')
+    // 账本记录仍然脱敏，且与 run() 生成的是同一形状。
+    expect(record.stdout).not.toContain('SECRET-42')
+    expect(record.stdout).toContain('access_token=<redacted>')
+    expect(service.history()).toEqual([record])
+    expect(service.history()[0].stdout).not.toContain('SECRET-42')
+  })
+
+  it('keeps run() output redacted so no caller can leak the raw text by accident', async () => {
+    const service = serviceWith(() => fakeChild({ stdout: diffWithToken }))
+    const record = await service.run({ argv: ['diff', '--', 'api.txt'], intent: 'Read file diff', source: 'background', cwd: 'D:/repo' })
+    expect(record.stdout).not.toContain('SECRET-42')
+    expect(record).not.toHaveProperty('stdoutRaw')
+  })
+
+  it('reports the same real failure through both entry points', async () => {
+    const service = serviceWith(() => fakeChild({ stderr: 'fatal: bad revision', code: 128 }))
+    const { record, stdout } = await service.runCapturingOutput({ argv: ['diff', '--', 'api.txt'], intent: 'Read hunk patch', source: 'background', cwd: 'D:/repo' })
+    expect(record).toMatchObject({ ok: false, exitCode: 128 })
+    expect(stdout).toBe('')
+  })
+})
+
 describe('redactCredentials', () => {
   it('leaves large credential-free output untouched without pathological backtracking', () => {
     const big = 'y'.repeat(200_000)
