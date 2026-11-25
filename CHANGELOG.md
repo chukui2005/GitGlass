@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.9-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.8...v0.6.9-beta.1) (2026-11-25)
+
+### Features
+
+* stage or unstage a single hunk from the diff view (#93) ([4ce573d](https://github.com/chukui2005/GitGlass/commit/4ce573dd07eca29fde08266ecb54b2193f114aa7))
+* stage and unstage a single diff hunk (#92) ([fca54aa](https://github.com/chukui2005/GitGlass/commit/fca54aaeb95bbc95760d4c54ec6e66d6d8bfd292))
+
 ## [0.6.8](https://github.com/chukui2005/GitGlass/compare/v0.6.7...v0.6.8) (2026-11-24)
 
 ### Features
