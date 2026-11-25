@@ -125,8 +125,9 @@ export function App() {
   // 当前 Diff 的块信息：{ area, path, snapshot, support }。只有它与 selected 指向
   // 同一个文件时才允许按块操作，避免用旧 Diff 的标识去改新的暂存内容。
   const [diffHunks, setDiffHunks] = useState(null);
-  // 提交前总览：{ status: 'idle' | 'loading' | 'ready' | 'error', files, totals, reason }。
-  const [stagedOverview, setStagedOverview] = useState({ status: "idle", files: [], totals: null, reason: "" });
+  // 提交前总览：{ status, repoPath, files, totals, reason }。repoPath 记录这份数据
+  // 属于哪个仓库，切库后旧数据不会再被当成当前暂存区。
+  const [stagedOverview, setStagedOverview] = useState({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -148,6 +149,13 @@ export function App() {
   const refreshSequence = useRef(0);
   // Diff 读取的序号：快速切换文件时，先发出的读取不能覆盖后选中的文件。
   const diffSequence = useRef(0);
+  // 暂存总览的读取序号与「当前仓库」快照：迟到的响应（更晚的请求已发出、
+  // 或仓库已经切换）必须丢弃，否则旧仓库的文件会显示在新仓库里。
+  const stagedOverviewSequence = useRef(0);
+  const currentRepository = useRef(null);
+  useEffect(() => {
+    currentRepository.current = repo;
+  }, [repo]);
   // 自动刷新（窗口重新聚焦 / 主进程看到 .git 变化）用的最新闭包与订阅状态：
   // 订阅只建立一次，所以 refreshAll 必须通过 ref 取用，不能闭包住首帧的仓库。
   const refreshAllRef = useRef(null);
@@ -499,7 +507,7 @@ export function App() {
     setDiff("");
     setDiffMessage("");
     setDiffHunks(null);
-    setStagedOverview({ status: "idle", files: [], totals: null, reason: "" });
+    setStagedOverview({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
     setStageSelection(new Set());
     setBranches([]);
     resetHistoryState();
@@ -536,6 +544,11 @@ export function App() {
     applyQueryResultIfCurrent(queryToken, commitResult);
     applyOverview(remoteResult);
     await refreshLedger(cycle);
+    // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
+    // 跟着实际暂存区更新；折叠（idle）时按需读取，不多发后台命令。
+    if (stagedOverview.status !== "idle") {
+      await refreshStagedOverview({ silent: true, repoPath: next.path || repo });
+    }
     return resolved;
   }
   // 所有刷新（启动、手动、切换仓库、操作成功后、自动刷新）都经这里：结束时
@@ -609,25 +622,32 @@ export function App() {
         result?.execution?.operationId || result?.record?.operationId || null,
       );
       setNotice(hunkOperationNotice(direction, result));
+      // refreshAll 会按真实状态刷新工作区，并顺带刷新展开着的暂存总览。
       await refreshAll(selected);
-      // 总览只在用户展开过之后才跟着刷新：没打开就不产生额外的后台读取。
-      if (stagedOverview.status !== "idle") await refreshStagedOverview({ silent: true });
     } finally {
       setLoading(false);
     }
   }
   async function refreshStagedOverview(options = {}) {
+    const requestedRepo = options.repoPath ?? repo;
+    const sequence = ++stagedOverviewSequence.current;
     setStagedOverview((current) => ({ ...current, status: "loading" }));
     try {
       const overview = await window.gitglass.getStagedOverview();
+      // 迟到的响应：已经有更新的读取发起，或仓库在读取期间被切换。
+      if (sequence !== stagedOverviewSequence.current) return;
+      if (currentRepository.current !== requestedRepo) return;
       setStagedOverview({
         status: overview?.ok === false ? "error" : "ready",
+        repoPath: requestedRepo,
         files: Array.isArray(overview?.files) ? overview.files : [],
         totals: overview?.totals || null,
         reason: overview?.reason || "",
       });
     } catch {
-      setStagedOverview({ status: "error", files: [], totals: null, reason: "无法读取暂存总览。" });
+      if (sequence !== stagedOverviewSequence.current) return;
+      if (currentRepository.current !== requestedRepo) return;
+      setStagedOverview({ status: "error", repoPath: requestedRepo, files: [], totals: null, reason: "无法读取暂存总览。" });
       if (!options.silent) setNotice({ type: "error", text: GENERIC_GIT_FAILURE });
     }
   }
@@ -943,6 +963,7 @@ export function App() {
         preview={commitPreview}
         platform={shortcutPlatform}
         overview={stagedOverview}
+        currentRepo={repo}
         onLoadOverview={refreshStagedOverview}
         onOpenStagedFile={(file) => loadDiff({ path: file.path, area: "staged" })}
       />

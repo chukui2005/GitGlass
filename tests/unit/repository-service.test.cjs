@@ -75,7 +75,9 @@ describe('Diff read contract for hunk operations', () => {
     expect(commands.requests[0].maxOutputBytes).toBe(1024 * 1024)
     expect(result).toMatchObject({ ok: true, area: 'staged', path: 'src/app.js' })
     expect(result.snapshot).toMatch(/^[0-9a-f]{64}$/)
-    expect(result.hunkSupport.hunks.map((hunk) => hunk.header)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@'])
+    expect(result.hunkSupport.hunks.map((hunk) => hunk.range)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@'])
+    // 块头原文（可能带函数上下文）不下发，只给范围与内容摘要。
+    expect(result.hunkSupport.hunks.every((hunk) => !('header' in hunk))).toBe(true)
     expect(result.stdout).toBe(twoHunks)
   })
 

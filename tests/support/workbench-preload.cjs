@@ -5,7 +5,7 @@
 const { contextBridge } = require('electron')
 const { execFileSync } = require('node:child_process')
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('../../electron/git-parsers.cjs')
-const { hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk } = require('../../electron/patch-hunks.cjs')
+const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk } = require('../../electron/patch-hunks.cjs')
 
 const repository = process.env.GITGLASS_WORKBENCH_REPO || ''
 const records = []
@@ -82,7 +82,7 @@ const fileDiff = (file) => {
     path: file.path,
     snapshot,
     hunkSupport: parsed.ok
-      ? { ok: true, reason: '', hunks: parsed.hunks.map(({ index, header, oldStart, oldLines, newStart, newLines, contentHash }) => ({ index, header, oldStart, oldLines, newStart, newLines, contentHash })) }
+      ? { ok: true, reason: '', hunks: parsed.hunks.map((hunk) => ({ index: hunk.index, range: hunkRange(hunk), oldStart: hunk.oldStart, oldLines: hunk.oldLines, newStart: hunk.newStart, newLines: hunk.newLines, contentHash: hunk.contentHash })) }
       : { ok: false, reason: parsed.reason, hunks: [] },
   }
 }
@@ -102,14 +102,15 @@ function applyHunkLocator(direction, locator) {
   const patch = buildHunkPatch(parsed, located.hunk.index)
   if (!patch) return reject('所选 Diff 块已不存在，请刷新后重试。')
   const applied = execute(hunkApplyArgs(direction), intent, 'user', patch)
+  const range = hunkRange(located.hunk)
   return {
     ok: applied.result.ok,
     direction,
     area,
     path: locator.path,
-    hunk: { index: located.hunk.index, header: located.hunk.header, oldStart: located.hunk.oldStart, oldLines: located.hunk.oldLines, newStart: located.hunk.newStart, newLines: located.hunk.newLines },
-    execution: applied.execution,
-    record: applied.record,
+    hunk: { index: located.hunk.index, range, oldStart: located.hunk.oldStart, oldLines: located.hunk.oldLines, newStart: located.hunk.newStart, newLines: located.hunk.newLines },
+    execution: { ...applied.execution, target: locator.path, hunk: range },
+    record: { ...applied.record, target: locator.path, hunk: range },
     state: repositoryState(),
     reason: applied.result.ok ? '' : direction === 'unstage' ? '这个 Diff 块无法取消暂存。请刷新后重试。' : '这个 Diff 块无法应用到索引。请刷新后重试。',
   }

@@ -247,24 +247,37 @@ describe('buildHunkPatch', () => {
 
 describe('locateHunk', () => {
   const parsed = parsePatchHunks(twoHunkDiff)
-  const locator = () => ({ index: 1, header: parsed.hunks[1].header, contentHash: parsed.hunks[1].contentHash })
+  const locator = () => ({ index: 1, range: '@@ -28,7 +28,7 @@', contentHash: parsed.hunks[1].contentHash })
 
-  it('finds the same hunk and reports which part moved', () => {
+  it('locates by index and content hash, and reports which part moved', () => {
     expect(locateHunk(parsed, locator()).ok).toBe(true)
+    // 定位不看块头文本：块头里的函数上下文永远不会成为请求的一部分。
+    expect(locateHunk(parsed, { ...locator(), range: undefined }).ok).toBe(true)
     expect(locateHunk(parsed, { ...locator(), index: 9 }).reason).toContain('已不存在')
-    expect(locateHunk(parsed, { ...locator(), header: '@@ -40,7 +40,7 @@' }).reason).toContain('位置已变化')
+    expect(locateHunk(parsed, { ...locator(), range: '@@ -40,7 +40,7 @@' }).reason).toContain('位置已变化')
     expect(locateHunk(parsed, { ...locator(), contentHash: 'f'.repeat(64) }).reason).toContain('内容已变化')
     expect(locateHunk(parsed, { ...locator(), index: '1' }).reason).toContain('已不存在')
   })
 })
 
 describe('describeHunks', () => {
-  it('hands the renderer locators without leaking the patch body', () => {
+  it('hands the renderer locators without leaking the patch body or the hunk header context', () => {
     const described = describeHunks(twoHunkDiff)
     expect(described.ok).toBe(true)
     expect(described.reason).toBe('')
-    expect(described.hunks.map((hunk) => hunk.header)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@ function main()'])
-    expect(Object.keys(described.hunks[0]).sort()).toEqual(['contentHash', 'header', 'index', 'newLines', 'newStart', 'oldLines', 'oldStart'])
+    // 第二块的块头带函数上下文；下发的只有行号范围，没有上下文。
+    expect(described.hunks.map((hunk) => hunk.range)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@'])
+    expect(Object.keys(described.hunks[0]).sort()).toEqual(['contentHash', 'index', 'newLines', 'newStart', 'oldLines', 'oldStart', 'range'])
+  })
+
+  it('never publishes a hunk header that carries file content', () => {
+    // 自定义 xfuncname（或函数名本身）可能让块头带上文件里的任意一行，包括像凭据的内容。
+    const withContext = twoHunkDiff.replace('@@ -28,7 +28,7 @@ function main()', '@@ -28,7 +28,7 @@ TOKEN https://api.example.test?access_token=SECRET-42')
+    const described = describeHunks(withContext)
+    expect(described.ok).toBe(true)
+    expect(described.hunks[1].range).toBe('@@ -28,7 +28,7 @@')
+    expect(JSON.stringify(described)).not.toContain('SECRET-42')
+    expect(JSON.stringify(described)).not.toContain('TOKEN')
   })
 
   it('carries the reason when the file cannot be staged by hunk', () => {
@@ -274,10 +287,12 @@ describe('describeHunks', () => {
 
 describe('hunk locator validation', () => {
   const snapshot = 'a'.repeat(64)
-  const hunk = { index: 1, header: '@@ -28,7 +28,7 @@', contentHash: 'b'.repeat(64) }
+  const hunk = { index: 1, range: '@@ -28,7 +28,7 @@', contentHash: 'b'.repeat(64) }
 
   it('accepts the locator shape getDiff produces, including display line numbers', () => {
     expect(normalizeHunkLocator({ path: 'src/app.js', snapshot, hunk: { ...hunk, oldStart: 28, oldLines: 7, newStart: 28, newLines: 7 } })).toEqual({ ok: true, path: 'src/app.js', snapshot, hunk })
+    // range 是可选的复核信息。
+    expect(normalizeHunkLocator({ path: 'src/app.js', snapshot, hunk: { index: 1, contentHash: hunk.contentHash } })).toEqual({ ok: true, path: 'src/app.js', snapshot, hunk: { index: 1, contentHash: hunk.contentHash, range: '' } })
   })
 
   it('rejects anything the renderer must not be able to supply', () => {
@@ -287,13 +302,15 @@ describe('hunk locator validation', () => {
     // 额外字段（例如 argv、patch、绝对路径）一律拒绝：契约是窄的。
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk, argv: ['add'] }).reason).toContain('不支持的内容')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, patch: 'x' } }).reason).toContain('不支持的内容')
+    // 块头不是契约的一部分：连它一起回传会被拒绝，避免把函数上下文带进主进程。
+    expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, header: '@@ -28,7 +28,7 @@' } }).reason).toContain('不支持的内容')
     expect(normalizeHunkLocator({ path: 'C:/outside.txt', snapshot, hunk }).reason).toContain('相对路径')
     expect(normalizeHunkLocator({ path: '../escape.txt', snapshot, hunk }).reason).toContain('相对路径')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot: 'not-a-snapshot', hunk }).reason).toContain('Diff 版本标识')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: null }).reason).toContain('缺少 Diff 块标识')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, index: -1 } }).reason).toContain('块编号无效')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, index: 1.5 } }).reason).toContain('块编号无效')
-    expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, header: 'not a hunk' } }).reason).toContain('块位置无效')
+    expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, range: 'not a range' } }).reason).toContain('块位置无效')
     expect(normalizeHunkLocator({ path: 'a.txt', snapshot, hunk: { ...hunk, contentHash: 'zz' } }).reason).toContain('块标识无效')
   })
 

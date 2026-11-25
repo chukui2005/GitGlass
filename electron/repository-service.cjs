@@ -1,6 +1,6 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
-const { hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
+const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -93,9 +93,11 @@ function normalizeStagePaths(paths) {
 // 按块操作只接受「哪一次读取、哪个文件、哪一块」：区域由操作方向决定，
 // 补丁由主进程从当前真实 Diff 重建，渲染层不能提供命令、路径以外的任何内容。
 const HUNK_LOCATOR_KEYS = new Set(['path', 'snapshot', 'hunk'])
-// 行号是随块清单一并下发的展示信息，回传时可以带上；校验只认 index / header / contentHash。
-const HUNK_KEYS = new Set(['index', 'header', 'oldStart', 'oldLines', 'newStart', 'newLines', 'contentHash'])
+// 块标识只认「序号 + 内容摘要」：块头里可能带函数上下文（甚至像凭据的内容），
+// 它不在 IPC 契约里，也不接受渲染层回传。行号范围只用来复核位置。
+const HUNK_KEYS = new Set(['index', 'contentHash', 'range', 'oldStart', 'oldLines', 'newStart', 'newLines'])
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
+const HUNK_RANGE_PATTERN = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@$/
 
 function normalizeHunkLocator(input) {
   const reason = (text) => ({ ok: false, reason: text, path: '', hunk: null })
@@ -109,9 +111,10 @@ function normalizeHunkLocator(input) {
   if (Object.keys(hunk).some((key) => !HUNK_KEYS.has(key))) return hunkReason('Diff 块请求包含不支持的内容，请刷新工作区后重试。')
   // 索引必须有上限：块编号来自主进程自己下发的清单，超出范围说明请求是伪造或过期的。
   if (!Number.isSafeInteger(hunk.index) || hunk.index < 0 || hunk.index > 999) return hunkReason('Diff 块编号无效，请刷新工作区后重试。')
-  if (typeof hunk.header !== 'string' || !hunk.header.startsWith('@@') || hunk.header.length > 512) return hunkReason('Diff 块位置无效，请刷新工作区后重试。')
   if (typeof hunk.contentHash !== 'string' || !SHA256_PATTERN.test(hunk.contentHash)) return hunkReason('Diff 块标识无效，请刷新工作区后重试。')
-  return { ok: true, path: input.path, snapshot: input.snapshot, hunk: { index: hunk.index, header: hunk.header, contentHash: hunk.contentHash } }
+  const range = typeof hunk.range === 'string' ? hunk.range : ''
+  if (range && !HUNK_RANGE_PATTERN.test(range)) return hunkReason('Diff 块位置无效，请刷新工作区后重试。')
+  return { ok: true, path: input.path, snapshot: input.snapshot, hunk: { index: hunk.index, contentHash: hunk.contentHash, range } }
 }
 
 function redactRemoteUrl(value) {
@@ -255,15 +258,17 @@ class RepositoryService {
     const locatedHunk = located.hunk
     const patch = buildHunkPatch(parsed, locatedHunk.index)
     if (!patch) return this.rejectedHunk({ intent, area, reason: '所选 Diff 块已不存在，请刷新后重试。', path: filePath, hunk: normalized.hunk })
-    // 补丁是执行所需的输入，不是命令：固定 argv 只表达「把 stdin 上的补丁应用到索引」，
-    // 目标文件与块位置作为审计字段单独记录，补丁正文不进入账本。
-    const execution = await this.run(hunkApplyArgs(direction), intent, 'user', undefined, undefined, undefined, undefined, { input: patch, target: filePath, hunk: locatedHunk.header })
+    // 补丁是执行所需的输入，不是命令：固定 argv 只表达「把 stdin 上的补丁应用到索引」。
+    // 审计字段只放目标文件与行号范围（由解析结果重新拼装，不含块头里的函数上下文），
+    // 补丁正文与块头原文都不进入账本。
+    const range = hunkRange(locatedHunk)
+    const execution = await this.run(hunkApplyArgs(direction), intent, 'user', undefined, undefined, undefined, undefined, { input: patch, target: filePath, hunk: range })
     return {
       ok: execution.ok,
       direction,
       area,
       path: filePath,
-      hunk: { index: locatedHunk.index, header: locatedHunk.header, oldStart: locatedHunk.oldStart, oldLines: locatedHunk.oldLines, newStart: locatedHunk.newStart, newLines: locatedHunk.newLines },
+      hunk: { index: locatedHunk.index, range, oldStart: locatedHunk.oldStart, oldLines: locatedHunk.oldLines, newStart: locatedHunk.newStart, newLines: locatedHunk.newLines },
       execution,
       record: execution,
       state: await this.state(),
@@ -271,7 +276,7 @@ class RepositoryService {
     }
   }
   rejectedHunk({ intent, area, reason, path, hunk }) {
-    // 本地校验拒绝也如实进入账本：同一条意图 + 目标文件 + 块位置，命令行标注未执行；
+    // 本地校验拒绝也如实进入账本：同一条意图 + 目标文件 + 块范围，命令行标注未执行；
     // argv 与真正执行时会用的那条一致，审计时能看清「本来要跑什么」。
     const record = this.commands.recordRejection({
       argv: hunkApplyArgs(area === 'staged' ? 'unstage' : 'stage'),
@@ -281,7 +286,7 @@ class RepositoryService {
       stderr: reason,
       userMessage: reason,
       target: typeof path === 'string' ? path : '',
-      hunk: typeof hunk?.header === 'string' ? hunk.header : '',
+      hunk: typeof hunk?.range === 'string' ? hunk.range : '',
     })
     return { ok: false, direction: area === 'staged' ? 'unstage' : 'stage', area, path: typeof path === 'string' ? path : '', hunk: hunk || null, execution: null, record, state: null, reason }
   }

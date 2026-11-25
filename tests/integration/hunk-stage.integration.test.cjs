@@ -33,6 +33,9 @@ async function setup() {
 
 const lines = (count, prefix = 'line') => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}`)
 const hunkHeaders = (raw) => raw.split('\n').filter((line) => line.startsWith('@@'))
+// 主进程下发的「块范围」只含行号；Git 输出里同一块的块头还可能带函数上下文。
+const rangeOf = (header) => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(header)?.[0] ?? header
+const rangesOf = (headers) => headers.map(rangeOf)
 // 索引内容的逐字节断言：直接比 blob 哈希，不经过会脱敏的命令输出。
 const gitBlobHash = (content) => {
   const buffer = Buffer.from(content, 'utf8')
@@ -79,20 +82,20 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(read.hunkSupport.ok).toBe(true)
     expect(read.hunkSupport.hunks).toHaveLength(2)
     const [first, second] = read.hunkSupport.hunks
-    expect(hunkHeaders(read.stdout)).toEqual([first.header, second.header])
+    expect(rangesOf(hunkHeaders(read.stdout))).toEqual([first.range, second.range])
 
     const staged = await repository.stageHunk({ path: 'app.txt', snapshot: read.snapshot, hunk: second })
     expect(staged.ok).toBe(true)
-    expect(staged.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'], intent: 'Stage diff hunk', source: 'user', target: 'app.txt', hunk: second.header })
+    expect(staged.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'], intent: 'Stage diff hunk', source: 'user', target: 'app.txt', hunk: second.range })
     // 补丁是输入，不是命令：argv 里既没有文件路径也没有块内容。
     expect(staged.execution.argv.join(' ')).toBe('git apply --cached --whitespace=nowarn --no-ignore-whitespace -')
 
     const cached = await git(run, ['diff', '--cached', '--', 'app.txt'])
-    expect(hunkHeaders(cached)).toEqual([second.header])
+    expect(rangesOf(hunkHeaders(cached))).toEqual([second.range])
     expect(cached).toContain('+line 31 second edit')
     expect(cached).not.toContain('+line 3 first edit')
     // 未选中的块仍在未暂存区。
-    expect(hunkHeaders(await git(run, ['diff', '--', 'app.txt']))).toEqual([first.header])
+    expect(rangesOf(hunkHeaders(await git(run, ['diff', '--', 'app.txt'])))).toEqual([first.range])
     // 工作区文件字节与操作前完全一致。
     expect(Buffer.compare(before, readBytes('app.txt'))).toBe(0)
 
@@ -171,13 +174,13 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(unstage.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-R', '-'], intent: 'Unstage diff hunk', source: 'user', target: 'app.txt' })
 
     // 另一块仍是已暂存内容。
-    expect(hunkHeaders(await git(run, ['diff', '--cached', '--', 'app.txt']))).toEqual([secondStaged.header])
+    expect(rangesOf(hunkHeaders(await git(run, ['diff', '--cached', '--', 'app.txt'])))).toEqual([secondStaged.range])
     // 其他文件的已暂存内容不受影响。
     expect(await git(run, ['diff', '--cached', '--', 'other.txt'])).toContain('+other staged')
     // 被取消的块回到未暂存 Diff，同时原有的未暂存改动还在。
     const unstagedHeaders = hunkHeaders(await git(run, ['diff', '--', 'app.txt']))
     expect(unstagedHeaders).toHaveLength(2)
-    expect(unstagedHeaders[0]).toBe(firstStaged.header)
+    expect(rangeOf(unstagedHeaders[0])).toBe(firstStaged.range)
     expect(unstagedHeaders[1].startsWith('@@ -18,7 +18,7 @@')).toBe(true)
     expect(await git(run, ['diff', '--', 'app.txt'])).toContain('+line 3 staged first')
     expect(Buffer.compare(before, readBytes('app.txt'))).toBe(0)
@@ -218,7 +221,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
 
     expect(attempt.ok).toBe(false)
     expect(attempt.reason).toContain('Diff 已过期')
-    expect(attempt.record).toMatchObject({ rejected: true, target: 'app.txt', hunk: read.hunkSupport.hunks[1].header })
+    expect(attempt.record).toMatchObject({ rejected: true, target: 'app.txt', hunk: read.hunkSupport.hunks[1].range })
     // 索引没有任何改动，工作区保留编辑器写入的内容。
     expect(await git(run, ['diff', '--cached', '--', 'app.txt'])).toBe('')
     expect(readBytes('app.txt').toString()).toBe('completely rewritten\nby an editor\n')
@@ -299,7 +302,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     const binary = await repository.diff({ path: 'binary.dat', area: 'unstaged' })
     expect(binary.hunkSupport.ok).toBe(false)
     expect(binary.hunkSupport.reason).toContain('二进制')
-    const binaryAttempt = await repository.stageHunk({ path: 'binary.dat', snapshot: binary.snapshot, hunk: { index: 0, header: '@@ -1 +1 @@', contentHash: 'a'.repeat(64) } })
+    const binaryAttempt = await repository.stageHunk({ path: 'binary.dat', snapshot: binary.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(binaryAttempt.ok).toBe(false)
     expect(binaryAttempt.reason).toContain('二进制')
     // 整文件流程仍然可用。
@@ -308,21 +311,21 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     // 未跟踪的新文件。
     writeFile('brand-new.txt', 'new\n')
     const added = await repository.diff({ path: 'brand-new.txt', area: 'unstaged' })
-    const addedAttempt = await repository.stageHunk({ path: 'brand-new.txt', snapshot: added.snapshot, hunk: { index: 0, header: '@@ -0,0 +1 @@', contentHash: 'a'.repeat(64) } })
+    const addedAttempt = await repository.stageHunk({ path: 'brand-new.txt', snapshot: added.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(addedAttempt.reason).toContain('新增、删除或重命名')
     expect((await repository.stage('brand-new.txt')).ok).toBe(true)
 
     // 删除。
     fs.rmSync(path.join(cwd, 'gone.txt'))
     const deleted = await repository.diff({ path: 'gone.txt', area: 'unstaged' })
-    const deletedAttempt = await repository.stageHunk({ path: 'gone.txt', snapshot: deleted.snapshot, hunk: { index: 0, header: '@@ -1 +0,0 @@', contentHash: 'a'.repeat(64) } })
+    const deletedAttempt = await repository.stageHunk({ path: 'gone.txt', snapshot: deleted.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(deletedAttempt.reason).toContain('新增、删除或重命名')
     expect((await repository.stage('gone.txt')).ok).toBe(true)
 
     // 重命名（已暂存）：状态不是「修改」，不能按块取消暂存。
     await git(run, ['mv', 'tracked.txt', 'renamed.txt'])
     const renamed = await repository.diff({ path: 'renamed.txt', area: 'staged' })
-    const renamedAttempt = await repository.unstageHunk({ path: 'renamed.txt', snapshot: renamed.snapshot, hunk: { index: 0, header: '@@ -1 +1 @@', contentHash: 'a'.repeat(64) } })
+    const renamedAttempt = await repository.unstageHunk({ path: 'renamed.txt', snapshot: renamed.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(renamedAttempt.reason).toContain('新增、删除或重命名')
     // 其他已暂存内容仍按原来的入口处理。
     expect(await git(run, ['diff', '--cached', '--', 'binary.dat'])).toContain('Binary files')
@@ -332,7 +335,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     const mode = await repository.diff({ path: 'mode.txt', area: 'staged' })
     expect(mode.hunkSupport.ok).toBe(false)
     expect(mode.hunkSupport.reason).toContain('没有可操作的文本块')
-    const modeAttempt = await repository.unstageHunk({ path: 'mode.txt', snapshot: mode.snapshot, hunk: { index: 0, header: '@@ -1 +1 @@', contentHash: 'a'.repeat(64) } })
+    const modeAttempt = await repository.unstageHunk({ path: 'mode.txt', snapshot: mode.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(modeAttempt.ok).toBe(false)
     expect(modeAttempt.record).toMatchObject({ rejected: true, intent: 'Unstage diff hunk', target: 'mode.txt' })
   }, 25_000)
@@ -357,8 +360,8 @@ describe('v0.6.9 hunk staging (real Git)', () => {
       expect(read.hunkSupport.ok, area).toBe(false)
       expect(read.hunkSupport.reason).toContain('未合并')
       const attempt = area === 'unstaged'
-        ? await repository.stageHunk({ path: 'conf.txt', snapshot: read.snapshot, hunk: { index: 0, header: '@@ -1,3 +1,7 @@', contentHash: 'a'.repeat(64) } })
-        : await repository.unstageHunk({ path: 'conf.txt', snapshot: read.snapshot, hunk: { index: 0, header: '@@ -1,3 +1,7 @@', contentHash: 'a'.repeat(64) } })
+        ? await repository.stageHunk({ path: 'conf.txt', snapshot: read.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
+        : await repository.unstageHunk({ path: 'conf.txt', snapshot: read.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
       expect(attempt.ok).toBe(false)
       expect(attempt.reason).toContain('未合并')
       expect(attempt.record).toMatchObject({ rejected: true, target: 'conf.txt' })
@@ -379,7 +382,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(read.outputTruncated).toBe(true)
     expect(read.hunkSupport.ok).toBe(false)
     expect(read.hunkSupport.reason).toContain('截断')
-    const attempt = await repository.stageHunk({ path: 'big.txt', snapshot: read.snapshot, hunk: { index: 0, header: '@@ -1,4 +1,4 @@', contentHash: 'a'.repeat(64) } })
+    const attempt = await repository.stageHunk({ path: 'big.txt', snapshot: read.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(attempt.ok).toBe(false)
     expect(attempt.reason).toContain('截断')
     // 整文件暂存照旧可用。
@@ -454,6 +457,59 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(JSON.stringify(commands.history())).not.toContain('SECRET-TOKEN-42')
   }, 25_000)
 
+  // 自定义 xfuncname 让块头带上文件里的一行：那一行可能恰好是凭据样式的文本。
+  // 块头只属于主进程，IPC 与账本只能看到「序号 + 行号范围 + 内容摘要」。
+  it('keeps a token-bearing hunk header out of IPC and the ledger while the hunk stays stageable', async () => {
+    const { commands, run, repository } = await setup()
+    const token = 'SECRET-XFUNC-42'
+    const tokenLine = `TOKEN endpoint = https://api.example.test/v1?access_token=${token}`
+    const body = []
+    for (let index = 1; index <= 60; index += 1) body.push(index === 5 ? tokenLine : `line ${index}`)
+    writeFile('func.txt', `${body.join('\n')}\n`)
+    writeFile('.gitattributes', 'func.txt diff=withtoken\n')
+    await git(run, ['add', '--', '.gitattributes', 'func.txt'])
+    await git(run, ['commit', '-m', 'chore: seed function file'])
+    // 这一行会被当成「函数名」写进块头。
+    await git(run, ['config', 'diff.withtoken.xfuncname', '^TOKEN .*'])
+
+    const edited = [...body]
+    const target = edited.indexOf('line 30')
+    edited[target] = 'line 30 edited'
+    writeFile('func.txt', `${edited.join('\n')}\n`)
+
+    const read = await repository.diff({ path: 'func.txt', area: 'unstaged' })
+    // 原始 Git 输出确实把 token 行放进了块头（否则这条回归没有意义）。
+    const rawRecord = commands.history().find((record) => record.intent === 'Read file diff')
+    expect(rawRecord).toBeTruthy()
+    expect(read.stdout).toContain('<redacted>')
+    // IPC 响应里没有 token 原值，也没有块头字段；只有范围与内容摘要。
+    expect(JSON.stringify(read)).not.toContain(token)
+    expect(read.hunkSupport.ok).toBe(true)
+    expect(read.hunkSupport.hunks).toHaveLength(1)
+    expect(read.hunkSupport.hunks[0]).toMatchObject({ index: 0, range: '@@ -27,7 +27,7 @@' })
+    expect(read.hunkSupport.hunks[0]).not.toHaveProperty('header')
+    expect(JSON.stringify(read.hunkSupport)).not.toContain('TOKEN endpoint')
+
+    const staged = await repository.stageHunk({ path: 'func.txt', snapshot: read.snapshot, hunk: read.hunkSupport.hunks[0] })
+    expect(staged.ok, staged.reason).toBe(true)
+    // 索引字节与所选改动一致：token 行原样保留。
+    expect(await indexBlobHash(run, 'func.txt')).toBe(gitBlobHash(`${edited.join('\n')}\n`))
+    // 账本：能看出目标文件与块范围，但找不到 token 原值（块头里的那行只保留脱敏文本）。
+    expect(staged.execution).toMatchObject({ target: 'func.txt', hunk: '@@ -27,7 +27,7 @@', intent: 'Stage diff hunk' })
+    const ledger = JSON.stringify(commands.history())
+    expect(ledger).not.toContain(token)
+    expect(ledger).toContain('access_token=<redacted>')
+    expect(ledger).toContain('func.txt')
+    expect(ledger).toContain('@@ -27,7 +27,7 @@')
+    // 反向取消暂存同样不泄漏，并且索引回到 HEAD。
+    const stagedRead = await repository.diff({ path: 'func.txt', area: 'staged' })
+    expect(JSON.stringify(stagedRead)).not.toContain(token)
+    const undone = await repository.unstageHunk({ path: 'func.txt', snapshot: stagedRead.snapshot, hunk: stagedRead.hunkSupport.hunks[0] })
+    expect(undone.ok, undone.reason).toBe(true)
+    expect(await indexBlobHash(run, 'func.txt')).toBe(gitBlobHash(`${body.join('\n')}\n`))
+    expect(JSON.stringify(commands.history())).not.toContain(token)
+  }, 25_000)
+
   it('refuses a diff that mixes a mode change with text hunks in both directions', async () => {
     const { run, repository } = await setup()
     writeFile('tool.sh', 'echo one\necho two\n')
@@ -468,7 +524,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(stagedRead.stdout).toContain('old mode 100644')
     expect(stagedRead.hunkSupport.ok).toBe(false)
     expect(stagedRead.hunkSupport.reason).toContain('权限变化')
-    const unstage = await repository.unstageHunk({ path: 'tool.sh', snapshot: stagedRead.snapshot, hunk: { index: 0, header: '@@ -1,2 +1,2 @@', contentHash: 'a'.repeat(64) } })
+    const unstage = await repository.unstageHunk({ path: 'tool.sh', snapshot: stagedRead.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(unstage.ok).toBe(false)
     expect(unstage.reason).toContain('权限变化')
     expect(unstage.record).toMatchObject({ rejected: true, intent: 'Unstage diff hunk', target: 'tool.sh' })
@@ -484,7 +540,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(read.hunkSupport.ok).toBe(false)
     expect(read.hunkSupport.reason).toContain('权限变化')
     const before = readBytes('tool.sh')
-    const stage = await repository.stageHunk({ path: 'tool.sh', snapshot: read.snapshot, hunk: { index: 0, header: '@@ -1,2 +1,2 @@', contentHash: 'a'.repeat(64) } })
+    const stage = await repository.stageHunk({ path: 'tool.sh', snapshot: read.snapshot, hunk: { index: 0, contentHash: 'a'.repeat(64) } })
     expect(stage.ok).toBe(false)
     expect(stage.reason).toContain('权限变化')
     expect(await git(run, ['ls-files', '-s', '--', 'tool.sh'])).toMatch(/^100755 /)

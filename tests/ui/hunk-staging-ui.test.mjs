@@ -3,7 +3,7 @@
 // PR 2（v0.6.9 工作台 UI）的真渲染断言：块头按钮、按块操作的 IPC 载荷、
 // 失败/过期反馈、快速切换文件时的读取顺序，以及提交前暂存总览。
 // 真实 Git 语义由 tests/integration/hunk-stage.integration.test.cjs 覆盖。
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import { fileFixture, repositoryState } from '../support/gitglass-fixtures.mjs'
@@ -34,8 +34,8 @@ const TWO_HUNK_DIFF = [
 ].join('\n')
 
 const APP_HUNKS = [
-  { index: 0, header: '@@ -1,6 +1,6 @@', oldStart: 1, oldLines: 6, newStart: 1, newLines: 6, contentHash: 'a'.repeat(64) },
-  { index: 1, header: '@@ -28,7 +28,7 @@', oldStart: 28, oldLines: 7, newStart: 28, newLines: 7, contentHash: 'b'.repeat(64) },
+  { index: 0, range: '@@ -1,6 +1,6 @@', oldStart: 1, oldLines: 6, newStart: 1, newLines: 6, contentHash: 'a'.repeat(64) },
+  { index: 1, range: '@@ -28,7 +28,7 @@', oldStart: 28, oldLines: 7, newStart: 28, newLines: 7, contentHash: 'b'.repeat(64) },
 ]
 
 const UNSTAGED = fileFixture({ path: 'app.js' })
@@ -70,7 +70,7 @@ async function renderWorkspace(overrides = {}) {
   return { ...view, stub, user }
 }
 
-const hunkButton = (header) => screen.getByRole('button', { name: `暂存此块：${header}` })
+const hunkButton = (range) => screen.getByRole('button', { name: `暂存此块：${range}` })
 
 describe('hunk staging in the workbench (rendered)', () => {
   it('offers one action per hunk, named after its block, and only for stageable diffs', async () => {
@@ -84,6 +84,28 @@ describe('hunk staging in the workbench (rendered)', () => {
     const hunkRows = container.querySelectorAll('.diff-line.hunk')
     expect(hunkRows).toHaveLength(2)
     expect(within(hunkRows[1]).getByRole('button', { name: '暂存此块：@@ -28,7 +28,7 @@' })).toBeInTheDocument()
+  })
+
+  it('keeps a hunk whose header carries file content stageable without exposing it', async () => {
+    // 自定义 xfuncname 能让块头带上文件里的一行（甚至像凭据的内容）。显示文本已脱敏，
+    // 块清单只带范围与内容摘要，载荷里找不到原值也找不到占位文本。
+    const redactedDiff = TWO_HUNK_DIFF.replace('@@ -28,7 +28,7 @@', '@@ -28,7 +28,7 @@ endpoint = https://api.example.test/v1?access_token=<redacted>')
+    const applyDiffHunk = vi.fn(async () => ({ ok: true, execution: { ok: true, operationId: 'op-h' }, state: { files: [] }, reason: '' }))
+    const { container, user } = await renderWorkspace({
+      getDiff: async () => diffResult({ stdout: redactedDiff }),
+      applyDiffHunk,
+    })
+
+    const hunkRows = container.querySelectorAll('.diff-line.hunk')
+    expect(hunkRows).toHaveLength(2)
+    expect(hunkRows[1].textContent).toContain('access_token=<redacted>')
+
+    await user.click(hunkButton('@@ -28,7 +28,7 @@'))
+    await waitFor(() => expect(applyDiffHunk).toHaveBeenCalledTimes(1))
+    const payload = JSON.stringify(applyDiffHunk.mock.calls[0])
+    expect(payload).not.toContain('SECRET')
+    expect(payload).not.toContain('<redacted>')
+    expect(applyDiffHunk).toHaveBeenCalledWith('stage', { path: 'app.js', snapshot: 'c'.repeat(64), hunk: APP_HUNKS[1] })
   })
 
   it('sends only the locator getDiff published when a hunk is staged', async () => {
@@ -270,5 +292,165 @@ describe('staged overview in the commit panel (rendered)', () => {
       '当前文件',
       '创建提交',
     ])
+  })
+})
+
+describe('staged overview follows the real index (rendered)', () => {
+  const STAGED_GUIDE = {
+    ok: true,
+    files: [{ path: 'docs/guide.md', status: 'modified', insertions: 4, deletions: 1, binary: false, statUnavailable: false }],
+    totals: { files: 1, insertions: 4, deletions: 1, binary: 0, unavailable: 0 },
+    reason: '',
+  }
+  const EMPTY_OVERVIEW = { ok: true, files: [], totals: { files: 0, insertions: 0, deletions: 0, binary: 0, unavailable: 0 }, reason: '' }
+  const EMPTY_TOTALS = EMPTY_OVERVIEW.totals
+
+  async function openOverview(overrides) {
+    const view = renderApp({
+      getLedger: async () => [],
+      getRecentRepositories: async () => [],
+      getDiff: async (file) => diffResult({ area: file.area, path: file.path }),
+      ...overrides,
+    })
+    const user = userEvent.setup()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '查看暂存总览' })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: '查看暂存总览' }))
+    return { ...view, user }
+  }
+
+  it('re-reads the overview after unstage-all so the list matches the empty index', async () => {
+    let hasStaged = true
+    const getState = async () =>
+      repositoryState({
+        files: hasStaged
+          ? [fileFixture({ path: 'docs/guide.md', area: 'staged' })]
+          : [fileFixture({ path: 'docs/guide.md' })],
+      })
+    const getStagedOverview = vi.fn(async () => (hasStaged ? STAGED_GUIDE : EMPTY_OVERVIEW))
+    const operate = vi.fn(async () => {
+      hasStaged = false
+      return { execution: { ok: true }, state: await getState() }
+    })
+
+    const { user } = await openOverview({ getState, getStagedOverview, operate })
+    await waitFor(() => expect(within(document.getElementById('staged-overview-list')).getByText('+4 −1')).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '取消全部暂存' }))
+
+    await waitFor(() => expect(operate).toHaveBeenCalledWith('unstageAll', {}))
+    // 展开着的总览跟着真实暂存区更新：旧文件不再显示。
+    await waitFor(() => expect(getStagedOverview).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      const list = document.getElementById('staged-overview-list')
+      expect(within(list).queryByText('docs/guide.md')).toBeNull()
+      expect(within(list).getByText('还没有已暂存的文件。')).toBeInTheDocument()
+    })
+  })
+
+  it('empties the overview after a commit succeeds', async () => {
+    let hasStaged = true
+    const getState = async () =>
+      repositoryState({ files: hasStaged ? [fileFixture({ path: 'docs/guide.md', area: 'staged' })] : [] })
+    const getStagedOverview = vi.fn(async () => (hasStaged ? STAGED_GUIDE : EMPTY_OVERVIEW))
+    const operate = vi.fn(async (action) => {
+      if (action === 'commit') hasStaged = false
+      return { execution: { ok: true }, state: await getState(), commit: action === 'commit' ? 'abc1234' : null }
+    })
+
+    const { user } = await openOverview({ getState, getStagedOverview, operate })
+    await waitFor(() => expect(within(document.getElementById('staged-overview-list')).getByText('+4 −1')).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText('提交说明'), 'feat: commit the staged change')
+    await user.click(screen.getByRole('button', { name: '提交 1 个文件' }))
+
+    await waitFor(() => expect(operate).toHaveBeenCalledWith('commit', { message: 'feat: commit the staged change' }))
+    await waitFor(() => {
+      const list = document.getElementById('staged-overview-list')
+      expect(within(list).queryByText('docs/guide.md')).toBeNull()
+      expect(within(list).getByText('还没有已暂存的文件。')).toBeInTheDocument()
+    })
+  })
+
+  it('refreshes an expanded overview after an external Git change', async () => {
+    let onChange = null
+    let files = [fileFixture({ path: 'docs/guide.md', area: 'staged' })]
+    const getState = async () => repositoryState({ files })
+    let overview = STAGED_GUIDE
+    const getStagedOverview = vi.fn(async () => overview)
+
+    await openOverview({
+      getState,
+      getStagedOverview,
+      onRepositoryChanged: (callback) => { onChange = callback; return () => {} },
+    })
+    await waitFor(() => expect(within(document.getElementById('staged-overview-list')).getByText('docs/guide.md')).toBeInTheDocument())
+    expect(getStagedOverview).toHaveBeenCalledTimes(1)
+
+    // 终端里又暂存了一个文件：watcher 报告 refs 变化（穿过滤抖窗）。
+    files = [
+      fileFixture({ path: 'docs/guide.md', area: 'staged' }),
+      fileFixture({ path: 'src/added.js', area: 'staged', status: 'added' }),
+    ]
+    overview = {
+      ok: true,
+      files: [
+        { path: 'docs/guide.md', status: 'modified', insertions: 4, deletions: 1, binary: false, statUnavailable: false },
+        { path: 'src/added.js', status: 'added', insertions: 9, deletions: 0, binary: false, statUnavailable: false },
+      ],
+      totals: { files: 2, insertions: 13, deletions: 1, binary: 0, unavailable: 0 },
+      reason: '',
+    }
+    await act(async () => { onChange({ reason: 'refs' }) })
+
+    await waitFor(() => expect(getStagedOverview).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      const list = document.getElementById('staged-overview-list')
+      expect(within(list).getByText('src/added.js')).toBeInTheDocument()
+      expect(within(list).getByText('文件 2')).toBeInTheDocument()
+    })
+  })
+
+  it('drops a staged-overview response that belongs to the previous repository', async () => {
+    let onChange = null
+    let currentPath = 'C:/work/demo-repo'
+    let files = [fileFixture({ path: 'src/only-in-old.js', area: 'staged' })]
+    const getState = async () => repositoryState({ path: currentPath, files })
+    let resolveFirst = null
+    let calls = 0
+    const getStagedOverview = vi.fn(async () => {
+      calls += 1
+      if (calls === 1) {
+        return new Promise((resolve) => { resolveFirst = resolve })
+      }
+      return { ...EMPTY_OVERVIEW, totals: EMPTY_TOTALS }
+    })
+
+    await openOverview({
+      getState,
+      getStagedOverview,
+      onRepositoryChanged: (callback) => { onChange = callback; return () => {} },
+    })
+    // 第一次读取还挂着：切到另一个仓库（刷新拿到新路径），新仓库的索引是空的。
+    expect(getStagedOverview).toHaveBeenCalledTimes(1)
+    currentPath = 'C:/work/other-repo'
+    files = []
+    await act(async () => { onChange({ reason: 'refs' }) })
+    await waitFor(() => expect(getStagedOverview).toHaveBeenCalledTimes(2))
+
+    // 旧仓库的响应这时才回来：不能显示在新仓库里。
+    await act(async () => {
+      resolveFirst({
+        ok: true,
+        files: [{ path: 'src/only-in-old.js', status: 'modified', insertions: 1, deletions: 0, binary: false, statUnavailable: false }],
+        totals: { files: 1, insertions: 1, deletions: 0, binary: 0, unavailable: 0 },
+        reason: '',
+      })
+    })
+
+    const list = document.getElementById('staged-overview-list')
+    expect(within(list).queryByText('src/only-in-old.js')).toBeNull()
+    expect(within(list).getByText('还没有已暂存的文件。')).toBeInTheDocument()
   })
 })

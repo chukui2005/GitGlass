@@ -85,19 +85,20 @@ export function DiffLine({ row, action }) {
   );
 }
 
-// 块头行的操作入口。可访问名称里带原始 @@ 块头，读屏能区分「哪一块」；
-// 未就绪时不渲染按钮，避免给出点不动的入口。
-function hunkActionFor(row, hunkActions) {
-  if (!hunkActions || !row.rawHeader) return null;
-  const locator = hunkActions.hunks.find((hunk) => hunk.header === row.rawHeader);
+// 块头行的操作入口。块清单只带「序号 + 行号范围 + 内容摘要」，所以按钮按块的
+// 出现顺序（稳定的块位置）关联，可访问名称用范围文本，既唯一又不含块头里的函数上下文。
+function hunkActionFor(hunkActions, hunkIndex) {
+  if (!hunkActions) return null;
+  const locator = hunkActions.hunks[hunkIndex];
   if (!locator) return null;
   const label = hunkActions.direction === "unstage" ? "取消暂存此块" : "暂存此块";
+  const range = locator.range || `第 ${hunkIndex + 1} 块`;
   return (
     <button
       type="button"
       className="diff-hunk-action"
-      aria-label={`${label}：${locator.header}`}
-      title={hunkActions.enabled ? `${label}（${locator.header}）` : hunkActions.reason || ""}
+      aria-label={`${label}：${range}`}
+      title={hunkActions.enabled ? `${label}（${range}）` : hunkActions.reason || ""}
       disabled={!hunkActions.enabled}
       onClick={() => hunkActions.onApply(hunkActions.direction, locator)}
     >
@@ -112,15 +113,14 @@ export function DiffContent({ diff, titlePath, hunkActions = null }) {
     () => presentDiff(diff, titlePath ? { dropFileHeaderFor: titlePath } : undefined),
     [diff, titlePath],
   );
+  // 渲染层只按块的顺序编号：脱敏只改文本、不增删行，块位置因此是稳定的。
+  let hunkIndex = 0;
   return (
     <div className="diff-content">
-      {rows.map((row, index) => (
-        <DiffLine
-          key={index}
-          row={row}
-          action={row.type === "hunk" ? hunkActionFor(row, hunkActions) : null}
-        />
-      ))}
+      {rows.map((row, index) => {
+        const action = row.type === "hunk" ? hunkActionFor(hunkActions, hunkIndex++) : null;
+        return <DiffLine key={index} row={row} action={action} />;
+      })}
     </div>
   );
 }
@@ -774,6 +774,7 @@ export function CommitInspector({
   preview,
   platform,
   overview,
+  currentRepo,
   onLoadOverview,
   onOpenStagedFile,
 }) {
@@ -839,6 +840,7 @@ export function CommitInspector({
       {/* 暂存总览留在「创建提交」区里：右栏仍然只有「当前文件」与「创建提交」两段。 */}
       <StagedOverview
         overview={overview}
+        currentRepo={currentRepo}
         stagedCount={staged.length}
         loading={loading}
         onLoad={onLoadOverview}
@@ -849,12 +851,14 @@ export function CommitInspector({
 }
 // 提交前总览：清单与统计都来自实际暂存区（文件来自 git status，增删行数来自
 // git diff --cached --numstat）。点一行就把中间栏切到那个文件的「已暂存差异」。
-// 它嵌在「创建提交」区里，右栏保持两段结构。
-export function StagedOverview({ overview, stagedCount, loading, onLoad, onOpenFile }) {
+// 它嵌在「创建提交」区里，右栏保持两段结构。只有与当前仓库一致的数据才展示：
+// 切库后旧仓库的清单不能冒充新仓库的暂存区。
+export function StagedOverview({ overview, currentRepo, stagedCount, loading, onLoad, onOpenFile }) {
   const [open, setOpen] = useState(false);
-  const status = overview?.status || "idle";
-  const files = Array.isArray(overview?.files) ? overview.files : [];
-  const totals = overview?.totals || null;
+  const belongsToCurrentRepo = !overview?.repoPath || overview.repoPath === currentRepo;
+  const status = belongsToCurrentRepo ? overview?.status || "idle" : "loading";
+  const files = belongsToCurrentRepo && Array.isArray(overview?.files) ? overview.files : [];
+  const totals = belongsToCurrentRepo ? overview?.totals || null : null;
   const showTotals = open && totals && status === "ready" && (totals.files > 0);
   return (
     <div className="staged-overview">

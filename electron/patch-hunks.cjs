@@ -181,24 +181,40 @@ function buildHunkPatch(parsed, index) {
 }
 
 /**
- * 校验请求里的块标识仍然指向本次读取的同一块。索引、块头与内容摘要三者都要一致，
- * 否则说明界面拿的是旧 Diff。
+ * 块的「范围」文本：只由行号组成，永远不含块头里的函数上下文。
+ * 行数为 1 时 Git 省略 `,1`，这里保持一致，审计记录才能和 Git 输出对得上。
+ * @param {{ oldStart: number, oldLines: number, newStart: number, newLines: number }} hunk
+ * @returns {string}
+ */
+function hunkRange(hunk) {
+  const span = (start, lines) => (lines === 1 ? `${start}` : `${start},${lines}`)
+  return `@@ -${span(hunk.oldStart, hunk.oldLines)} +${span(hunk.newStart, hunk.newLines)} @@`
+}
+
+/**
+ * 校验请求里的块标识仍然指向本次读取的同一块。定位只用「块序号 + 内容摘要」，
+ * 不看块头文本：块头里可能带文件的函数上下文（甚至看起来像凭据的内容），
+ * 它绝对不能成为 IPC 或账本的一部分。
  * @param {ParsedPatch} parsed
- * @param {{ index: number, header: string, contentHash: string }} locator
+ * @param {{ index: number, contentHash: string, range?: string }} locator
  * @returns {{ ok: boolean, reason: string, hunk: ParsedHunk | null }}
  */
 function locateHunk(parsed, locator) {
   const hunk = Number.isSafeInteger(locator?.index) ? parsed?.hunks?.[locator.index] : null
   if (!hunk) return { ok: false, reason: '所选 Diff 块已不存在，请刷新后重试。', hunk: null }
-  if (hunk.header !== locator.header) return { ok: false, reason: '所选 Diff 块的位置已变化，请刷新后重试。', hunk: null }
+  // 界面回传的行号范围只用于复核位置；真正判重的是内容摘要。
+  if (typeof locator.range === 'string' && locator.range && locator.range !== hunkRange(hunk)) {
+    return { ok: false, reason: '所选 Diff 块的位置已变化，请刷新后重试。', hunk: null }
+  }
   if (hunk.contentHash !== locator.contentHash) return { ok: false, reason: '所选 Diff 块的内容已变化，请刷新后重试。', hunk: null }
   return { ok: true, reason: '', hunk }
 }
 
 /**
  * 展示 Diff 时随记录一起下发的块清单。不可按块操作时给出中文原因，界面据此隐藏入口。
+ * 每条只包含序号、行号范围与内容摘要：块头里的函数上下文留在主进程，绝不随 IPC 出去。
  * @param {string} raw
- * @returns {{ ok: boolean, reason: string, hunks: Array<{ index: number, header: string, oldStart: number, oldLines: number, newStart: number, newLines: number, contentHash: string }> }}
+ * @returns {{ ok: boolean, reason: string, hunks: Array<{ index: number, range: string, oldStart: number, oldLines: number, newStart: number, newLines: number, contentHash: string }> }}
  */
 function describeHunks(raw) {
   const parsed = parsePatchHunks(raw)
@@ -208,7 +224,7 @@ function describeHunks(raw) {
     reason: '',
     hunks: parsed.hunks.map((hunk) => ({
       index: hunk.index,
-      header: hunk.header,
+      range: hunkRange(hunk),
       oldStart: hunk.oldStart,
       oldLines: hunk.oldLines,
       newStart: hunk.newStart,
@@ -226,6 +242,7 @@ module.exports = {
   REASON_MODE_CHANGE,
   hunkDiffArgs,
   hunkApplyArgs,
+  hunkRange,
   diffSnapshot,
   parsePatchHunks,
   buildHunkPatch,
