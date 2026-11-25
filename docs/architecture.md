@@ -15,7 +15,7 @@ id, operationId, intent, source, argv, displayCommand, cwd,
 startedAt, endedAt, stdout, stderr, exitCode, ok
 ```
 
-`source` is `user` for an explicit interaction and `background` for refreshes, status, diff, branch, and history reads. Records are retained in reverse chronological order in the in-memory ledger and exposed through the narrow `repo:ledger` IPC endpoint.
+`source` is `user` for an explicit interaction and `background` for refreshes, status, diff, branch, and history reads. Records are retained in reverse chronological order in the in-memory ledger and exposed through the narrow `repo:ledger` IPC endpoint. A patch operation adds two optional audit fields (`target`, `hunk`) because its argv cannot name either; see [Diff hunk boundary](#diff-hunk-boundary-069).
 
 Every command runs with `GIT_TERMINAL_PROMPT=0` and empty `GIT_ASKPASS` / `SSH_ASKPASS`, so a missing credential fails instead of blocking the main process. Local commands are killed after 60 seconds and remote operations (`fetch`, `push`, `pull`) after 300 seconds; a killed attempt records `timedOut: true` and a Chinese explanation. Captured output is capped at 64 KiB per attempt (diff-style reads may raise it to 1 MiB) and sets `outputTruncated`, so the 300-entry in-memory ledger and the `repo:ledger` response stay bounded.
 
@@ -32,6 +32,17 @@ Credentials never reach the ledger: `redactCredentials()` strips `scheme://user:
 `RepositoryService` owns Git argument construction and data parsing. It uses `--` for file paths and validates repository paths, commit messages, and branch names before building argv. It does not stash, force-switch, reset a worktree, or discard data. If the worktree is dirty, branch switching is blocked with an explanation.
 
 The Electron main process exposes a small context-isolated preload surface. The renderer cannot access Node or child processes. It can request state, diffs, ledger records, commits, branches, remote overview data, and an explicitly confirmed branch or remote action.
+
+## Diff hunk boundary (0.6.9)
+
+Staging and unstaging a single hunk are the first operations whose *input* is a patch instead of a path. The renderer never builds or supplies that patch, and it never names a file outside a diff the main process itself produced:
+
+- `electron/patch-hunks.cjs` owns the fixed patch parameters (`--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ -U3 --inter-hunk-context=0`) and the snapshot, parse and single-hunk patch helpers. `git diff -- path` (index → worktree) and `git diff --cached -- path` (HEAD → index) are the only two reads; the display read and the operation read use the same helper, so local colour, external-diff, textconv, prefix, context or inter-hunk configuration cannot change what "one hunk" means.
+- `RepositoryService.diff()` returns the CommandRecord plus `{ area, path, snapshot, hunkSupport }`. `snapshot` is a SHA-256 over repository path, area, file path and the exact diff bytes; `hunkSupport.hunks` carries `{ index, header, oldStart, oldLines, newStart, newLines, contentHash }` per hunk, and `hunkSupport.reason` explains in Chinese why hunk operations are unavailable (binary, added/deleted/renamed, mode-only, unmerged, truncated, or output whose bytes were lost to UTF-8 decoding).
+- `applyDiffHunk(direction, locator)` with `locator = { path, snapshot, hunk: { index, header, contentHash } }` is the only entry. The main process re-reads the same area, recomputes the snapshot, rejects a different diff, re-checks the target file against the current working-tree state (tracked, `modified`, in the matching area), rebuilds a patch containing only the selected hunk, and runs `git apply --cached -` (stage) or `git apply --cached -R -` (unstage). Git owns the index lock and the applicability decision.
+- There is deliberately no separate prepare/execute round trip: the argv is fixed, the patch is derived from Git's own output after the check, and nothing the user could review is built renderer-side. Every attempt still produces a user CommandRecord, and a local rejection produces `recordRejection` ("本地校验拒绝，未执行 Git 命令") with the same intent, so the ledger distinguishes `Stage diff hunk` from `Unstage diff hunk` and from whole-file staging.
+- The patch text travels over stdin as command input, so it is neither an argv entry nor part of any record. Because `git apply --cached -` does not name the file, the record carries the two audit facts separately: `target` (repository-relative path) and `hunk` (the `@@` header). Both fields appear only on patch operations.
+- Boundaries kept on purpose: new, deleted, renamed, binary, permission-only, unmerged and truncated diffs are rejected for hunk operations and keep the existing whole-file flow; so is any diff Node could not decode byte-exactly, because re-encoding it would corrupt the index entry.
 
 ## Remote synchronization safety boundary
 
@@ -54,7 +65,8 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | Method | Response shape | Ledger effect |
 | --- | --- | --- |
 | `getState()` | `{ ok, path, branch, files, records }` | two `background` records: branch + status |
-| `getDiff(file)` | `CommandRecord` | one `background` diff record |
+| `getDiff(file)` | `CommandRecord` plus `{ area, path, snapshot, hunkSupport: { ok, reason, hunks } }` | one `background` diff record |
+| `applyDiffHunk(direction, locator)` | `{ ok, direction, area, path, hunk, execution, record, state, reason }` | one background re-read, then a `user` record (or a local rejection) carrying `target` and `hunk` |
 | `operate(action, payload)` | `{ execution: CommandRecord, state, commit }` | user operation plus background refresh records |
 | `getLedger()` | `CommandRecord[]` newest first | read-only |
 | `getBranches()` | `{ record, branches }` | one `background` branch record |
