@@ -71,6 +71,7 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `getState()` | `{ ok, path, branch, files, records }` | two `background` records: branch + status |
 | `getDiff(file)` | `CommandRecord` plus `{ area, path, snapshot, hunkSupport: { ok, reason, hunks } }` | one `background` diff record |
 | `applyDiffHunk(direction, locator)` | `{ ok, direction, area, path, hunk, execution, record, state, reason }` | one background re-read, then a `user` record (or a local rejection) carrying `target` and `hunk` |
+| `getStagedOverview()` | `{ ok, files: [{ path, oldPath, status, insertions, deletions, binary, statUnavailable }], totals, reason }` | one `background` `diff --cached --numstat -z` record when the index has staged files |
 | `operate(action, payload)` | `{ execution: CommandRecord, state, commit }` | user operation plus background refresh records |
 | `getLedger()` | `CommandRecord[]` newest first | read-only |
 | `getBranches()` | `{ record, branches }` | one `background` branch record |
@@ -101,6 +102,14 @@ Renderer intent -> preload IPC -> RepositoryService -> GitCommandService
 
 Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout and cwd stay in their CommandRecord for copy and inspection.
 
+## Hunk actions and staged overview in the workbench (0.6.9)
+
+The renderer keeps three pieces of state per diff: the raw text, a loading/empty message, and the locator bundle `getDiff` returned (`{ area, path, snapshot, hunkSupport }`). A hunk action is only rendered when that bundle still matches the selected file *and* its area, so a stale diff can never drive an operation against new staged content. Each diff read carries a sequence number; a result that arrives after the user selected another file is dropped instead of overwriting the view.
+
+- `presentDiff()` keeps the raw `@@ … @@` line on each hunk row (`rawHeader`), so the workbench maps a rendered block to a locator by header instead of by position or by the localised text.
+- The hunk button sits in the hunk row and is named after its block (`暂存此块：@@ -28,7 +28,7 @@` / `取消暂存此块：…`). It sends only `{ path, snapshot, hunk }` through `applyDiffHunk(direction, locator)`; `src/user-notices.js#hunkOperationNotice()` turns a rejection or a real Git failure into one Chinese notice, and the workspace then refreshes from Git's actual result while keeping the same file selected when it still exists.
+- The staged overview is entry `查看暂存总览` inside the existing 创建提交 section — the right panel keeps exactly two sections (当前文件, 创建提交). Expanding it reads `getStagedOverview()`, which lists the real staged files with per-file `+N −M`, `二进制` or `统计不可用`; clicking a row loads that file's staged diff in the centre pane.
+
 ## Renderer structure (0.6.5)
 
 `src/main.jsx` is the App shell only: workspace state (files, diff, commit message, ledger, notices), the refresh pipeline, repository switching, and the JSX that places the three panes. The domain logic lives in hooks, and the presentational pieces live in one components module:
@@ -112,7 +121,7 @@ Failures are data, not exceptions hidden from the UI: stderr, exitCode, stdout a
 | `src/use-safety-plans.js` | discard / delete-merged-branch / reflog rescue / branch switch plans and the recovery panel |
 | `src/use-remote-overview.js` | remote overview and the fetch/push/pull plans (the plan needs the overview, so both live here) |
 | `src/use-panel-resize.js` | panel widths: persistence, clamping, drag, keyboard |
-| `src/workbench-ui.jsx` | every presentational component (diff rows, file sections, batch toolbar, ledger, plan/inspector panels, history rows/filters, command palette, command ledger) |
+| `src/workbench-ui.jsx` | every presentational component (diff rows and their hunk actions, file sections, batch toolbar, staged overview, ledger, plan/inspector panels, history rows/filters, command palette, command ledger) |
 
 Hooks receive the IPC bridge as a `gitglass` argument instead of reading `window`, so they can be unit tested with a plain object. The JSX, class names, `aria-*` attributes and Chinese copy are unchanged from the single-file version — the rendered tests in `tests/ui/*.test.mjs` assert them.
 

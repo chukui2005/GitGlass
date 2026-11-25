@@ -164,6 +164,7 @@ npm run test:coverage   # vitest run --coverage：四个百分数都要过阈值
 - 渲染层拆分（0.6.5-beta.1）：`src/main.jsx` 3027 → 1441 行，拆出 `src/use-history-review.js`、`src/use-safety-plans.js`、`src/use-remote-overview.js`、`src/use-panel-resize.js` 与 `src/workbench-ui.jsx`（26 个展示组件）；`src/` 从 12 个文件变成 17 个，第 2 节的"~15 个文件时再按 feature 拆分"因此提上日程。
 - 工作台改版（0.7）：新增 `src/file-labels.js`（路径展示名 + `area + path` 寻址的纯函数），验收证据见 [ui-redesign-acceptance.md](ui-redesign-acceptance.md)。真窗口验收新增 `tests/support/workbench-acceptance.cjs` + `tests/support/workbench-preload.cjs`（真实临时 Git 仓库作桥）与 `tests/ui/workbench-window.test.cjs`；截图写到 `.screenshots/ui-redesign/`（已忽略），交付用的三张另存 `docs/assets/ui-redesign/`。
 - 按块暂存 PR 1（0.6.9）：新增 `electron/patch-hunks.cjs`（固定补丁参数、快照与块解析、单块补丁构造）；`RepositoryService.diff()` 改为用同一组固定参数读取并下发 `snapshot` / `hunkSupport`；按块操作只经 `hunk:apply` 一个通道，补丁由主进程构造后从 stdin 交给 `git apply`，账本用 `target` + `hunk` 补上 argv 无法表达的审计事实。边界与契约见 [architecture.md](architecture.md#diff-hunk-boundary-069)，真实 Git 验收在 `tests/integration/hunk-stage.integration.test.cjs`。
+- 按块暂存 PR 2（0.6.9）：工作台在块头放「暂存此块 / 取消暂存此块」按钮（可访问名称带 `@@` 块头），`DiffContent` 通过 `rawHeader` 映射定位标识；`src/main.jsx` 用序号守卫丢弃迟到的 Diff 读取。提交前总览嵌在「创建提交」区内（右栏仍两段），由新通道 `repo:staged-overview` + `parseNumstat` 提供真实统计。渲染断言在 `tests/ui/hunk-staging-ui.test.mjs`，统计读取的真实 Git 验收在 `tests/integration/staged-overview.integration.test.cjs`。
 
 ### 待办（需要单独 PR）
 
