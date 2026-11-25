@@ -378,6 +378,23 @@ export const LedgerEntry = memo(function LedgerEntry({ record }) {
               <dt>操作</dt>
               <dd>{intentLabel(record)}</dd>
             </div>
+            {/* 按块操作的 argv 里没有文件名：目标文件与块范围随记录单独下发，只在这里展示。 */}
+            {record.target && (
+              <div>
+                <dt>目标文件</dt>
+                <dd>
+                  <code>{record.target}</code>
+                </dd>
+              </div>
+            )}
+            {record.hunk && (
+              <div>
+                <dt>块范围</dt>
+                <dd>
+                  <code>{record.hunk}</code>
+                </dd>
+              </div>
+            )}
             <div>
               <dt>类型</dt>
               <dd>{recordTypeLabel(record.source)}</dd>
@@ -775,7 +792,8 @@ export function CommitInspector({
   platform,
   overview,
   currentRepo,
-  onLoadOverview,
+  overviewOpen,
+  onToggleOverview,
   onOpenStagedFile,
 }) {
   const ready = staged.length > 0 && Boolean(message.trim());
@@ -843,7 +861,8 @@ export function CommitInspector({
         currentRepo={currentRepo}
         stagedCount={staged.length}
         loading={loading}
-        onLoad={onLoadOverview}
+        open={overviewOpen}
+        onToggle={onToggleOverview}
         onOpenFile={onOpenStagedFile}
       />
     </section>
@@ -851,10 +870,9 @@ export function CommitInspector({
 }
 // 提交前总览：清单与统计都来自实际暂存区（文件来自 git status，增删行数来自
 // git diff --cached --numstat）。点一行就把中间栏切到那个文件的「已暂存差异」。
-// 它嵌在「创建提交」区里，右栏保持两段结构。只有与当前仓库一致的数据才展示：
-// 切库后旧仓库的清单不能冒充新仓库的暂存区。
-export function StagedOverview({ overview, currentRepo, stagedCount, loading, onLoad, onOpenFile }) {
-  const [open, setOpen] = useState(false);
+// 它嵌在「创建提交」区里，右栏保持两段结构。展开状态由 App 持有：收起之后不再
+// 跟随刷新，重新展开时才按需读取。只有与当前仓库一致的数据才展示。
+export function StagedOverview({ overview, currentRepo, stagedCount, loading, open, onToggle, onOpenFile }) {
   const belongsToCurrentRepo = !overview?.repoPath || overview.repoPath === currentRepo;
   const status = belongsToCurrentRepo ? overview?.status || "idle" : "loading";
   const files = belongsToCurrentRepo && Array.isArray(overview?.files) ? overview.files : [];
@@ -868,11 +886,7 @@ export function StagedOverview({ overview, currentRepo, stagedCount, loading, on
         aria-expanded={open}
         aria-controls="staged-overview-list"
         disabled={loading}
-        onClick={() => {
-          const next = !open;
-          setOpen(next);
-          if (next) onLoad();
-        }}
+        onClick={() => onToggle(!open)}
       >
         {open ? "收起暂存总览" : "查看暂存总览"}
       </button>

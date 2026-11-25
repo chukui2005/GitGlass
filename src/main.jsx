@@ -128,6 +128,8 @@ export function App() {
   // 提交前总览：{ status, repoPath, files, totals, reason }。repoPath 记录这份数据
   // 属于哪个仓库，切库后旧数据不会再被当成当前暂存区。
   const [stagedOverview, setStagedOverview] = useState({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
+  // 总览是否展开由 App 持有：只有这样「收起后不再跟随刷新、重新展开才按需读取」才成立。
+  const [stagedOverviewOpen, setStagedOverviewOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -508,6 +510,7 @@ export function App() {
     setDiffMessage("");
     setDiffHunks(null);
     setStagedOverview({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
+    setStagedOverviewOpen(false);
     setStageSelection(new Set());
     setBranches([]);
     resetHistoryState();
@@ -545,8 +548,8 @@ export function App() {
     applyOverview(remoteResult);
     await refreshLedger(cycle);
     // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
-    // 跟着实际暂存区更新；折叠（idle）时按需读取，不多发后台命令。
-    if (stagedOverview.status !== "idle") {
+    // 跟着实际暂存区更新；收起（或从未展开）时保持按需读取，不多发后台命令。
+    if (stagedOverviewOpen) {
       await refreshStagedOverview({ silent: true, repoPath: next.path || repo });
     }
     return resolved;
@@ -690,6 +693,9 @@ export function App() {
     resetHistoryReview();
     // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
     setStageSelection(new Set());
+    // 新仓库从收起态开始：总览按需读取，不会带着旧仓库的数据自动展开。
+    setStagedOverviewOpen(false);
+    setStagedOverview({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
     const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
     if (refreshed.ok) setNotice({ type: "success", text: `已打开仓库：${result.path}` });
     await loadRecentRepositories();
@@ -964,7 +970,12 @@ export function App() {
         platform={shortcutPlatform}
         overview={stagedOverview}
         currentRepo={repo}
-        onLoadOverview={refreshStagedOverview}
+        overviewOpen={stagedOverviewOpen}
+        onToggleOverview={(next) => {
+          setStagedOverviewOpen(next);
+          // 展开时按需读取一次；收起后不再跟随刷新。
+          if (next) refreshStagedOverview({ repoPath: repo });
+        }}
         onOpenStagedFile={(file) => loadDiff({ path: file.path, area: "staged" })}
       />
     </>

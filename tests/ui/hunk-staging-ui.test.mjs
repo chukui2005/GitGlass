@@ -412,6 +412,33 @@ describe('staged overview follows the real index (rendered)', () => {
     })
   })
 
+  it('stops reading once collapsed and reads again when reopened', async () => {
+    let onChange = null
+    const getState = vi.fn(async () => repositoryState({ files: [fileFixture({ path: 'docs/guide.md', area: 'staged' })] }))
+    const getStagedOverview = vi.fn(async () => STAGED_GUIDE)
+
+    const { user } = await openOverview({
+      getState,
+      getStagedOverview,
+      onRepositoryChanged: (callback) => { onChange = callback; return () => {} },
+    })
+    await waitFor(() => expect(getStagedOverview).toHaveBeenCalledTimes(1))
+    const refreshesWhileOpen = getState.mock.calls.length
+
+    // 收起：跟随刷新立刻停止（总览不再读，但工作区刷新照常发生）。
+    await user.click(screen.getByRole('button', { name: '收起暂存总览' }))
+    await act(async () => { onChange({ reason: 'refs' }) })
+    await waitFor(() => expect(getState.mock.calls.length).toBeGreaterThan(refreshesWhileOpen))
+    expect(getStagedOverview).toHaveBeenCalledTimes(1)
+
+    // 重新展开：按需再读一次，并把当前暂存区显示出来。
+    await user.click(screen.getByRole('button', { name: '查看暂存总览' }))
+    await waitFor(() => expect(getStagedOverview).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(within(document.getElementById('staged-overview-list')).getByText('docs/guide.md')).toBeInTheDocument()
+    })
+  })
+
   it('drops a staged-overview response that belongs to the previous repository', async () => {
     let onChange = null
     let currentPath = 'C:/work/demo-repo'
