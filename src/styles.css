@@ -76,6 +76,15 @@ button:disabled{opacity:.5}
 .history-failure{display:grid;min-height:220px;place-content:center;justify-items:center;gap:8px;padding:0 24px;color:var(--red);text-align:center;font-size:12px}.history-failure strong{font-size:13px}.history-failure p{margin:0;color:var(--red-ink);line-height:1.6}.diff-binary{padding:3px 0 3px 38px;background:var(--orange-soft);color:var(--orange-ink);font:12px/1.7 var(--mono)}
 .compare-direction{margin:8px 0 2px;color:var(--muted);font-size:12px;line-height:1.6}.compare-direction code{font:11px var(--mono);white-space:nowrap}.compare-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 6px}.compare-actions .secondary-action{min-height:28px;padding:0 8px}.selection-subject{display:block;overflow:hidden;margin-top:2px;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.selection-line code{white-space:nowrap}
 .commit-stats{display:flex;flex-wrap:wrap;gap:6px}.stat-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:4px;background:var(--hover);color:var(--muted);font-size:11px;font-weight:600}.stat-chip.added{color:var(--green)}.stat-chip.deleted{color:var(--red)}
+/* 提交前总览：清单与统计都来自实际暂存区，点一行切到该文件的已暂存 Diff。 */
+.staged-overview-toggle{justify-self:start}
+.staged-overview-body{display:grid;gap:8px;margin-top:8px}
+.staged-overview-totals{display:flex;flex-wrap:wrap;gap:6px}
+.staged-overview-files{display:grid;gap:2px;margin:0;padding:0;list-style:none;max-height:220px;overflow:auto}
+.staged-overview-file{display:flex;align-items:center;gap:8px;width:100%;padding:4px 8px;border-radius:var(--radius-sm);background:transparent;color:var(--text);text-align:left}
+.staged-overview-file:not(:disabled):hover{background:var(--hover)}
+.staged-overview-file code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:var(--font-secondary)}
+.staged-overview-stat{flex:none;color:var(--muted);font-size:var(--font-aux);font-variant-numeric:tabular-nums}
 .commit-message-block{display:grid;gap:6px}.commit-message{margin:0;padding:9px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--code);color:var(--text);font:12px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
 .parent-list{display:flex;flex-wrap:wrap;gap:4px}.parent-link{display:inline-flex;padding:2px;border-radius:4px;background:transparent;color:var(--blue)}.parent-link:hover{background:var(--hover)}.parent-link code{font:11px var(--mono)}.initial-commit{color:var(--muted)}
 .commit-time{display:grid;gap:1px}.full-time{color:var(--muted);font-size:11px}
@@ -204,6 +213,10 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .diff-line.file{display:flex;align-items:baseline;gap:8px;margin-top:6px;padding:4px 28px 4px 12px;border-bottom:1px solid var(--line);background:var(--code);color:var(--text);font-size:var(--font-secondary);font-weight:600;line-height:1.5}
 .diff-line.file code{overflow-wrap:anywhere}
 .diff-line.hunk{background:var(--code)}
+/* 块头的按块暂存入口：跟在行号槽与标记后面，不改动现有行网格的四列结构。 */
+.diff-hunk-action{align-self:center;margin-right:10px;padding:1px 8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:var(--font-secondary);line-height:1.6}
+.diff-hunk-action:not(:disabled):hover{border-color:var(--line-strong);background:var(--hover)}
+.diff-hunk-action:disabled{color:var(--faint)}
 
 /* 账本：两行结构保留，单行约 40 → 32px；展开后的技术详情与输出区行距收紧。 */
 .ledger-list{gap:2px;padding:0 14px 10px}

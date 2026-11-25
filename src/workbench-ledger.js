@@ -5,6 +5,7 @@ const intentText = {
   'Read created commit hash': '读取新提交哈希',
   'Read current branch': '读取当前分支',
   'Read working tree status': '读取工作区状态',
+  'Read staged overview': '读取暂存总览',
   'Read file diff': '读取文件差异',
   'Read hunk patch': '读取块补丁',
   'Read diff': '读取文件差异',

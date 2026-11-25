@@ -87,4 +87,37 @@ function parseReflog(raw) {
   }).filter((entry) => /^[0-9a-f]{40}$/i.test(entry.hash))
 }
 
-module.exports = { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog }
+// `git diff --cached --numstat -z`：记录之间用 NUL 分隔，正文是「新增\t删除\t路径」。
+// 二进制文件的两列都是 `-`；重命名把路径留空，紧跟 old 与 new 两条记录。
+// 统计是可选信息，解析不出来的记录直接跳过，绝不编造 0。
+function parseNumstat(raw) {
+  const records = String(raw || '').split('\0')
+  const entries = []
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (!record) continue
+    const firstTab = record.indexOf('\t')
+    const secondTab = record.indexOf('\t', firstTab + 1)
+    if (firstTab <= 0 || secondTab < 0) continue
+    const added = record.slice(0, firstTab)
+    const deleted = record.slice(firstTab + 1, secondTab)
+    let filePath = record.slice(secondTab + 1)
+    if (!filePath) {
+      const oldPath = records[index + 1] || ''
+      const newPath = records[index + 2] || ''
+      index += 2
+      filePath = newPath || oldPath
+    }
+    if (!filePath) continue
+    const binary = added === '-' || deleted === '-'
+    entries.push({
+      path: filePath,
+      insertions: binary || !/^\d+$/.test(added) ? null : Number(added),
+      deletions: binary || !/^\d+$/.test(deleted) ? null : Number(deleted),
+      binary,
+    })
+  }
+  return entries
+}
+
+module.exports = { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat }

@@ -5,7 +5,7 @@
 // 2) 与账本无关的 App 重渲染不会重渲染整列记录——React.memo + 记录对象身份复用。
 //
 // 这两条都是「几百条记录」级别的成本问题，用真渲染 + 读取计数来守，不靠计时。
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import { fileFixture, ledgerRecordFixture, repositoryState } from '../support/gitglass-fixtures.mjs'
@@ -93,6 +93,62 @@ describe('命令账本的渲染策略', () => {
     await waitFor(() => {
       expect(list.querySelectorAll('.ledger-details')).toHaveLength(0)
     })
+  })
+
+  it('names the target file and hunk range of a block operation in its details', async () => {
+    const user = userEvent.setup()
+    // 按块操作的 argv 里没有文件名（补丁从 stdin 进），所以账本必须单独给出
+    // 目标文件与块范围，审计时才看得出「动了哪个文件的哪一块」。
+    const hunkRecord = ledgerRecordFixture({
+      id: 'hunk-stage-1',
+      intent: 'Stage diff hunk',
+      displayCommand: 'git apply --cached --whitespace=nowarn --no-ignore-whitespace -',
+      argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'],
+      target: 'src/app.js',
+      hunk: '@@ -28,7 +28,7 @@',
+    })
+    const plainRecord = ledgerRecordFixture({ id: 'plain-1', intent: 'Read working tree status', source: 'background' })
+    const { container } = renderApp(workspaceStub({ getLedger: async () => [hunkRecord, plainRecord] }))
+    await waitFor(() => {
+      expect(container.querySelector('.top-actions')).toBeInTheDocument()
+    })
+
+    await openLedger(user, container)
+    // 用户操作默认展开：详情里直接能看到目标文件与块范围。
+    const entry = await waitFor(() => {
+      const found = container.querySelector('.ledger-entry')
+      expect(found).toBeInTheDocument()
+      return found
+    })
+    const facts = entry.querySelector('.ledger-facts')
+    expect(within(facts).getByText('目标文件')).toBeInTheDocument()
+    expect(within(facts).getByText('src/app.js')).toBeInTheDocument()
+    expect(within(facts).getByText('块范围')).toBeInTheDocument()
+    expect(within(facts).getByText('@@ -28,7 +28,7 @@')).toBeInTheDocument()
+    // 原始命令仍在技术详情里，不因为新增行而改变既有结构。
+    expect(entry.querySelector('details.tech-details')).toBeInTheDocument()
+
+    // 普通记录没有这两个字段时，不渲染空的「目标文件 / 块范围」。
+    await user.click(screen.getByRole('button', { name: /系统读取/ }))
+    const backgroundGroup = await waitFor(() => {
+      const found = container.querySelector('.ledger-refresh-group')
+      expect(found).toBeInTheDocument()
+      return found
+    })
+    await user.click(backgroundGroup.querySelector('.ledger-refresh-summary'))
+    const backgroundEntry = await waitFor(() => {
+      const found = container.querySelector('.ledger-refresh-group .ledger-entry')
+      expect(found).toBeInTheDocument()
+      return found
+    })
+    await user.click(backgroundEntry.querySelector('.ledger-summary'))
+    const backgroundFacts = await waitFor(() => {
+      const found = backgroundEntry.querySelector('.ledger-facts')
+      expect(found).toBeInTheDocument()
+      return found
+    })
+    expect(within(backgroundFacts).queryByText('目标文件')).toBeNull()
+    expect(within(backgroundFacts).queryByText('块范围')).toBeNull()
   })
 
   it('does not re-render the whole ledger when unrelated App state changes', async () => {

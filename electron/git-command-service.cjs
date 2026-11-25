@@ -39,12 +39,14 @@ function redactCredentials(value) {
  * `git apply` reads its patch from stdin, so argv alone cannot say which
  * repository file or which hunk an operation touched. Those two audit facts are
  * added only when a caller supplies them; the patch text itself never enters the
- * ledger.
+ * ledger. `hunk` carries a `@@ -a,b +c,d @@` range rather than the raw hunk
+ * header, but it still goes through the same redaction as stdout/stderr: no
+ * annotation may become a way around the credential filter.
  */
 function auditTarget({ target = '', hunk = '' } = {}) {
   const fields = {}
   if (typeof target === 'string' && target) fields.target = target
-  if (typeof hunk === 'string' && hunk) fields.hunk = hunk
+  if (typeof hunk === 'string' && hunk) fields.hunk = redactCredentials(hunk)
   return fields
 }
 

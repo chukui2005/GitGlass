@@ -36,6 +36,21 @@ export function executionNotice(successText, execution) {
     : { type: "error", text: GENERIC_GIT_FAILURE };
 }
 
+// 按块操作的反馈：本地校验拒绝与真实 Git 失败都只说结果和下一步，
+// 原始 argv / stderr 仍只出现在命令账本里。
+export function hunkOperationNotice(direction, result) {
+  const success = direction === "unstage" ? "已取消暂存此块。" : "已暂存此块。";
+  if (result?.execution?.ok) return { type: "success", text: success };
+  const reason = String(result?.reason || "").trim();
+  if (result?.record?.rejected) {
+    return {
+      type: "error",
+      text: `本地校验拒绝，未执行 Git 命令。${reason || "请刷新工作区后重试。"}`,
+    };
+  }
+  return { type: "error", text: reason || GENERIC_GIT_FAILURE };
+}
+
 const OPERATION_LABELS = {
   merge: "合并",
   rebase: "变基",

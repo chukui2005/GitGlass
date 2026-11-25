@@ -32,7 +32,7 @@ import { basename, fileLabel, stageSelectionKey } from "./file-labels.js";
 import { displayGitCommand } from "./command-display.js";
 import { BrandMark } from "./brand-mark.jsx";
 import { RecentRepositoriesMenu } from "./recent-repositories-menu.jsx";
-import { GENERIC_GIT_FAILURE, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
+import { GENERIC_GIT_FAILURE, hunkOperationNotice, operationFinishedNotice, operationInProgressNotice, operationNotice } from "./user-notices.js";
 import { AUTO_DISMISS_MS, createNoticeTimer, syncNoticeTimer } from "./notice-lifecycle.js";
 import { canStartRepositoryContextOperation, resolveRepositoryRefresh } from "./repository-refresh.js";
 import { shouldRefreshOnChange } from "./auto-refresh.js";
@@ -122,6 +122,14 @@ export function App() {
   const [stageSelection, setStageSelection] = useState(() => new Set());
   const [diff, setDiff] = useState("");
   const [diffMessage, setDiffMessage] = useState("");
+  // 当前 Diff 的块信息：{ area, path, snapshot, support }。只有它与 selected 指向
+  // 同一个文件时才允许按块操作，避免用旧 Diff 的标识去改新的暂存内容。
+  const [diffHunks, setDiffHunks] = useState(null);
+  // 提交前总览：{ status, repoPath, files, totals, reason }。repoPath 记录这份数据
+  // 属于哪个仓库，切库后旧数据不会再被当成当前暂存区。
+  const [stagedOverview, setStagedOverview] = useState({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
+  // 总览是否展开由 App 持有：只有这样「收起后不再跟随刷新、重新展开才按需读取」才成立。
+  const [stagedOverviewOpen, setStagedOverviewOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -141,6 +149,15 @@ export function App() {
   // 刷新，并在打开仓库时提示一次（0.6.5 验收反馈 #21）。挂载时先乐观置 true。
   const [watcherActive, setWatcherActive] = useState(true);
   const refreshSequence = useRef(0);
+  // Diff 读取的序号：快速切换文件时，先发出的读取不能覆盖后选中的文件。
+  const diffSequence = useRef(0);
+  // 暂存总览的读取序号与「当前仓库」快照：迟到的响应（更晚的请求已发出、
+  // 或仓库已经切换）必须丢弃，否则旧仓库的文件会显示在新仓库里。
+  const stagedOverviewSequence = useRef(0);
+  const currentRepository = useRef(null);
+  useEffect(() => {
+    currentRepository.current = repo;
+  }, [repo]);
   // 自动刷新（窗口重新聚焦 / 主进程看到 .git 变化）用的最新闭包与订阅状态：
   // 订阅只建立一次，所以 refreshAll 必须通过 ref 取用，不能闭包住首帧的仓库。
   const refreshAllRef = useRef(null);
@@ -449,12 +466,22 @@ export function App() {
   }
   async function applyState(next, preference, cycle) {
     setState(next);
-    const nextFile = preference || next.files[0] || null;
+    // 偏好只在「这个文件仍然存在」时生效：暂存完最后一块后同一区域可能已经消失，
+    // 此时回落到同一路径的另一区域，再回落到第一个文件。
+    const preferred = preference
+      ? next.files.find(
+          (file) => file.path === preference.path && file.area === preference.area,
+        ) ||
+        next.files.find((file) => file.path === preference.path) ||
+        null
+      : null;
+    const nextFile = preferred || next.files[0] || null;
     setSelected(nextFile);
     if (nextFile) await loadDiff(nextFile, cycle);
     else {
       setDiff("");
       setDiffMessage("");
+      setDiffHunks(null);
     }
   }
   async function refreshLedger(cycle) {
@@ -481,6 +508,9 @@ export function App() {
     setSelected(null);
     setDiff("");
     setDiffMessage("");
+    setDiffHunks(null);
+    setStagedOverview({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
+    setStagedOverviewOpen(false);
     setStageSelection(new Set());
     setBranches([]);
     resetHistoryState();
@@ -517,6 +547,11 @@ export function App() {
     applyQueryResultIfCurrent(queryToken, commitResult);
     applyOverview(remoteResult);
     await refreshLedger(cycle);
+    // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
+    // 跟着实际暂存区更新；收起（或从未展开）时保持按需读取，不多发后台命令。
+    if (stagedOverviewOpen) {
+      await refreshStagedOverview({ silent: true, repoPath: next.path || repo });
+    }
     return resolved;
   }
   // 所有刷新（启动、手动、切换仓库、操作成功后、自动刷新）都经这里：结束时
@@ -538,10 +573,17 @@ export function App() {
     }
   }
   async function loadDiff(file, cycle) {
+    const sequence = ++diffSequence.current;
     setSelected(file);
     setDiff("");
+    setDiffHunks(null);
     setDiffMessage("正在读取文件差异…");
     const result = await window.gitglass.getDiff(file);
+    // 读取期间用户又选了别的文件：这份结果属于旧文件，绝不能覆盖当前视图。
+    if (sequence !== diffSequence.current) {
+      await refreshLedger(cycle);
+      return;
+    }
     if (!result.ok) {
       setDiffMessage("无法读取此文件的差异。请刷新工作区后重试；诊断信息已保留在命令账本。");
     } else if (binaryDiffPattern.test(result.stdout || "")) {
@@ -555,7 +597,62 @@ export function App() {
       setDiff(result.stdout);
       setDiffMessage("");
     }
+    // 只有读取成功、且主进程下发了块清单时才允许按块操作。
+    setDiffHunks(
+      result.ok && result.snapshot
+        ? {
+            area: result.area || file.area,
+            path: result.path || file.path,
+            snapshot: result.snapshot,
+            support: result.hunkSupport || { ok: false, reason: "", hunks: [] },
+          }
+        : null,
+    );
     await refreshLedger(cycle);
+  }
+  // 按块暂存 / 取消暂存：只把下发的标识回传主进程，补丁由主进程重建。
+  // 成功后保留当前文件（优先同一区域），并让界面按 Git 的真实结果刷新。
+  async function applyHunkSelection(direction, hunk) {
+    if (!repo || loading || !diffHunks?.support?.ok || !hunk) return;
+    setLoading(true);
+    try {
+      const result = await window.gitglass.applyDiffHunk(direction, {
+        path: diffHunks.path,
+        snapshot: diffHunks.snapshot,
+        hunk,
+      });
+      setFocusedOperationId(
+        result?.execution?.operationId || result?.record?.operationId || null,
+      );
+      setNotice(hunkOperationNotice(direction, result));
+      // refreshAll 会按真实状态刷新工作区，并顺带刷新展开着的暂存总览。
+      await refreshAll(selected);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function refreshStagedOverview(options = {}) {
+    const requestedRepo = options.repoPath ?? repo;
+    const sequence = ++stagedOverviewSequence.current;
+    setStagedOverview((current) => ({ ...current, status: "loading" }));
+    try {
+      const overview = await window.gitglass.getStagedOverview();
+      // 迟到的响应：已经有更新的读取发起，或仓库在读取期间被切换。
+      if (sequence !== stagedOverviewSequence.current) return;
+      if (currentRepository.current !== requestedRepo) return;
+      setStagedOverview({
+        status: overview?.ok === false ? "error" : "ready",
+        repoPath: requestedRepo,
+        files: Array.isArray(overview?.files) ? overview.files : [],
+        totals: overview?.totals || null,
+        reason: overview?.reason || "",
+      });
+    } catch {
+      if (sequence !== stagedOverviewSequence.current) return;
+      if (currentRepository.current !== requestedRepo) return;
+      setStagedOverview({ status: "error", repoPath: requestedRepo, files: [], totals: null, reason: "无法读取暂存总览。" });
+      if (!options.silent) setNotice({ type: "error", text: GENERIC_GIT_FAILURE });
+    }
   }
   async function loadRecentRepositories() {
     try {
@@ -596,6 +693,9 @@ export function App() {
     resetHistoryReview();
     // 切换仓库后清空批量暂存选择，避免旧仓库的勾选混入新仓库。
     setStageSelection(new Set());
+    // 新仓库从收起态开始：总览按需读取，不会带着旧仓库的数据自动展开。
+    setStagedOverviewOpen(false);
+    setStagedOverview({ status: "idle", repoPath: null, files: [], totals: null, reason: "" });
     const refreshed = await refreshAll(undefined, { notifyOnFailure: true });
     if (refreshed.ok) setNotice({ type: "success", text: `已打开仓库：${result.path}` });
     await loadRecentRepositories();
@@ -788,6 +888,18 @@ export function App() {
     closeCommandPalette();
     command.run();
   }
+  // 块操作的入口数据：只有「当前 Diff 的块信息」与「当前选中文件」指向同一区域
+  // 同一个文件时才下发按钮，旧 Diff 的标识永远不会被用来改新的暂存内容。
+  const hunkActions =
+    diffHunks && selected && diffHunks.path === selected.path && diffHunks.area === selected.area
+      ? {
+          direction: diffHunks.area === "staged" ? "unstage" : "stage",
+          hunks: diffHunks.support?.hunks || [],
+          enabled: Boolean(diffHunks.support?.ok) && !loading,
+          reason: diffHunks.support?.reason || "",
+          onApply: applyHunkSelection,
+        }
+      : null;
   const inspector = safetyPlan ? (
     <SafetyContext
       plan={safetyPlan}
@@ -856,6 +968,15 @@ export function App() {
         onOperate={operate}
         preview={commitPreview}
         platform={shortcutPlatform}
+        overview={stagedOverview}
+        currentRepo={repo}
+        overviewOpen={stagedOverviewOpen}
+        onToggleOverview={(next) => {
+          setStagedOverviewOpen(next);
+          // 展开时按需读取一次；收起后不再跟随刷新。
+          if (next) refreshStagedOverview({ repoPath: repo });
+        }}
+        onOpenStagedFile={(file) => loadDiff({ path: file.path, area: "staged" })}
       />
     </>
   );
@@ -1463,7 +1584,7 @@ export function App() {
                   <p>{diffMessage}</p>
                 </div>
               ) : (
-                <DiffContent diff={diff} titlePath={selected.path} />
+                <DiffContent diff={diff} titlePath={selected.path} hunkActions={hunkActions} />
               )}
             </div>
           ) : (

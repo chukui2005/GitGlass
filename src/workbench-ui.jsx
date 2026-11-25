@@ -64,7 +64,7 @@ export function PanelSplitter({ side, value, limits, onPointerDown, onDoubleClic
   );
 }
 
-export function DiffLine({ row }) {
+export function DiffLine({ row, action }) {
   // 文件头只有一行面包屑（路径，或重命名时的「旧 → 新」），不再有行号槽与标签列。
   if (row.type === "file") {
     return (
@@ -78,21 +78,49 @@ export function DiffLine({ row }) {
       <span className="diff-line-number" aria-label={row.oldLine ? `原文件第 ${row.oldLine} 行` : undefined}>{row.oldLine || ""}</span>
       <span className="diff-line-number" aria-label={row.newLine ? `新文件第 ${row.newLine} 行` : undefined}>{row.newLine || ""}</span>
       <span className="diff-marker" aria-hidden="true">{row.marker || ""}</span>
+      {action}
       {row.label && <span className="diff-label">{row.label}</span>}
       <code>{row.content}</code>
     </div>
   );
 }
 
-export function DiffContent({ diff, titlePath }) {
+// 块头行的操作入口。块清单只带「序号 + 行号范围 + 内容摘要」，所以按钮按块的
+// 出现顺序（稳定的块位置）关联，可访问名称用范围文本，既唯一又不含块头里的函数上下文。
+function hunkActionFor(hunkActions, hunkIndex) {
+  if (!hunkActions) return null;
+  const locator = hunkActions.hunks[hunkIndex];
+  if (!locator) return null;
+  const label = hunkActions.direction === "unstage" ? "取消暂存此块" : "暂存此块";
+  const range = locator.range || `第 ${hunkIndex + 1} 块`;
+  return (
+    <button
+      type="button"
+      className="diff-hunk-action"
+      aria-label={`${label}：${range}`}
+      title={hunkActions.enabled ? `${label}（${range}）` : hunkActions.reason || ""}
+      disabled={!hunkActions.enabled}
+      onClick={() => hunkActions.onApply(hunkActions.direction, locator)}
+    >
+      {label}
+    </button>
+  );
+}
+
+export function DiffContent({ diff, titlePath, hunkActions = null }) {
   // 工作区单文件视图：标题里已经有路径，patch 的同一行文件头不再重复（重命名与多文件仍保留）。
   const rows = useMemo(
     () => presentDiff(diff, titlePath ? { dropFileHeaderFor: titlePath } : undefined),
     [diff, titlePath],
   );
+  // 渲染层只按块的顺序编号：脱敏只改文本、不增删行，块位置因此是稳定的。
+  let hunkIndex = 0;
   return (
     <div className="diff-content">
-      {rows.map((row, index) => <DiffLine key={index} row={row} />)}
+      {rows.map((row, index) => {
+        const action = row.type === "hunk" ? hunkActionFor(hunkActions, hunkIndex++) : null;
+        return <DiffLine key={index} row={row} action={action} />;
+      })}
     </div>
   );
 }
@@ -350,6 +378,23 @@ export const LedgerEntry = memo(function LedgerEntry({ record }) {
               <dt>操作</dt>
               <dd>{intentLabel(record)}</dd>
             </div>
+            {/* 按块操作的 argv 里没有文件名：目标文件与块范围随记录单独下发，只在这里展示。 */}
+            {record.target && (
+              <div>
+                <dt>目标文件</dt>
+                <dd>
+                  <code>{record.target}</code>
+                </dd>
+              </div>
+            )}
+            {record.hunk && (
+              <div>
+                <dt>块范围</dt>
+                <dd>
+                  <code>{record.hunk}</code>
+                </dd>
+              </div>
+            )}
             <div>
               <dt>类型</dt>
               <dd>{recordTypeLabel(record.source)}</dd>
@@ -745,6 +790,11 @@ export function CommitInspector({
   onOperate,
   preview,
   platform,
+  overview,
+  currentRepo,
+  overviewOpen,
+  onToggleOverview,
+  onOpenStagedFile,
 }) {
   const ready = staged.length > 0 && Boolean(message.trim());
   const commitHint = !staged.length
@@ -805,7 +855,95 @@ export function CommitInspector({
           <code>{preview}</code>
         </div>
       )}
+      {/* 暂存总览留在「创建提交」区里：右栏仍然只有「当前文件」与「创建提交」两段。 */}
+      <StagedOverview
+        overview={overview}
+        currentRepo={currentRepo}
+        stagedCount={staged.length}
+        loading={loading}
+        open={overviewOpen}
+        onToggle={onToggleOverview}
+        onOpenFile={onOpenStagedFile}
+      />
     </section>
+  );
+}
+// 提交前总览：清单与统计都来自实际暂存区（文件来自 git status，增删行数来自
+// git diff --cached --numstat）。点一行就把中间栏切到那个文件的「已暂存差异」。
+// 它嵌在「创建提交」区里，右栏保持两段结构。展开状态由 App 持有：收起之后不再
+// 跟随刷新，重新展开时才按需读取。只有与当前仓库一致的数据才展示。
+export function StagedOverview({ overview, currentRepo, stagedCount, loading, open, onToggle, onOpenFile }) {
+  const belongsToCurrentRepo = !overview?.repoPath || overview.repoPath === currentRepo;
+  const status = belongsToCurrentRepo ? overview?.status || "idle" : "loading";
+  const files = belongsToCurrentRepo && Array.isArray(overview?.files) ? overview.files : [];
+  const totals = belongsToCurrentRepo ? overview?.totals || null : null;
+  const showTotals = open && totals && status === "ready" && (totals.files > 0);
+  return (
+    <div className="staged-overview">
+      <button
+        type="button"
+        className="secondary-action staged-overview-toggle"
+        aria-expanded={open}
+        aria-controls="staged-overview-list"
+        disabled={loading}
+        onClick={() => onToggle(!open)}
+      >
+        {open ? "收起暂存总览" : "查看暂存总览"}
+      </button>
+      {open && (
+        <div id="staged-overview-list" className="staged-overview-body">
+          {showTotals && (
+            <p className="staged-overview-totals" aria-label="暂存统计">
+              <span className="stat-chip">文件 {totals.files}</span>
+              <span className="stat-chip added">新增 +{totals.insertions}</span>
+              <span className="stat-chip deleted">删除 −{totals.deletions}</span>
+              {totals.binary > 0 && <span className="stat-chip">{totals.binary} 个二进制</span>}
+              {totals.unavailable > 0 && (
+                <span className="stat-chip">{totals.unavailable} 个统计不可用</span>
+              )}
+            </p>
+          )}
+          {status === "loading" ? (
+            <p className="inspector-copy">正在读取暂存总览…</p>
+          ) : files.length ? (
+            <ul className="staged-overview-files">
+              {files.map((file) => (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    className="staged-overview-file"
+                    aria-label={`查看已暂存文件 ${file.path} 的差异`}
+                    title={file.path}
+                    disabled={loading}
+                    onClick={() => onOpenFile(file)}
+                  >
+                    <span className={`status ${file.status}`} aria-hidden="true">
+                      {iconFor[file.status]}
+                    </span>
+                    <code>{file.path}</code>
+                    <span className="staged-overview-stat">
+                      {file.binary
+                        ? "二进制"
+                        : file.statUnavailable
+                          ? "统计不可用"
+                          : `+${file.insertions ?? 0} −${file.deletions ?? 0}`}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="inspector-copy">
+              {status === "error"
+                ? overview.reason || "无法读取暂存总览。"
+                : stagedCount
+                  ? "暂存总览将在展开后按实际暂存区读取。"
+                  : "还没有已暂存的文件。"}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 export function RecoveryContext({ entries, reason, loading, onRescue, onClose }) {

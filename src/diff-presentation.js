@@ -106,11 +106,14 @@ function parseDiffGitPaths(line) {
 
 /**
  * One rendered diff row. The file row only carries the breadcrumb in `content`;
- * hunk and line rows add the review locators (`oldLine`/`newLine`/`marker`),
- * metadata rows add a Chinese `label`.
+ * hunk rows keep the raw `@@ … @@` header in `rawHeader` so the workbench can map
+ * a rendered block back to the locator the main process published; hunk and line
+ * rows add the review locators (`oldLine`/`newLine`/`marker`), metadata rows add
+ * a Chinese `label`.
  * @typedef {object} DiffRow
  * @property {string} type
  * @property {string} [label]
+ * @property {string} [rawHeader]
  * @property {number | null} [oldLine]
  * @property {number | null} [newLine]
  * @property {string} [marker]
@@ -199,7 +202,7 @@ export function presentDiff(diff, options = {}) {
       newLine = Number(newStart)
       const oldEnd = oldLine + Number(oldCount) - 1
       const newEnd = newLine + Number(newCount) - 1
-      rows.push({ type: 'hunk', oldLine: null, newLine: null, marker: '…', content: `旧版第 ${oldLine}${oldEnd === oldLine ? '' : `–${oldEnd}`} 行 → 新版第 ${newLine}${newEnd === newLine ? '' : `–${newEnd}`} 行${heading ? ` · ${heading}` : ''}` })
+      rows.push({ type: 'hunk', rawHeader: line, oldLine: null, newLine: null, marker: '…', content: `旧版第 ${oldLine}${oldEnd === oldLine ? '' : `–${oldEnd}`} 行 → 新版第 ${newLine}${newEnd === newLine ? '' : `–${newEnd}`} 行${heading ? ` · ${heading}` : ''}` })
       inHunk = true
       continue
     }
