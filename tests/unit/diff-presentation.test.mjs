@@ -20,13 +20,15 @@ describe('review-oriented diff presentation', () => {
     ))
     expect(rows).toMatchObject([
       { type: 'file', content: 'GUIDE.md' },
-      { type: 'hunk', content: '旧版第 11–13 行 → 新版第 11–14 行 · This repository' },
+      { type: 'hunk', content: '旧版第 11–13 行 → 新版第 11–14 行 · This repository', rawHeader: '@@ -11,3 +11,4 @@ This repository' },
       { type: 'context', oldLine: 11, newLine: 11, content: 'unchanged' },
       { type: 'minus', oldLine: 12, newLine: null, content: 'before' },
       { type: 'plus', oldLine: null, newLine: 12, content: 'after' },
       { type: 'plus', oldLine: null, newLine: 13, content: 'added' },
       { type: 'context', oldLine: 13, newLine: 14, content: 'tail' },
     ])
+    // 块行保留原始 @@ 块头：按块操作要用它映射主进程下发的定位标识。
+    expect(rows.filter((row) => row.type === 'hunk').map((row) => row.rawHeader)).toEqual(['@@ -11,3 +11,4 @@ This repository'])
     // 文件头只占一行：没有「文件 / 原文件 / 新文件」三行，也没有 index 行。
     expect(rows.filter((row) => row.type === 'file')).toHaveLength(1)
     expect(rows.some((row) => row.content?.startsWith('index '))).toBe(false)

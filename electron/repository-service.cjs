@@ -1,4 +1,4 @@
-const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('./git-parsers.cjs')
+const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 const { hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
@@ -286,6 +286,47 @@ class RepositoryService {
     return { ok: false, direction: area === 'staged' ? 'unstage' : 'stage', area, path: typeof path === 'string' ? path : '', hunk: hunk || null, execution: null, record, state: null, reason }
   }
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
+  // 提交前总览的数据来源是**实际暂存区**：文件清单来自 git status，增删行数来自
+  // git diff --cached --numstat。统计是可选的：二进制、截断或解析不出的记录明确标记
+  // 「不可用」，界面据此显示对应状态，而不是编一个 0。
+  async stagedOverview() {
+    const state = await this.state()
+    const totals = { files: 0, insertions: 0, deletions: 0, binary: 0, unavailable: 0 }
+    if (!state.ok) return { ok: false, files: [], totals, record: null, reason: state.error, state }
+    const stagedFiles = state.files.filter((file) => file.area === 'staged')
+    if (!stagedFiles.length) return { ok: true, files: [], totals, record: null, reason: '', state }
+    const record = await this.run(['diff', '--cached', '--numstat', '-z'], 'Read staged overview')
+    const stats = record.ok ? parseNumstat(record.stdout) : []
+    const byPath = new Map(stats.map((entry) => [entry.path, entry]))
+    const files = stagedFiles.map((file) => {
+      const stat = byPath.get(file.path) ?? null
+      const binary = Boolean(stat?.binary)
+      return {
+        path: file.path,
+        oldPath: file.oldPath || null,
+        status: file.status,
+        insertions: binary ? null : stat?.insertions ?? null,
+        deletions: binary ? null : stat?.deletions ?? null,
+        binary,
+        statUnavailable: !binary && (!stat || !record.ok || record.outputTruncated),
+      }
+    })
+    for (const file of files) {
+      totals.files += 1
+      totals.insertions += file.insertions ?? 0
+      totals.deletions += file.deletions ?? 0
+      if (file.binary) totals.binary += 1
+      if (file.statUnavailable) totals.unavailable += 1
+    }
+    return {
+      ok: record.ok,
+      files,
+      totals,
+      record,
+      reason: record.ok ? '' : '无法读取暂存统计。文件清单仍来自实际暂存区；诊断信息已保留在命令账本。',
+      state,
+    }
+  }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
   commits() {

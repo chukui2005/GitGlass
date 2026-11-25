@@ -4,13 +4,14 @@
 // 只用于 tests/support 的探针窗口，不进入产品构建；产品 preload 仍然只走 IPC。
 const { contextBridge } = require('electron')
 const { execFileSync } = require('node:child_process')
-const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('../../electron/git-parsers.cjs')
+const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('../../electron/git-parsers.cjs')
+const { hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk } = require('../../electron/patch-hunks.cjs')
 
 const repository = process.env.GITGLASS_WORKBENCH_REPO || ''
 const records = []
 let sequence = 0
 
-function runGit(args) {
+function runGit(args, input) {
   const startedAt = new Date().toISOString()
   let outcome
   try {
@@ -18,6 +19,7 @@ function runGit(args) {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       windowsHide: true,
+      input,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '1' },
     })
     outcome = { ok: true, exitCode: 0, stdout, stderr: '' }
@@ -33,9 +35,9 @@ function runGit(args) {
 }
 
 // 每次调用都留一条账本记录：探针里的「用户操作 / 系统读取」都是真的跑过的命令。
-function execute(args, intent, source = 'background') {
+function execute(args, intent, source = 'background', input) {
   sequence += 1
-  const result = runGit(args)
+  const result = runGit(args, input)
   const record = {
     id: `probe-${sequence}`,
     source,
@@ -69,10 +71,79 @@ function repositoryState() {
   }
 }
 
-const fileDiff = (file) => execute(
-  file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path],
-  'Read file diff',
-)
+const fileDiff = (file) => {
+  const area = file.area === 'staged' ? 'staged' : 'unstaged'
+  const { result } = execute(hunkDiffArgs(area, file.path), 'Read file diff')
+  const snapshot = diffSnapshot({ cwd: repository, area, filePath: file.path, raw: result.stdout })
+  const parsed = parsePatchHunks(result.stdout)
+  return {
+    ...result,
+    area,
+    path: file.path,
+    snapshot,
+    hunkSupport: parsed.ok
+      ? { ok: true, reason: '', hunks: parsed.hunks.map(({ index, header, oldStart, oldLines, newStart, newLines, contentHash }) => ({ index, header, oldStart, oldLines, newStart, newLines, contentHash })) }
+      : { ok: false, reason: parsed.reason, hunks: [] },
+  }
+}
+
+// 与产品同一条路径：重读同一区域 → 校验快照与块标识 → 只把这一块写入索引。
+function applyHunkLocator(direction, locator) {
+  const area = direction === 'unstage' ? 'staged' : 'unstaged'
+  const intent = direction === 'unstage' ? 'Unstage diff hunk' : 'Stage diff hunk'
+  const reject = (reason) => ({ ok: false, direction, area, path: locator?.path || '', hunk: locator?.hunk || null, execution: null, record: null, state: repositoryState(), reason })
+  const read = execute(hunkDiffArgs(area, locator?.path || ''), 'Read hunk patch')
+  if (!read.result.ok) return reject('无法读取此文件的差异，请刷新工作区后重试；诊断信息已保留在命令账本。')
+  if (diffSnapshot({ cwd: repository, area, filePath: locator.path, raw: read.result.stdout }) !== locator.snapshot) return reject('Diff 已过期：读取之后工作区或仓库发生了变化，请刷新后重试。')
+  const parsed = parsePatchHunks(read.result.stdout)
+  if (!parsed.ok) return reject(parsed.reason)
+  const located = locateHunk(parsed, locator.hunk)
+  if (!located.ok || !located.hunk) return reject(located.reason)
+  const patch = buildHunkPatch(parsed, located.hunk.index)
+  if (!patch) return reject('所选 Diff 块已不存在，请刷新后重试。')
+  const applied = execute(hunkApplyArgs(direction), intent, 'user', patch)
+  return {
+    ok: applied.result.ok,
+    direction,
+    area,
+    path: locator.path,
+    hunk: { index: located.hunk.index, header: located.hunk.header, oldStart: located.hunk.oldStart, oldLines: located.hunk.oldLines, newStart: located.hunk.newStart, newLines: located.hunk.newLines },
+    execution: applied.execution,
+    record: applied.record,
+    state: repositoryState(),
+    reason: applied.result.ok ? '' : direction === 'unstage' ? '这个 Diff 块无法取消暂存。请刷新后重试。' : '这个 Diff 块无法应用到索引。请刷新后重试。',
+  }
+}
+
+const stagedOverview = () => {
+  const status = execute(['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'Read working tree status')
+  const stagedFiles = parseStatus(status.result.stdout).filter((file) => file.area === 'staged')
+  const totals = { files: 0, insertions: 0, deletions: 0, binary: 0, unavailable: 0 }
+  if (!stagedFiles.length) return { ok: true, files: [], totals, reason: '' }
+  const stats = execute(['diff', '--cached', '--numstat', '-z'], 'Read staged overview')
+  const byPath = new Map(parseNumstat(stats.result.stdout).map((entry) => [entry.path, entry]))
+  const files = stagedFiles.map((file) => {
+    const stat = byPath.get(file.path) || null
+    const binary = Boolean(stat?.binary)
+    return {
+      path: file.path,
+      oldPath: file.oldPath || null,
+      status: file.status,
+      insertions: binary ? null : stat?.insertions ?? null,
+      deletions: binary ? null : stat?.deletions ?? null,
+      binary,
+      statUnavailable: !binary && (!stat || !stats.result.ok),
+    }
+  })
+  for (const file of files) {
+    totals.files += 1
+    totals.insertions += file.insertions ?? 0
+    totals.deletions += file.deletions ?? 0
+    if (file.binary) totals.binary += 1
+    if (file.statUnavailable) totals.unavailable += 1
+  }
+  return { ok: stats.result.ok, files, totals, reason: stats.result.ok ? '' : '无法读取暂存统计。文件清单仍来自实际暂存区。' }
+}
 
 const updateState = {
   supported: false,
@@ -111,9 +182,11 @@ contextBridge.exposeInMainWorld('gitglass', {
     return { branches: parseBranches(branches.result.stdout) }
   },
   getDiff: async (file) => {
-    const { result } = fileDiff(file)
-    return { ok: result.ok, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, argv: ['git', 'diff'], outputTruncated: false }
+    const detail = fileDiff(file)
+    return { ...detail, outputTruncated: false }
   },
+  getStagedOverview: async () => stagedOverview(),
+  applyDiffHunk: async (direction, locator) => applyHunkLocator(direction, locator),
 
   getCommits: async () => ({ commits: commits(), reason: '' }),
   queryHistory: async () => ({ commits: commits(), reason: '' }),
@@ -170,13 +243,13 @@ contextBridge.exposeInMainWorld('gitglass', {
     return { execution: { ok: false, stderr: `探针不支持 ${action}` } }
   },
   prepareDiscard: async (path) => {
-    const { result } = fileDiff({ path, area: 'unstaged' })
+    const detail = fileDiff({ path, area: 'unstaged' })
     return {
       ok: true,
       blocked: false,
       kind: 'discard',
       path,
-      diff: result.stdout,
+      diff: detail.stdout,
       state: repositoryState(),
       plan: { operationId: 'op-discard', displayCommand: `git restore --worktree -- ${path}` },
     }

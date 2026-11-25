@@ -64,7 +64,7 @@ export function PanelSplitter({ side, value, limits, onPointerDown, onDoubleClic
   );
 }
 
-export function DiffLine({ row }) {
+export function DiffLine({ row, action }) {
   // 文件头只有一行面包屑（路径，或重命名时的「旧 → 新」），不再有行号槽与标签列。
   if (row.type === "file") {
     return (
@@ -78,13 +78,35 @@ export function DiffLine({ row }) {
       <span className="diff-line-number" aria-label={row.oldLine ? `原文件第 ${row.oldLine} 行` : undefined}>{row.oldLine || ""}</span>
       <span className="diff-line-number" aria-label={row.newLine ? `新文件第 ${row.newLine} 行` : undefined}>{row.newLine || ""}</span>
       <span className="diff-marker" aria-hidden="true">{row.marker || ""}</span>
+      {action}
       {row.label && <span className="diff-label">{row.label}</span>}
       <code>{row.content}</code>
     </div>
   );
 }
 
-export function DiffContent({ diff, titlePath }) {
+// 块头行的操作入口。可访问名称里带原始 @@ 块头，读屏能区分「哪一块」；
+// 未就绪时不渲染按钮，避免给出点不动的入口。
+function hunkActionFor(row, hunkActions) {
+  if (!hunkActions || !row.rawHeader) return null;
+  const locator = hunkActions.hunks.find((hunk) => hunk.header === row.rawHeader);
+  if (!locator) return null;
+  const label = hunkActions.direction === "unstage" ? "取消暂存此块" : "暂存此块";
+  return (
+    <button
+      type="button"
+      className="diff-hunk-action"
+      aria-label={`${label}：${locator.header}`}
+      title={hunkActions.enabled ? `${label}（${locator.header}）` : hunkActions.reason || ""}
+      disabled={!hunkActions.enabled}
+      onClick={() => hunkActions.onApply(hunkActions.direction, locator)}
+    >
+      {label}
+    </button>
+  );
+}
+
+export function DiffContent({ diff, titlePath, hunkActions = null }) {
   // 工作区单文件视图：标题里已经有路径，patch 的同一行文件头不再重复（重命名与多文件仍保留）。
   const rows = useMemo(
     () => presentDiff(diff, titlePath ? { dropFileHeaderFor: titlePath } : undefined),
@@ -92,7 +114,13 @@ export function DiffContent({ diff, titlePath }) {
   );
   return (
     <div className="diff-content">
-      {rows.map((row, index) => <DiffLine key={index} row={row} />)}
+      {rows.map((row, index) => (
+        <DiffLine
+          key={index}
+          row={row}
+          action={row.type === "hunk" ? hunkActionFor(row, hunkActions) : null}
+        />
+      ))}
     </div>
   );
 }
@@ -745,6 +773,9 @@ export function CommitInspector({
   onOperate,
   preview,
   platform,
+  overview,
+  onLoadOverview,
+  onOpenStagedFile,
 }) {
   const ready = staged.length > 0 && Boolean(message.trim());
   const commitHint = !staged.length
@@ -805,7 +836,96 @@ export function CommitInspector({
           <code>{preview}</code>
         </div>
       )}
+      {/* 暂存总览留在「创建提交」区里：右栏仍然只有「当前文件」与「创建提交」两段。 */}
+      <StagedOverview
+        overview={overview}
+        stagedCount={staged.length}
+        loading={loading}
+        onLoad={onLoadOverview}
+        onOpenFile={onOpenStagedFile}
+      />
     </section>
+  );
+}
+// 提交前总览：清单与统计都来自实际暂存区（文件来自 git status，增删行数来自
+// git diff --cached --numstat）。点一行就把中间栏切到那个文件的「已暂存差异」。
+// 它嵌在「创建提交」区里，右栏保持两段结构。
+export function StagedOverview({ overview, stagedCount, loading, onLoad, onOpenFile }) {
+  const [open, setOpen] = useState(false);
+  const status = overview?.status || "idle";
+  const files = Array.isArray(overview?.files) ? overview.files : [];
+  const totals = overview?.totals || null;
+  const showTotals = open && totals && status === "ready" && (totals.files > 0);
+  return (
+    <div className="staged-overview">
+      <button
+        type="button"
+        className="secondary-action staged-overview-toggle"
+        aria-expanded={open}
+        aria-controls="staged-overview-list"
+        disabled={loading}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) onLoad();
+        }}
+      >
+        {open ? "收起暂存总览" : "查看暂存总览"}
+      </button>
+      {open && (
+        <div id="staged-overview-list" className="staged-overview-body">
+          {showTotals && (
+            <p className="staged-overview-totals" aria-label="暂存统计">
+              <span className="stat-chip">文件 {totals.files}</span>
+              <span className="stat-chip added">新增 +{totals.insertions}</span>
+              <span className="stat-chip deleted">删除 −{totals.deletions}</span>
+              {totals.binary > 0 && <span className="stat-chip">{totals.binary} 个二进制</span>}
+              {totals.unavailable > 0 && (
+                <span className="stat-chip">{totals.unavailable} 个统计不可用</span>
+              )}
+            </p>
+          )}
+          {status === "loading" ? (
+            <p className="inspector-copy">正在读取暂存总览…</p>
+          ) : files.length ? (
+            <ul className="staged-overview-files">
+              {files.map((file) => (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    className="staged-overview-file"
+                    aria-label={`查看已暂存文件 ${file.path} 的差异`}
+                    title={file.path}
+                    disabled={loading}
+                    onClick={() => onOpenFile(file)}
+                  >
+                    <span className={`status ${file.status}`} aria-hidden="true">
+                      {iconFor[file.status]}
+                    </span>
+                    <code>{file.path}</code>
+                    <span className="staged-overview-stat">
+                      {file.binary
+                        ? "二进制"
+                        : file.statUnavailable
+                          ? "统计不可用"
+                          : `+${file.insertions ?? 0} −${file.deletions ?? 0}`}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="inspector-copy">
+              {status === "error"
+                ? overview.reason || "无法读取暂存总览。"
+                : stagedCount
+                  ? "暂存总览将在展开后按实际暂存区读取。"
+                  : "还没有已暂存的文件。"}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 export function RecoveryContext({ entries, reason, loading, onRescue, onClose }) {

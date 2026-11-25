@@ -58,6 +58,13 @@ export function createGitglassStub(overrides = {}) {
     // 工作区
     getBranches: vi.fn(async () => ({ branches: [] })),
     getDiff: vi.fn(async () => ({ ok: true, stdout: '' })),
+    getStagedOverview: vi.fn(async () => ({
+      ok: true,
+      files: [],
+      totals: { files: 0, insertions: 0, deletions: 0, binary: 0, unavailable: 0 },
+      reason: '',
+    })),
+    applyDiffHunk: vi.fn(async () => ({ ok: true, execution: { ok: true }, state: { files: [] }, reason: '' })),
     getRecentRepositories: vi.fn(async () => []),
     forgetRecentRepository: vi.fn(async () => []),
     chooseRepository: vi.fn(async () => ({ canceled: true })),

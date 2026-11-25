@@ -1,4 +1,4 @@
-const { parseStatus, parseBranches, parseCommits, parseCommitDetail } = require('../../electron/git-parsers.cjs')
+const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseNumstat } = require('../../electron/git-parsers.cjs')
 
 // 测试里统一用 String.fromCharCode 构造分隔符，避免源文件里出现不可见的控制字符。
 const RS = String.fromCharCode(30)
@@ -62,5 +62,29 @@ describe('Git output parsers', () => {
   it('reports zero statistics when git prints no shortstat line', () => {
     const raw = `feat: empty stat${RS}Ada Lovelace${US}ada@example.test${US}2026-11-01T10:00:00+08:00`
     expect(parseCommitDetail(raw)).toMatchObject({ subject: 'feat: empty stat', filesChanged: 0, insertions: 0, deletions: 0 })
+  })
+})
+
+describe('parseNumstat', () => {
+  // `git diff --cached --numstat -z` 的真实形状：记录之间是 NUL，正文是「新增\t删除\t路径」。
+  it('reads per-file counts, binary markers and rename records', () => {
+    const raw = ['2\t0\ta.txt', '-\t-\tbin.dat', '1\t0\tnew file.txt', '0\t0\t', 'old name.txt', 'renamed file.txt', ''].join(NUL)
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'a.txt', insertions: 2, deletions: 0, binary: false },
+      { path: 'bin.dat', insertions: null, deletions: null, binary: true },
+      { path: 'new file.txt', insertions: 1, deletions: 0, binary: false },
+      { path: 'renamed file.txt', insertions: 0, deletions: 0, binary: false },
+    ])
+  })
+
+  it('drops records it cannot read instead of inventing zero statistics', () => {
+    expect(parseNumstat('')).toEqual([])
+    expect(parseNumstat('garbage' + NUL + '12\t3' + NUL + '\t\t' + NUL)).toEqual([])
+  })
+
+  it('keeps large counts and spaces in paths', () => {
+    expect(parseNumstat('12345\t6789\tdocs/with space.md' + NUL)).toEqual([
+      { path: 'docs/with space.md', insertions: 12345, deletions: 6789, binary: false },
+    ])
   })
 })

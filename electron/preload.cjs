@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('gitglass', {
   getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),
   forgetRecentRepository: (repositoryPath) => ipcRenderer.invoke('repo:recent:forget', repositoryPath),
   getState: () => ipcRenderer.invoke('repo:state'),
+  getStagedOverview: () => ipcRenderer.invoke('repo:staged-overview'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),
   operate: (action, payload) => ipcRenderer.invoke('git:operate', action, payload),
   // 只表达「哪个方向、哪个块」：文件路径、快照与块标识来自 getDiff 的返回，

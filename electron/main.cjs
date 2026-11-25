@@ -223,6 +223,7 @@ handleUpdate('repo:recent:forget', (candidate) => {
   return describeRecent(recentRepositories?.forget(candidate) ?? [])
 })
 handleRepository('repo:state', () => repository.state())
+handleRepository('repo:staged-overview', () => repository.stagedOverview())
 // Cheap local read (no gate): the renderer polls this once on mount and then
 // follows the watcher:changed pushes to know whether automatic refresh lives.
 handleUpdate('watcher:state', () => ({ active: watcherActive }))
