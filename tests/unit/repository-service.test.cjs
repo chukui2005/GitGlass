@@ -28,6 +28,66 @@ describe('Branch workspace safety', () => {
   })
 })
 
+describe('Diff read contract for hunk operations', () => {
+  const twoHunks = [
+    'diff --git a/src/app.js b/src/app.js',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.js',
+    '+++ b/src/app.js',
+    '@@ -1,6 +1,6 @@',
+    ' line 1',
+    '-line 2',
+    '+line 2 edited',
+    ' line 3',
+    '@@ -28,7 +28,7 @@',
+    ' line 28',
+    '-line 29',
+    '+line 29 edited',
+    ' line 30',
+    '',
+  ].join('\n')
+
+  function stubCommands({ stdout = twoHunks, outputTruncated = false, ok = true } = {}) {
+    const requests = []
+    return {
+      requests,
+      run: async (request) => {
+        requests.push(request)
+        return { ...request, id: 'record', operationId: 'operation', argv: ['git', ...request.argv], displayCommand: `git ${request.argv.join(' ')}`, stdout, stderr: '', exitCode: ok ? 0 : 1, ok, outputTruncated }
+      },
+      recordRejection: (request) => ({ ...request, rejected: true, ok: false, exitCode: null, argv: ['git', ...request.argv] }),
+    }
+  }
+
+  it('reads the staged area with the pinned patch parameters and hands back locators', async () => {
+    const commands = stubCommands()
+    const repo = new RepositoryService(commands, () => 'D:/repo')
+    const result = await repo.diff({ path: 'src/app.js', area: 'staged' })
+    expect(commands.requests[0].argv).toEqual(['diff', '--cached', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '-U3', '--inter-hunk-context=0', '--', 'src/app.js'])
+    // 展示读取的预算仍放宽到 1 MiB，并保留原有的记录字段。
+    expect(commands.requests[0].maxOutputBytes).toBe(1024 * 1024)
+    expect(result).toMatchObject({ ok: true, area: 'staged', path: 'src/app.js' })
+    expect(result.snapshot).toMatch(/^[0-9a-f]{64}$/)
+    expect(result.hunkSupport.hunks.map((hunk) => hunk.header)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@'])
+    expect(result.stdout).toBe(twoHunks)
+  })
+
+  it('reports truncation instead of publishing hunk locators', async () => {
+    const repo = new RepositoryService(stubCommands({ outputTruncated: true }), () => 'D:/repo')
+    const result = await repo.diff({ path: 'src/app.js', area: 'unstaged' })
+    expect(result.hunkSupport).toMatchObject({ ok: false, hunks: [] })
+    expect(result.hunkSupport.reason).toContain('截断')
+  })
+
+  it('does not run Git for an invalid file path', async () => {
+    const commands = stubCommands()
+    const repo = new RepositoryService(commands, () => 'D:/repo')
+    const result = await repo.diff({ path: 'bad\u0000path', area: 'unstaged' })
+    expect(result.ok).toBe(false)
+    expect(commands.requests).toHaveLength(0)
+  })
+})
+
 describe('Remote URL safety', () => {
   it('removes credentials, query parameters, and fragments before a remote URL reaches the ledger', () => {
     const value = redactRemoteUrl('https://token:secret@example.test/team/repo.git?access_token=abc#private\n')

@@ -1,5 +1,6 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
+const { hunkDiffArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -56,7 +57,8 @@ function invalidHistoryText(value, maximum) { return typeof value !== 'string' |
 function escapeGitRegexLiteral(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/\./g, '[.]').replace(/[\^$*]/g, '\\$&')
 }
-function isSafeHistoryPath(value) {
+// 仓库相对路径：拒绝绝对路径、盘符路径、路径穿越与空段。历史筛选与按块操作共用。
+function isRepositoryRelativePath(value) {
   if (typeof value !== 'string' || !value || value.length > 1024 || controlCharacter.test(value)) return false
   if (/^[\\/]|^[A-Za-z]:[\\/]/.test(value) || value === '.' || value === '..') return false
   return !value.split(/[\\/]/).some((part) => part === '..' || part === '.')
@@ -69,7 +71,7 @@ function normalizeHistoryFilters(input) {
   if (invalidHistoryText(filters.keyword, 160)) return { ok: false, reason: '关键词无效或过长，请控制在 160 个字符以内。' }
   if (invalidHistoryText(filters.author, 120)) return { ok: false, reason: '作者条件无效或过长，请控制在 120 个字符以内。' }
   if (invalidHistoryText(filters.branch, 255)) return { ok: false, reason: '分支条件无效，请重新选择本地分支。' }
-  if (filters.filePath && !isSafeHistoryPath(filters.filePath)) return { ok: false, reason: '文件路径必须是当前仓库中的相对路径。' }
+  if (filters.filePath && !isRepositoryRelativePath(filters.filePath)) return { ok: false, reason: '文件路径必须是当前仓库中的相对路径。' }
   return { ok: true, filters }
 }
 
@@ -86,6 +88,30 @@ function normalizeStagePaths(paths) {
   const totalChars = unique.reduce((sum, entry) => sum + entry.length, 0)
   if (totalChars > STAGE_SELECTED_MAX_TOTAL_CHARS) return { ok: false, reason: '所选文件路径总长度过长；请减少选择后重试。', requested: paths }
   return { ok: true, paths: unique }
+}
+
+// 按块操作只接受「哪一次读取、哪个文件、哪一块」：区域由操作方向决定，
+// 补丁由主进程从当前真实 Diff 重建，渲染层不能提供命令、路径以外的任何内容。
+const HUNK_LOCATOR_KEYS = new Set(['path', 'snapshot', 'hunk'])
+// 行号是随块清单一并下发的展示信息，回传时可以带上；校验只认 index / header / contentHash。
+const HUNK_KEYS = new Set(['index', 'header', 'oldStart', 'oldLines', 'newStart', 'newLines', 'contentHash'])
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+
+function normalizeHunkLocator(input) {
+  const reason = (text) => ({ ok: false, reason: text, path: '', hunk: null })
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return reason('缺少 Diff 块标识，请刷新工作区后重试。')
+  if (Object.keys(input).some((key) => !HUNK_LOCATOR_KEYS.has(key))) return reason('Diff 块请求包含不支持的内容，请刷新工作区后重试。')
+  if (!isRepositoryRelativePath(input.path)) return reason('文件路径必须是当前仓库中的相对路径。')
+  if (typeof input.snapshot !== 'string' || !SHA256_PATTERN.test(input.snapshot)) return { ok: false, reason: '缺少有效的 Diff 版本标识，请刷新工作区后重试。', path: input.path, hunk: null }
+  const hunk = input.hunk
+  const hunkReason = (text) => ({ ok: false, reason: text, path: input.path, hunk: null })
+  if (!hunk || typeof hunk !== 'object' || Array.isArray(hunk)) return hunkReason('缺少 Diff 块标识，请刷新工作区后重试。')
+  if (Object.keys(hunk).some((key) => !HUNK_KEYS.has(key))) return hunkReason('Diff 块请求包含不支持的内容，请刷新工作区后重试。')
+  // 索引必须有上限：块编号来自主进程自己下发的清单，超出范围说明请求是伪造或过期的。
+  if (!Number.isSafeInteger(hunk.index) || hunk.index < 0 || hunk.index > 999) return hunkReason('Diff 块编号无效，请刷新工作区后重试。')
+  if (typeof hunk.header !== 'string' || !hunk.header.startsWith('@@') || hunk.header.length > 512) return hunkReason('Diff 块位置无效，请刷新工作区后重试。')
+  if (typeof hunk.contentHash !== 'string' || !SHA256_PATTERN.test(hunk.contentHash)) return hunkReason('Diff 块标识无效，请刷新工作区后重试。')
+  return { ok: true, path: input.path, snapshot: input.snapshot, hunk: { index: hunk.index, header: hunk.header, contentHash: hunk.contentHash } }
 }
 
 function redactRemoteUrl(value) {
@@ -121,7 +147,7 @@ function parseAheadBehind(value) {
 class RepositoryService {
   constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
   get cwd() { return this.getRepoPath() }
-  run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes, timeoutMs) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes, timeoutMs }) }
+  run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes, timeoutMs, extras = null) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes, timeoutMs, ...(extras || {}) }) }
   plan(argv, intent, operationId) { return this.commands.plan({ argv, intent, cwd: this.cwd, operationId }) }
 
   async state() {
@@ -147,11 +173,22 @@ class RepositoryService {
     return null
   }
 
-  diff(file) {
-    if (!file || !isPath(file.path)) return Promise.resolve(this.invalid('Read diff', 'Invalid file path.'))
+  // 展示 Diff 与按块操作必须读到同一份原始补丁：读取参数由 patch-hunks 固定，
+  // 记录里同时下发「这一次读取」的快照标识与块清单，渲染层只回传这些标识。
+  async diff(file) {
+    if (!file || !isPath(file.path)) return this.invalid('Read diff', 'Invalid file path.')
+    const area = file.area === 'staged' ? 'staged' : 'unstaged'
     // Interactive diff review keeps a larger budget than ordinary reads; the
     // record still reports outputTruncated when a file exceeds it.
-    return this.run(file.area === 'staged' ? ['diff', '--cached', '--', file.path] : ['diff', '--', file.path], 'Read file diff', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
+    const record = await this.run(hunkDiffArgs(area, file.path), 'Read file diff', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
+    const truncated = record.outputTruncated === true
+    return {
+      ...record,
+      area,
+      path: file.path,
+      snapshot: diffSnapshot({ cwd: this.cwd, area, filePath: file.path, raw: record.stdout }),
+      hunkSupport: truncated ? { ok: false, reason: REASON_TRUNCATED, hunks: [] } : describeHunks(record.stdout),
+    }
   }
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
   async unstage(path) {
@@ -180,6 +217,67 @@ class RepositoryService {
   }
   rejectedStage(reason, paths) {
     return this.commands.recordRejection({ argv: ['add', '--', ...(Array.isArray(paths) ? paths : [])], intent: 'Stage selected files', source: 'user', cwd: this.cwd, stderr: reason, userMessage: reason })
+  }
+  // 按块暂存 / 取消暂存：请求只表达「哪一次读取、哪个文件、哪一块」。
+  // 主进程重新读取同一份原始 Diff，确认快照与块标识都没变，再只把那一块
+  // 正向应用进索引（暂存）或反向应用回 HEAD（取消暂存）。
+  stageHunk(locator) { return this.applyHunkSelection('stage', locator) }
+  unstageHunk(locator) { return this.applyHunkSelection('unstage', locator) }
+  async applyHunkSelection(direction, locator) {
+    const stage = direction === 'stage'
+    const intent = stage ? 'Stage diff hunk' : 'Unstage diff hunk'
+    const area = stage ? 'unstaged' : 'staged'
+    const normalized = normalizeHunkLocator(locator)
+    if (!normalized.ok) return this.rejectedHunk({ intent, area, reason: normalized.reason, path: normalized.path, hunk: normalized.hunk })
+    const filePath = normalized.path
+    // 服务端白名单：这个文件现在仍必须以「可整体确认范围」的状态出现在对应区域。
+    const state = await this.state()
+    if (!state.ok) return this.rejectedHunk({ intent, area, reason: '无法读取当前工作区状态，请刷新后重试。', path: filePath, hunk: normalized.hunk })
+    const target = state.files.find((file) => file.path === filePath && file.area === area)
+    if (!target) return this.rejectedHunk({ intent, area, reason: stage ? '所选文件已不在未暂存区，请刷新后重试。' : '所选文件已不在已暂存区，请刷新后重试。', path: filePath, hunk: normalized.hunk })
+    if (target.status !== 'modified') return this.rejectedHunk({ intent, area, reason: '新增、删除或重命名的文件暂不支持按块操作。请使用整文件操作。', path: filePath, hunk: normalized.hunk })
+    const record = await this.run(hunkDiffArgs(area, filePath), 'Read hunk patch', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
+    if (!record.ok) return { ok: false, direction, area, path: filePath, hunk: null, execution: null, record, state: null, reason: '无法读取此文件的差异，请刷新工作区后重试；诊断信息已保留在命令账本。' }
+    if (record.outputTruncated) return this.rejectedHunk({ intent, area, reason: REASON_TRUNCATED, path: filePath, hunk: normalized.hunk })
+    if (diffSnapshot({ cwd: this.cwd, area, filePath, raw: record.stdout }) !== normalized.snapshot) {
+      return this.rejectedHunk({ intent, area, reason: REASON_STALE_SNAPSHOT, path: filePath, hunk: normalized.hunk })
+    }
+    const parsed = parsePatchHunks(record.stdout)
+    if (!parsed.ok) return this.rejectedHunk({ intent, area, reason: parsed.reason, path: filePath, hunk: normalized.hunk })
+    const located = locateHunk(parsed, normalized.hunk)
+    if (!located.ok || !located.hunk) return this.rejectedHunk({ intent, area, reason: located.reason, path: filePath, hunk: normalized.hunk })
+    const locatedHunk = located.hunk
+    const patch = buildHunkPatch(parsed, locatedHunk.index)
+    if (!patch) return this.rejectedHunk({ intent, area, reason: '所选 Diff 块已不存在，请刷新后重试。', path: filePath, hunk: normalized.hunk })
+    // 补丁是执行所需的输入，不是命令：固定 argv 只表达「把 stdin 上的补丁应用到索引」，
+    // 目标文件与块位置作为审计字段单独记录，补丁正文不进入账本。
+    const argv = stage ? ['apply', '--cached', '-'] : ['apply', '--cached', '-R', '-']
+    const execution = await this.run(argv, intent, 'user', undefined, undefined, undefined, undefined, { input: patch, target: filePath, hunk: locatedHunk.header })
+    return {
+      ok: execution.ok,
+      direction,
+      area,
+      path: filePath,
+      hunk: { index: locatedHunk.index, header: locatedHunk.header, oldStart: locatedHunk.oldStart, oldLines: locatedHunk.oldLines, newStart: locatedHunk.newStart, newLines: locatedHunk.newLines },
+      execution,
+      record: execution,
+      state: await this.state(),
+      reason: execution.ok ? '' : stage ? '这个 Diff 块无法应用到索引。请刷新后重试；Git 的原始输出已保留在命令账本。' : '这个 Diff 块无法取消暂存。请刷新后重试；Git 的原始输出已保留在命令账本。',
+    }
+  }
+  rejectedHunk({ intent, area, reason, path, hunk }) {
+    // 本地校验拒绝也如实进入账本：同一条意图 + 目标文件 + 块位置，命令行标注未执行。
+    const record = this.commands.recordRejection({
+      argv: ['apply', '--cached', ...(area === 'staged' ? ['-R'] : []), '-'],
+      intent,
+      source: 'user',
+      cwd: this.cwd,
+      stderr: reason,
+      userMessage: reason,
+      target: typeof path === 'string' ? path : '',
+      hunk: typeof hunk?.header === 'string' ? hunk.header : '',
+    })
+    return { ok: false, direction: area === 'staged' ? 'unstage' : 'stage', area, path: typeof path === 'string' ? path : '', hunk: hunk || null, execution: null, record, state: null, reason }
   }
   unstageAll() { return this.run(['reset'], 'Unstage all changes', 'user') }
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
@@ -448,4 +546,4 @@ class RepositoryService {
 
   invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }
 }
-module.exports = { RepositoryService, resolveGitDirectory, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind, normalizeHistoryFilters, isSafeHistoryPath, HISTORY_QUERY_LIMIT, escapeGitRegexLiteral }
+module.exports = { RepositoryService, resolveGitDirectory, isBranchInput, isPath, isRemoteName, isCommitHash, rescueBranchName, redactRemoteUrl, parseAheadBehind, normalizeHistoryFilters, isRepositoryRelativePath, normalizeHunkLocator, HISTORY_QUERY_LIMIT, escapeGitRegexLiteral }

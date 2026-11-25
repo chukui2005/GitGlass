@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('gitglass', {
   getState: () => ipcRenderer.invoke('repo:state'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),
   operate: (action, payload) => ipcRenderer.invoke('git:operate', action, payload),
+  // 只表达「哪个方向、哪个块」：文件路径、快照与块标识来自 getDiff 的返回，
+  // 补丁与命令由主进程构造，渲染层无法指定。
+  applyDiffHunk: (direction, locator) => ipcRenderer.invoke('hunk:apply', direction, locator),
   getLedger: () => ipcRenderer.invoke('repo:ledger'),
   getBranches: () => ipcRenderer.invoke('repo:branches'),
   getCommits: () => ipcRenderer.invoke('repo:commits'),

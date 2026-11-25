@@ -36,6 +36,19 @@ function redactCredentials(value) {
 }
 
 /**
+ * `git apply` reads its patch from stdin, so argv alone cannot say which
+ * repository file or which hunk an operation touched. Those two audit facts are
+ * added only when a caller supplies them; the patch text itself never enters the
+ * ledger.
+ */
+function auditTarget({ target = '', hunk = '' } = {}) {
+  const fields = {}
+  if (typeof target === 'string' && target) fields.target = target
+  if (typeof hunk === 'string' && hunk) fields.hunk = hunk
+  return fields
+}
+
+/**
  * The only module allowed to execute the local Git binary. Each attempt,
  * including inexpensive background reads, appends one immutable CommandRecord.
  */
@@ -79,13 +92,12 @@ class GitCommandService {
    * never having run: no exit code, and the visible command line states
    * the rejection so it can never be mistaken for an executed Git command.
    */
-  recordRejection({ argv = [], intent, source, cwd, stderr = '' }) {
-    const { userMessage = '' } = arguments[0] || {}
+  recordRejection({ argv = [], intent, source, cwd, stderr = '', userMessage = '', target = '', hunk = '' }) {
     const note = '本地校验拒绝，未执行 Git 命令'
     const record = {
       id: this.idFactory(), operationId: this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: note, command: note,
-      cwd: cwd || '', startedAt: this.now(), endedAt: this.now(),
+      cwd: cwd || '', ...auditTarget({ target, hunk }), startedAt: this.now(), endedAt: this.now(),
       stdout: '', stderr: redactCredentials(stderr), userMessage, exitCode: null, ok: false,
       outputTruncated: false, timedOut: false, rejected: true,
     }
@@ -94,13 +106,13 @@ class GitCommandService {
     return this.records[0]
   }
 
-  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null }) {
+  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
     const outputLimit = Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0 ? maxOutputBytes : this.defaultMaxOutputBytes
     const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
-      cwd: cwd || '', startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
+      cwd: cwd || '', ...auditTarget({ target, hunk }), startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
       outputTruncated: false, timedOut: false,
     }
     let settled = false
@@ -168,6 +180,14 @@ class GitCommandService {
       child.stderr?.on('data', (data) => collect('stderr', data))
       child.on('error', (error) => settle(-1, error.message))
       child.on('close', (code) => settle(code ?? -1))
+      // Patch text is data, never argv: Git reads it from stdin, so it cannot be
+      // mistaken for a command line and never reaches the ledger. A broken pipe
+      // means Git already exited (a rejected patch, for example); its exit code
+      // and stderr are the answer, so the write error is deliberately ignored.
+      if (typeof input === 'string') {
+        child.stdin?.on?.('error', () => {})
+        child.stdin?.end?.(input)
+      }
       timer = this.setTimer(() => {
         if (settled) return
         timedOut = true

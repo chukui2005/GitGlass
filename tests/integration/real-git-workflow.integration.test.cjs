@@ -62,7 +62,8 @@ describe('real Git workflow integration', () => {
     const ledger = commands.history()
     expect(ledger.some((record) => record.operationId === createPlan.plan.operationId && record.argv.join(' ') === 'git switch -c feature/ledger')).toBe(true)
     expect(ledger.some((record) => record.operationId === switchPlan.plan.operationId && record.argv.join(' ') === 'git switch main')).toBe(true)
-    expect(ledger.some((record) => record.argv.join(' ') === 'git diff -- note.txt')).toBe(true)
+    // Diff 读取使用固定补丁参数（0.6.9 起按块操作与展示共用同一份原始补丁）。
+    expect(ledger.some((record) => record.argv.join(' ') === 'git diff --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ -U3 --inter-hunk-context=0 -- note.txt')).toBe(true)
     expect(ledger.some((record) => record.argv.join(' ') === 'git status --porcelain=v1 -z --untracked-files=all')).toBe(true)
   })
 })
