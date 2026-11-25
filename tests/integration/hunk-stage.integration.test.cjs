@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { createHash } = require('node:crypto')
 const { GitCommandService } = require('../../electron/git-command-service.cjs')
 const { RepositoryService } = require('../../electron/repository-service.cjs')
 
@@ -32,6 +33,12 @@ async function setup() {
 
 const lines = (count, prefix = 'line') => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}`)
 const hunkHeaders = (raw) => raw.split('\n').filter((line) => line.startsWith('@@'))
+// 索引内容的逐字节断言：直接比 blob 哈希，不经过会脱敏的命令输出。
+const gitBlobHash = (content) => {
+  const buffer = Buffer.from(content, 'utf8')
+  return createHash('sha1').update(`blob ${buffer.length}\0`).update(buffer).digest('hex')
+}
+const indexBlobHash = async (run, name) => (await git(run, ['rev-parse', `:${name}`])).trim()
 const readBytes = (name) => fs.readFileSync(path.join(cwd, name))
 const writeFile = (name, content) => writeFileIn(cwd, name, content)
 const writeFileIn = (directory, name, content) => {
@@ -76,9 +83,9 @@ describe('v0.6.9 hunk staging (real Git)', () => {
 
     const staged = await repository.stageHunk({ path: 'app.txt', snapshot: read.snapshot, hunk: second })
     expect(staged.ok).toBe(true)
-    expect(staged.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '-'], intent: 'Stage diff hunk', source: 'user', target: 'app.txt', hunk: second.header })
+    expect(staged.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'], intent: 'Stage diff hunk', source: 'user', target: 'app.txt', hunk: second.header })
     // 补丁是输入，不是命令：argv 里既没有文件路径也没有块内容。
-    expect(staged.execution.argv.join(' ')).toBe('git apply --cached -')
+    expect(staged.execution.argv.join(' ')).toBe('git apply --cached --whitespace=nowarn --no-ignore-whitespace -')
 
     const cached = await git(run, ['diff', '--cached', '--', 'app.txt'])
     expect(hunkHeaders(cached)).toEqual([second.header])
@@ -161,7 +168,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
 
     const unstage = await repository.unstageHunk({ path: 'app.txt', snapshot: read.snapshot, hunk: firstStaged })
     expect(unstage.ok).toBe(true)
-    expect(unstage.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '-R', '-'], intent: 'Unstage diff hunk', source: 'user', target: 'app.txt' })
+    expect(unstage.execution).toMatchObject({ ok: true, argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-R', '-'], intent: 'Unstage diff hunk', source: 'user', target: 'app.txt' })
 
     // 另一块仍是已暂存内容。
     expect(hunkHeaders(await git(run, ['diff', '--cached', '--', 'app.txt']))).toEqual([secondStaged.header])
@@ -193,7 +200,7 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(attempt.ok).toBe(false)
     expect(attempt.reason).toContain('已不在未暂存区')
     expect(attempt.execution).toBeNull()
-    expect(attempt.record).toMatchObject({ rejected: true, exitCode: null, intent: 'Stage diff hunk', target: 'app.txt', argv: ['git', 'apply', '--cached', '-'] })
+    expect(attempt.record).toMatchObject({ rejected: true, exitCode: null, intent: 'Stage diff hunk', target: 'app.txt', argv: ['git', 'apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'] })
     expect(attempt.record.displayCommand).toContain('本地校验拒绝，未执行 Git 命令')
     // 拒绝时不执行 Git：外部进程留下的索引内容原样保留。
     expect(await git(run, ['diff', '--cached', '--', 'app.txt'])).toBe(cachedAfterExternal)
@@ -407,28 +414,109 @@ describe('v0.6.9 hunk staging (real Git)', () => {
     expect(commands.history().some((record) => record.rejected)).toBe(false)
   }, 25_000)
 
-  it('surfaces a patch Git refuses to apply and leaves the index untouched', async () => {
+  // 0.6.9 复现的三个索引保真问题：脱敏后的 Diff、权限变化、本机 whitespace 配置。
+  it('applies the unredacted hunk so credential-looking lines reach the index verbatim', async () => {
+    const { commands, run, repository } = await setup()
+    const secretLine = 'endpoint = https://api.example.test/v1/items?access_token=SECRET-TOKEN-42'
+    writeFile('api.txt', 'base\n')
+    await git(run, ['add', '--', 'api.txt'])
+    await git(run, ['commit', '-m', 'chore: seed api client'])
+    writeFile('api.txt', `base\n${secretLine}\n`)
+    writeFile('other.txt', 'untouched\n')
+    await git(run, ['add', '--', 'other.txt'])
+    await git(run, ['commit', '-m', 'chore: seed unrelated file'])
+    const before = readBytes('api.txt')
+
+    const read = await repository.diff({ path: 'api.txt', area: 'unstaged' })
+    // 展示与账本记录照旧脱敏：界面不该出现真实令牌。
+    expect(read.stdout).not.toContain('SECRET-TOKEN-42')
+    expect(read.stdout).toContain('<redacted>')
+    const staged = await repository.stageHunk({ path: 'api.txt', snapshot: read.snapshot, hunk: read.hunkSupport.hunks[0] })
+    expect(staged.ok, staged.reason).toBe(true)
+    // 索引里必须是被选中的原始字节：用 blob 哈希逐字节比对，避免读到脱敏后的文本。
+    expect(await indexBlobHash(run, 'api.txt')).toBe(gitBlobHash(`base\n${secretLine}\n`))
+    expect(await indexBlobHash(run, 'api.txt')).not.toBe(gitBlobHash('base\nendpoint = https://api.example.test/v1/items?access_token=<redacted>\n'))
+    expect(Buffer.compare(before, readBytes('api.txt'))).toBe(0)
+
+    // 反向取消暂存同样按原始字节应用：整文件先暂存，再取消这一块。
+    await git(run, ['add', '--', 'api.txt'])
+    expect(await indexBlobHash(run, 'api.txt')).toBe(gitBlobHash(`base\n${secretLine}\n`))
+    const stagedRead = await repository.diff({ path: 'api.txt', area: 'staged' })
+    expect(stagedRead.stdout).not.toContain('SECRET-TOKEN-42')
+    const unstaged = await repository.unstageHunk({ path: 'api.txt', snapshot: stagedRead.snapshot, hunk: stagedRead.hunkSupport.hunks[0] })
+    expect(unstaged.ok, unstaged.reason).toBe(true)
+    expect(await indexBlobHash(run, 'api.txt')).toBe(gitBlobHash('base\n'))
+    expect(await git(run, ['diff', '--cached', '--', 'api.txt'])).toBe('')
+    // 工作区仍保留原始内容，未暂存 Diff 依旧可读（记录本身是脱敏的）。
+    expect(readBytes('api.txt').toString()).toContain('SECRET-TOKEN-42')
+    expect(await git(run, ['diff', '--', 'api.txt'])).toContain('+endpoint = https://api.example.test/v1/items?access_token=<redacted>')
+    // 账本里没有任何一条记录泄漏令牌。
+    expect(JSON.stringify(commands.history())).not.toContain('SECRET-TOKEN-42')
+  }, 25_000)
+
+  it('refuses a diff that mixes a mode change with text hunks in both directions', async () => {
+    const { run, repository } = await setup()
+    writeFile('tool.sh', 'echo one\necho two\n')
+    await git(run, ['add', '--', 'tool.sh'])
+    await git(run, ['commit', '-m', 'chore: seed script'])
+
+    // 反向：索引里既改了内容又加了可执行位，git diff --cached 会同时给出 mode 与块。
+    writeFile('tool.sh', 'echo one\necho TWO\n')
+    await git(run, ['add', '--', 'tool.sh'])
+    await git(run, ['update-index', '--chmod=+x', '--', 'tool.sh'])
+    const stagedRead = await repository.diff({ path: 'tool.sh', area: 'staged' })
+    expect(stagedRead.stdout).toContain('old mode 100644')
+    expect(stagedRead.hunkSupport.ok).toBe(false)
+    expect(stagedRead.hunkSupport.reason).toContain('权限变化')
+    const unstage = await repository.unstageHunk({ path: 'tool.sh', snapshot: stagedRead.snapshot, hunk: { index: 0, header: '@@ -1,2 +1,2 @@', contentHash: 'a'.repeat(64) } })
+    expect(unstage.ok).toBe(false)
+    expect(unstage.reason).toContain('权限变化')
+    expect(unstage.record).toMatchObject({ rejected: true, intent: 'Unstage diff hunk', target: 'tool.sh' })
+    // 权限与内容都没有被这次拒绝改动。
+    expect(await git(run, ['ls-files', '-s', '--', 'tool.sh'])).toMatch(/^100755 /)
+    expect(await git(run, ['show', ':tool.sh'])).toBe('echo one\necho TWO\n')
+
+    // 正向：索引已有可执行位，工作区又改了内容，git diff 会给出 mode 与块。
+    await git(run, ['config', 'core.fileMode', 'true'])
+    writeFile('tool.sh', 'echo one\necho THREE\n')
+    const read = await repository.diff({ path: 'tool.sh', area: 'unstaged' })
+    expect(read.stdout).toContain('old mode 100755')
+    expect(read.hunkSupport.ok).toBe(false)
+    expect(read.hunkSupport.reason).toContain('权限变化')
+    const before = readBytes('tool.sh')
+    const stage = await repository.stageHunk({ path: 'tool.sh', snapshot: read.snapshot, hunk: { index: 0, header: '@@ -1,2 +1,2 @@', contentHash: 'a'.repeat(64) } })
+    expect(stage.ok).toBe(false)
+    expect(stage.reason).toContain('权限变化')
+    expect(await git(run, ['ls-files', '-s', '--', 'tool.sh'])).toMatch(/^100755 /)
+    expect(await git(run, ['show', ':tool.sh'])).toBe('echo one\necho TWO\n')
+    expect(Buffer.compare(before, readBytes('tool.sh'))).toBe(0)
+  }, 25_000)
+
+  it('keeps selected bytes when local whitespace settings would rewrite them', async () => {
     const { run, repository } = await setup()
     writeFile('ws.txt', 'a\nb\n')
     await git(run, ['add', '--', 'ws.txt'])
     await git(run, ['commit', '-m', 'chore: seed whitespace file'])
-    writeFile('ws.txt', 'a\nb with trailing spaces   \n')
-    await git(run, ['config', 'apply.whitespace', 'error'])
+    const added = 'b with trailing spaces   '
+    writeFile('ws.txt', `a\n${added}\nc\n`)
+    // 本机会把补丁「修正」成去掉行尾空白的版本（apply.whitespace=fix）。
+    await git(run, ['config', 'apply.whitespace', 'fix'])
     const before = readBytes('ws.txt')
 
     const read = await repository.diff({ path: 'ws.txt', area: 'unstaged' })
-    const refused = await repository.stageHunk({ path: 'ws.txt', snapshot: read.snapshot, hunk: read.hunkSupport.hunks[0] })
-    expect(refused.ok).toBe(false)
-    // 真实失败：Git 拒绝这次应用，索引与工作区都没变。
-    expect(refused.execution).toMatchObject({ ok: false, intent: 'Stage diff hunk' })
-    expect(refused.execution.exitCode).not.toBe(0)
-    expect(refused.execution.stderr).toContain('whitespace')
-    expect(await git(run, ['diff', '--cached', '--', 'ws.txt'])).toBe('')
+    const staged = await repository.stageHunk({ path: 'ws.txt', snapshot: read.snapshot, hunk: read.hunkSupport.hunks[0] })
+    expect(staged.ok, staged.reason).toBe(true)
+    // 索引字节与所选改动逐字一致：行尾空格没有被本机配置修剪。
+    expect(await git(run, ['show', ':ws.txt'])).toBe(`a\n${added}\nc\n`)
+    expect(await git(run, ['diff', '--cached', '--', 'ws.txt'])).toContain(`+${added}`)
     expect(Buffer.compare(before, readBytes('ws.txt'))).toBe(0)
 
-    // 去掉这条本机配置后，同一块可以重新暂存。
-    await git(run, ['config', '--unset', 'apply.whitespace'])
-    const refreshed = await repository.diff({ path: 'ws.txt', area: 'unstaged' })
-    expect((await repository.stageHunk({ path: 'ws.txt', snapshot: refreshed.snapshot, hunk: refreshed.hunkSupport.hunks[0] })).ok).toBe(true)
+    // error 模式（原本会让 git apply 拒绝）同样不该限制我们：参数已固定为不改写。
+    await git(run, ['config', 'apply.whitespace', 'error'])
+    const stagedRead = await repository.diff({ path: 'ws.txt', area: 'staged' })
+    const undone = await repository.unstageHunk({ path: 'ws.txt', snapshot: stagedRead.snapshot, hunk: stagedRead.hunkSupport.hunks[0] })
+    expect(undone.ok, undone.reason).toBe(true)
+    expect(await git(run, ['show', ':ws.txt'])).toBe('a\nb\n')
+    expect(await git(run, ['diff', '--', 'ws.txt'])).toContain(`+${added}`)
   }, 25_000)
 })

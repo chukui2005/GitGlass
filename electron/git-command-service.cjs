@@ -106,7 +106,21 @@ class GitCommandService {
     return this.records[0]
   }
 
-  async run({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
+  async run(request) { return (await this.execute(request)).record }
+
+  /**
+   * Same execution and audit record as run(), but it also hands back the raw
+   * stdout captured **before** credential redaction.
+   *
+   * Only patch construction may use this: a single-hunk patch has to reach Git
+   * byte for byte, and redaction would silently rewrite a line that merely looks
+   * like a credential URL. The CommandRecord stays redacted, so neither the
+   * ledger nor IPC ever sees the unredacted text — callers must not retain it.
+   */
+  async runCapturingOutput(request) { return this.execute(request) }
+
+  /** @returns {Promise<{ record: object, stdout: string }>} */
+  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
     const outputLimit = Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0 ? maxOutputBytes : this.defaultMaxOutputBytes
     const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs
     const record = {
@@ -130,10 +144,13 @@ class GitCommandService {
         record.timedOut = true
         record.stderr += `\n命令执行超时（${Math.round(timeout / 1000)} 秒），已终止。`
       }
+      // 补丁必须逐字节回到 Git：先留一份脱敏前的 stdout。账本与 IPC 只看得到
+      // 下面这份脱敏后的记录，调用方拿到原始输出时也不得保存或外传。
+      const rawStdout = record.stdout
       // Some Git output legitimately contains a credential-bearing URL. Redact
       // before the immutable audit record is retained or sent over IPC, then let
       // the caller apply its own narrower redaction on top.
-      record.stdout = redactCredentials(record.stdout)
+      record.stdout = redactCredentials(rawStdout)
       record.stderr = redactCredentials(record.stderr)
       if (typeof redactOutput === 'function') {
         record.stdout = redactOutput(record.stdout)
@@ -144,7 +161,7 @@ class GitCommandService {
       record.endedAt = this.now()
       this.records.unshift(Object.freeze({ ...record }))
       if (this.records.length > this.maxRecords) this.records.length = this.maxRecords
-      return this.records[0]
+      return { record: this.records[0], stdout: rawStdout }
     }
     if (!cwd || !this.existsSync(cwd)) return finish(-1, 'No repository is open.')
     return new Promise((resolve) => {

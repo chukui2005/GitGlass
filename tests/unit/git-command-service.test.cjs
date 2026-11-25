@@ -180,6 +180,36 @@ describe('patch input on stdin', () => {
   })
 })
 
+describe('unredacted output capture', () => {
+  const diffWithToken = 'diff --git a/api.txt b/api.txt\n--- a/api.txt\n+++ b/api.txt\n@@ -1 +1,2 @@\n base\n+endpoint = https://api.example.test/x?access_token=SECRET-42\n'
+
+  it('hands the patch builder the bytes Git produced while the record stays redacted', async () => {
+    const service = serviceWith(() => fakeChild({ stdout: diffWithToken }))
+    const { record, stdout } = await service.runCapturingOutput({ argv: ['diff', '--', 'api.txt'], intent: 'Read hunk patch', source: 'background', cwd: 'D:/repo', maxOutputBytes: 1024 * 1024 })
+    // 补丁路径需要原始字节：行里只是「长得像」凭据，也不能被改写。
+    expect(stdout).toContain('SECRET-42')
+    // 账本记录仍然脱敏，且与 run() 生成的是同一形状。
+    expect(record.stdout).not.toContain('SECRET-42')
+    expect(record.stdout).toContain('access_token=<redacted>')
+    expect(service.history()).toEqual([record])
+    expect(service.history()[0].stdout).not.toContain('SECRET-42')
+  })
+
+  it('keeps run() output redacted so no caller can leak the raw text by accident', async () => {
+    const service = serviceWith(() => fakeChild({ stdout: diffWithToken }))
+    const record = await service.run({ argv: ['diff', '--', 'api.txt'], intent: 'Read file diff', source: 'background', cwd: 'D:/repo' })
+    expect(record.stdout).not.toContain('SECRET-42')
+    expect(record).not.toHaveProperty('stdoutRaw')
+  })
+
+  it('reports the same real failure through both entry points', async () => {
+    const service = serviceWith(() => fakeChild({ stderr: 'fatal: bad revision', code: 128 }))
+    const { record, stdout } = await service.runCapturingOutput({ argv: ['diff', '--', 'api.txt'], intent: 'Read hunk patch', source: 'background', cwd: 'D:/repo' })
+    expect(record).toMatchObject({ ok: false, exitCode: 128 })
+    expect(stdout).toBe('')
+  })
+})
+
 describe('redactCredentials', () => {
   it('leaves large credential-free output untouched without pathological backtracking', () => {
     const big = 'y'.repeat(200_000)

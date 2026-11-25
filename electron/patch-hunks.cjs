@@ -7,6 +7,12 @@ const { createHash } = require('node:crypto')
 // --inter-hunk-context=0 保证「一个 Diff 块」不会因为配置被合并成大块。
 const PATCH_ARGV = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '-U3', '--inter-hunk-context=0']
 
+// 应用补丁时必须逐字节照原样写进索引：
+// --whitespace=nowarn 压掉本机 apply.whitespace 配置（fix 会改写行尾空白），
+// --no-ignore-whitespace 压掉 apply.ignoreWhitespace（宽松匹配上下文），
+// 两者都只影响「怎么应用」，不改变补丁内容。
+const APPLY_ARGV = ['--cached', '--whitespace=nowarn', '--no-ignore-whitespace']
+
 // Git 的 hunk 头：@@ -旧起始,旧行数 +新起始,新行数 @@ 可选标题。行数省略时为 1。
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: ?(.*))?$/
 // 未合并索引的块头是 @@@（两个父提交），首版不处理。
@@ -28,6 +34,7 @@ const REASON_MULTIPLE_FILES = 'Diff 中包含多个文件，无法确认块范�
 const REASON_TRUNCATED = 'Diff 已截断，无法确认块的完整范围。请使用整文件操作。'
 const REASON_UNKNOWN_OUTPUT = '无法确认这段 Diff 的块范围。请刷新后重试，或使用整文件操作。'
 const REASON_ADDED_OR_DELETED = '新增、删除或重命名的文件暂不支持按块操作。请使用整文件操作。'
+const REASON_MODE_CHANGE = '此文件同时包含权限变化与文本块，按块操作会连权限一起改动，首版不支持。请使用整文件操作。'
 
 /**
  * 一个 Diff 块：块头、位置、原样块体与内容摘要。`index` 是它在本次输出里的序号。
@@ -59,6 +66,16 @@ const REASON_ADDED_OR_DELETED = '新增、删除或重命名的文件暂不支�
 function rejectedPatch(reason) { return { ok: false, reason, header: [], hunks: [] } }
 
 function sha256(value) { return createHash('sha256').update(value, 'utf8').digest('hex') }
+
+/**
+ * 执行按块操作的固定 argv。方向决定正向应用（暂存）还是反向应用（取消暂存）。
+ * 补丁本身经 stdin 传入，所以 argv 里只有固定开关和 `-`。
+ * @param {'stage' | 'unstage'} direction
+ * @returns {string[]}
+ */
+function hunkApplyArgs(direction) {
+  return ['apply', ...APPLY_ARGV, ...(direction === 'unstage' ? ['-R'] : []), '-']
+}
 
 /**
  * 读取某个文件 Diff 的固定 argv。区域决定比较对象：
@@ -128,6 +145,10 @@ function parsePatchHunks(raw) {
   }
   if (headerText.includes('Binary files ') || headerText.includes('GIT binary patch')) return rejectedPatch(REASON_BINARY)
   if (!only.hunks.length) return rejectedPatch(REASON_NO_HUNKS)
+  // 文件头里的 old/new mode 会被 git apply 一并应用：只带一块的补丁也会顺手改掉
+  // 索引里的权限（反向应用则把权限改回去）。首版对这种混合 Diff 直接拒绝，让整文件
+  // 流程去处理；只比较整行，避免把名字里含 "old mode " 的路径误判。
+  if (only.header.some((line) => line.startsWith('old mode ') || line.startsWith('new mode '))) return rejectedPatch(REASON_MODE_CHANGE)
   const hunks = only.hunks.map((hunk, index) => {
     const match = HUNK_HEADER.exec(hunk.header) ?? []
     const lines = hunk.lines
@@ -199,9 +220,12 @@ function describeHunks(raw) {
 
 module.exports = {
   PATCH_ARGV,
+  APPLY_ARGV,
   REASON_STALE_SNAPSHOT,
   REASON_TRUNCATED,
+  REASON_MODE_CHANGE,
   hunkDiffArgs,
+  hunkApplyArgs,
   diffSnapshot,
   parsePatchHunks,
   buildHunkPatch,

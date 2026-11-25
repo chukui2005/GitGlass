@@ -1,4 +1,4 @@
-const { PATCH_ARGV, REASON_STALE_SNAPSHOT, hunkDiffArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks } = require('../../electron/patch-hunks.cjs')
+const { PATCH_ARGV, REASON_STALE_SNAPSHOT, hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks } = require('../../electron/patch-hunks.cjs')
 const { normalizeHunkLocator, isRepositoryRelativePath } = require('../../electron/repository-service.cjs')
 
 // 两处相距足够远的改动 → 两个独立的 Diff 块（与真实 git diff 的输出形状一致）。
@@ -40,6 +40,15 @@ describe('hunk patch arguments', () => {
     // 路径始终在 -- 之后逐项传递，不拼接成命令字符串。
     expect(hunkDiffArgs('unstaged', '-dash name.txt').at(-2)).toBe('--')
     expect(hunkDiffArgs('unstaged', '-dash name.txt').at(-1)).toBe('-dash name.txt')
+  })
+
+  it('pins the apply flags that decide whether Git may rewrite the selected bytes', () => {
+    // apply.whitespace=fix 会修剪行尾空白，apply.ignoreWhitespace 会放宽上下文匹配：
+    // 两者都由这里的固定参数压掉，方向只决定是否反向应用。
+    expect(hunkApplyArgs('stage')).toEqual(['apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-'])
+    expect(hunkApplyArgs('unstage')).toEqual(['apply', '--cached', '--whitespace=nowarn', '--no-ignore-whitespace', '-R', '-'])
+    // 补丁经 stdin 传入：argv 里没有路径，也没有块内容。
+    expect(hunkApplyArgs('stage').join(' ')).not.toContain('.txt')
   })
 })
 
@@ -167,6 +176,38 @@ describe('parsePatchHunks', () => {
     expect(parsePatchHunks('noise\n').reason).toContain('无法确认')
     // 多文件结果无法确认「一块」的范围。
     expect(parsePatchHunks(`${twoHunkDiff}${twoHunkDiff}`).reason).toContain('多个文件')
+  })
+
+  it('rejects a diff that mixes a mode change with text hunks', () => {
+    // 文件头里的 old/new mode 会被 git apply 一并应用：只带一块的补丁也会改掉权限，
+    // 反向应用则把权限改回去。首版直接拒绝，交给整文件流程。
+    const mixed = [
+      'diff --git a/tool.sh b/tool.sh',
+      'old mode 100644',
+      'new mode 100755',
+      'index 8769499..d33945f',
+      '--- a/tool.sh',
+      '+++ b/tool.sh',
+      '@@ -1,2 +1,2 @@',
+      ' echo one',
+      '-echo two',
+      '+echo TWO',
+      '',
+    ].join('\n')
+    expect(parsePatchHunks(mixed)).toMatchObject({ ok: false, hunks: [], reason: expect.stringContaining('权限变化') })
+    expect(describeHunks(mixed)).toMatchObject({ ok: false, hunks: [] })
+    // 名字里带 "old mode " 的路径不是权限行，仍可正常解析。
+    const lookalike = [
+      'diff --git a/old mode notes.txt b/old mode notes.txt',
+      'index 1111111..2222222 100644',
+      '--- a/old mode notes.txt',
+      '+++ b/old mode notes.txt',
+      '@@ -1 +1 @@',
+      '-x',
+      '+y',
+      '',
+    ].join('\n')
+    expect(parsePatchHunks(lookalike).ok).toBe(true)
   })
 
   it('refuses output that lost bytes to UTF-8 decoding instead of corrupting the file', () => {

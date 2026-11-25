@@ -1,4 +1,5 @@
 const { RepositoryService, redactRemoteUrl } = require('../../electron/repository-service.cjs')
+const { diffSnapshot, describeHunks } = require('../../electron/patch-hunks.cjs')
 
 function commandsFor(records) {
   return { run: async (request) => ({ ...request, id: 'record', operationId: request.operationId || 'operation', argv: ['git', ...request.argv], displayCommand: `git ${request.argv.join(' ')}`, stdout: records.shift() ?? '', stderr: '', exitCode: 0, ok: true }), plan: (request) => ({ phase: 'planned', ...request, operationId: request.operationId || 'planned-operation', argv: [...request.argv], displayCommand: `git ${request.argv.join(' ')}` }) }
@@ -47,13 +48,19 @@ describe('Diff read contract for hunk operations', () => {
     '',
   ].join('\n')
 
-  function stubCommands({ stdout = twoHunks, outputTruncated = false, ok = true } = {}) {
+  function stubCommands({ stdout = twoHunks, rawStdout = null, outputTruncated = false, ok = true } = {}) {
     const requests = []
+    const recordFor = (request) => ({ ...request, id: 'record', operationId: 'operation', argv: ['git', ...request.argv], displayCommand: `git ${request.argv.join(' ')}`, stdout, stderr: '', exitCode: ok ? 0 : 1, ok, outputTruncated })
     return {
       requests,
       run: async (request) => {
         requests.push(request)
-        return { ...request, id: 'record', operationId: 'operation', argv: ['git', ...request.argv], displayCommand: `git ${request.argv.join(' ')}`, stdout, stderr: '', exitCode: ok ? 0 : 1, ok, outputTruncated }
+        return recordFor(request)
+      },
+      // 真实实现里 runCapturingOutput 额外返回脱敏前的 stdout；快照与块清单必须用它。
+      runCapturingOutput: async (request) => {
+        requests.push(request)
+        return { record: recordFor(request), stdout: rawStdout ?? stdout }
       },
       recordRejection: (request) => ({ ...request, rejected: true, ok: false, exitCode: null, argv: ['git', ...request.argv] }),
     }
@@ -70,6 +77,21 @@ describe('Diff read contract for hunk operations', () => {
     expect(result.snapshot).toMatch(/^[0-9a-f]{64}$/)
     expect(result.hunkSupport.hunks.map((hunk) => hunk.header)).toEqual(['@@ -1,6 +1,6 @@', '@@ -28,7 +28,7 @@'])
     expect(result.stdout).toBe(twoHunks)
+  })
+
+  it('derives the snapshot and hunk locators from the unredacted output, not the ledger copy', async () => {
+    // 展示记录可以脱敏（例如行里含 token= 样式），但快照与块标识必须基于原始字节，
+    // 否则操作时重读的原始 Diff 会和界面下发的标识对不上。
+    const redacted = twoHunks.replace('+line 29 edited', '+token=<redacted>')
+    const raw = twoHunks.replace('+line 29 edited', '+token=SECRET-42')
+    const commands = stubCommands({ stdout: redacted, rawStdout: raw })
+    const repo = new RepositoryService(commands, () => 'D:/repo')
+    const result = await repo.diff({ path: 'src/app.js', area: 'unstaged' })
+    expect(result.snapshot).toBe(diffSnapshot({ cwd: 'D:/repo', area: 'unstaged', filePath: 'src/app.js', raw }))
+    expect(result.snapshot).not.toBe(diffSnapshot({ cwd: 'D:/repo', area: 'unstaged', filePath: 'src/app.js', raw: redacted }))
+    expect(result.hunkSupport.hunks[1].contentHash).toBe(describeHunks(raw).hunks[1].contentHash)
+    // 送到渲染层与账本的仍然是脱敏后的记录。
+    expect(result.stdout).toBe(redacted)
   })
 
   it('reports truncation instead of publishing hunk locators', async () => {

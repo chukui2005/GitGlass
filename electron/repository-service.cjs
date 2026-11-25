@@ -1,6 +1,6 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
-const { hunkDiffArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
+const { hunkDiffArgs, hunkApplyArgs, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -148,6 +148,11 @@ class RepositoryService {
   constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
   get cwd() { return this.getRepoPath() }
   run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes, timeoutMs, extras = null) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes, timeoutMs, ...(extras || {}) }) }
+  // 按块操作的读取要拿到脱敏前的原始输出：补丁必须逐字节回到 Git，而账本记录照旧脱敏。
+  async readPatch(area, filePath, intent) {
+    const { record, stdout } = await this.commands.runCapturingOutput({ argv: hunkDiffArgs(area, filePath), intent, source: 'background', cwd: this.cwd, maxOutputBytes: DIFF_OUTPUT_BYTES })
+    return { record, stdout }
+  }
   plan(argv, intent, operationId) { return this.commands.plan({ argv, intent, cwd: this.cwd, operationId }) }
 
   async state() {
@@ -175,19 +180,20 @@ class RepositoryService {
 
   // 展示 Diff 与按块操作必须读到同一份原始补丁：读取参数由 patch-hunks 固定，
   // 记录里同时下发「这一次读取」的快照标识与块清单，渲染层只回传这些标识。
+  // 快照与块清单都以脱敏前的原始输出为准，否则含凭据样式的行会让两者对不上。
   async diff(file) {
     if (!file || !isPath(file.path)) return this.invalid('Read diff', 'Invalid file path.')
     const area = file.area === 'staged' ? 'staged' : 'unstaged'
     // Interactive diff review keeps a larger budget than ordinary reads; the
     // record still reports outputTruncated when a file exceeds it.
-    const record = await this.run(hunkDiffArgs(area, file.path), 'Read file diff', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
+    const { record, stdout } = await this.readPatch(area, file.path, 'Read file diff')
     const truncated = record.outputTruncated === true
     return {
       ...record,
       area,
       path: file.path,
-      snapshot: diffSnapshot({ cwd: this.cwd, area, filePath: file.path, raw: record.stdout }),
-      hunkSupport: truncated ? { ok: false, reason: REASON_TRUNCATED, hunks: [] } : describeHunks(record.stdout),
+      snapshot: diffSnapshot({ cwd: this.cwd, area, filePath: file.path, raw: stdout }),
+      hunkSupport: truncated ? { ok: false, reason: REASON_TRUNCATED, hunks: [] } : describeHunks(stdout),
     }
   }
   stage(path) { return isPath(path) ? this.run(['add', '--', path], 'Stage file', 'user') : Promise.resolve(this.invalid('Stage file', 'Invalid file path.')) }
@@ -236,13 +242,13 @@ class RepositoryService {
     const target = state.files.find((file) => file.path === filePath && file.area === area)
     if (!target) return this.rejectedHunk({ intent, area, reason: stage ? '所选文件已不在未暂存区，请刷新后重试。' : '所选文件已不在已暂存区，请刷新后重试。', path: filePath, hunk: normalized.hunk })
     if (target.status !== 'modified') return this.rejectedHunk({ intent, area, reason: '新增、删除或重命名的文件暂不支持按块操作。请使用整文件操作。', path: filePath, hunk: normalized.hunk })
-    const record = await this.run(hunkDiffArgs(area, filePath), 'Read hunk patch', 'background', undefined, undefined, DIFF_OUTPUT_BYTES)
+    const { record, stdout } = await this.readPatch(area, filePath, 'Read hunk patch')
     if (!record.ok) return { ok: false, direction, area, path: filePath, hunk: null, execution: null, record, state: null, reason: '无法读取此文件的差异，请刷新工作区后重试；诊断信息已保留在命令账本。' }
     if (record.outputTruncated) return this.rejectedHunk({ intent, area, reason: REASON_TRUNCATED, path: filePath, hunk: normalized.hunk })
-    if (diffSnapshot({ cwd: this.cwd, area, filePath, raw: record.stdout }) !== normalized.snapshot) {
+    if (diffSnapshot({ cwd: this.cwd, area, filePath, raw: stdout }) !== normalized.snapshot) {
       return this.rejectedHunk({ intent, area, reason: REASON_STALE_SNAPSHOT, path: filePath, hunk: normalized.hunk })
     }
-    const parsed = parsePatchHunks(record.stdout)
+    const parsed = parsePatchHunks(stdout)
     if (!parsed.ok) return this.rejectedHunk({ intent, area, reason: parsed.reason, path: filePath, hunk: normalized.hunk })
     const located = locateHunk(parsed, normalized.hunk)
     if (!located.ok || !located.hunk) return this.rejectedHunk({ intent, area, reason: located.reason, path: filePath, hunk: normalized.hunk })
@@ -251,8 +257,7 @@ class RepositoryService {
     if (!patch) return this.rejectedHunk({ intent, area, reason: '所选 Diff 块已不存在，请刷新后重试。', path: filePath, hunk: normalized.hunk })
     // 补丁是执行所需的输入，不是命令：固定 argv 只表达「把 stdin 上的补丁应用到索引」，
     // 目标文件与块位置作为审计字段单独记录，补丁正文不进入账本。
-    const argv = stage ? ['apply', '--cached', '-'] : ['apply', '--cached', '-R', '-']
-    const execution = await this.run(argv, intent, 'user', undefined, undefined, undefined, undefined, { input: patch, target: filePath, hunk: locatedHunk.header })
+    const execution = await this.run(hunkApplyArgs(direction), intent, 'user', undefined, undefined, undefined, undefined, { input: patch, target: filePath, hunk: locatedHunk.header })
     return {
       ok: execution.ok,
       direction,
@@ -266,9 +271,10 @@ class RepositoryService {
     }
   }
   rejectedHunk({ intent, area, reason, path, hunk }) {
-    // 本地校验拒绝也如实进入账本：同一条意图 + 目标文件 + 块位置，命令行标注未执行。
+    // 本地校验拒绝也如实进入账本：同一条意图 + 目标文件 + 块位置，命令行标注未执行；
+    // argv 与真正执行时会用的那条一致，审计时能看清「本来要跑什么」。
     const record = this.commands.recordRejection({
-      argv: ['apply', '--cached', ...(area === 'staged' ? ['-R'] : []), '-'],
+      argv: hunkApplyArgs(area === 'staged' ? 'unstage' : 'stage'),
       intent,
       source: 'user',
       cwd: this.cwd,
