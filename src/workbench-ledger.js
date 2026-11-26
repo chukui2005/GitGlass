@@ -22,6 +22,8 @@ const intentText = {
   'Read Git refs': '读取 Git 引用',
   'Read HEAD reference': '读取 HEAD 引用',
   'Read HEAD commit': '读取 HEAD 提交',
+  'List remotes for default branch aliases': '读取远程默认分支别名',
+  'Read remote default branch': '读取远程默认分支',
   'Read commit by ID': '按提交 ID 读取',
   'Validate history query': '校验历史筛选条件',
   'Verify tracked history query file': '校验历史筛选文件',

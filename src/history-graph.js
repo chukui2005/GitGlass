@@ -44,9 +44,10 @@ function normalizeParents(commit) {
  * @typedef {object} GraphEdge
  * @property {string} parent full parent commit id
  * @property {number} fromLane
- * @property {number} toLane
+ * @property {number} [toLane] absent when the lane budget omitted this edge
  * @property {boolean} first true for Git's first parent
  * @property {boolean} boundary parent is outside the current read window
+ * @property {boolean} [omitted] no truthful lane was available at the cap
  */
 
 /**
@@ -60,6 +61,7 @@ export function layoutHistoryGraph(commits, options = {}) {
   const lanes = []
   let overflow = false
   let boundaryCount = 0
+  let omittedCount = 0
 
   const rows = list.map((commit) => {
     const parents = normalizeParents(commit)
@@ -88,6 +90,7 @@ export function layoutHistoryGraph(commits, options = {}) {
       const first = index === 0
       const boundary = !known.has(parent)
       let target = lanes.indexOf(parent)
+      let omitted = false
       if (boundary) {
         // A boundary lane is drawn but not retained: no later row will consume
         // it, and retaining it would create a phantom branch all the way down.
@@ -99,17 +102,29 @@ export function layoutHistoryGraph(commits, options = {}) {
       } else if (target === -1) {
         target = first ? lane : freeLane(lanes, lane + 1, maxLanes)
         if (target === -1) {
-          target = Math.max(0, lane - 1)
+          // There is no truthful lane left. Keep the parent relation visible as
+          // an omitted edge instead of drawing a solid line into another lane.
+          omitted = true
           overflow = true
+          omittedCount += 1
+        } else if (!lanes[target]) {
+          lanes[target] = parent
         }
-        if (!lanes[target]) lanes[target] = parent
       }
-      parentEdges.push({ parent, fromLane: lane, toLane: target, first, boundary })
+      const edge = { parent, fromLane: lane, first, boundary }
+      if (omitted) edge.omitted = true
+      else edge.toLane = target
+      parentEdges.push(edge)
       if (boundary) boundaryCount += 1
     }
 
     const after = lanes.slice()
-    const laneCount = Math.max(before.length, after.length, lane + 1, ...parentEdges.map((edge) => edge.toLane + 1))
+    const laneCount = Math.max(
+      before.length,
+      after.length,
+      lane + 1,
+      ...parentEdges.map((edge) => (Number.isSafeInteger(edge.toLane) ? edge.toLane + 1 : lane + 1)),
+    )
     return {
       hash: commit.hash,
       lane,
@@ -118,6 +133,7 @@ export function layoutHistoryGraph(commits, options = {}) {
       segments: rowSegments(before, lane),
       parentEdges,
       boundaryParents: parentEdges.filter((edge) => edge.boundary).map((edge) => edge.parent),
+      omittedEdges: parentEdges.filter((edge) => edge.omitted).map((edge) => edge.parent),
     }
   })
 
@@ -126,6 +142,7 @@ export function layoutHistoryGraph(commits, options = {}) {
     rows,
     laneCount: Math.min(width, maxLanes),
     boundaryCount,
+    omittedCount,
     atLimit: Number.isSafeInteger(options.limit) && options.limit > 0 && list.length >= options.limit,
     truncated: options.truncated === true,
     overflow,
@@ -138,6 +155,7 @@ export function summarizeHistoryGraph(graph) {
     commits: rows.length,
     parentEdges: rows.reduce((total, row) => total + row.parentEdges.length, 0),
     boundaryEdges: rows.reduce((total, row) => total + row.boundaryParents.length, 0),
+    omittedEdges: rows.reduce((total, row) => total + (row.omittedEdges?.length || 0), 0),
     mergeCommits: rows.filter((row) => row.parents.length > 1).length,
     atLimit: graph?.atLimit === true,
     truncated: graph?.truncated === true,

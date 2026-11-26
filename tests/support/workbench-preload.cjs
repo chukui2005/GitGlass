@@ -161,6 +161,7 @@ const refs = () => {
     ok: refRecord.result.ok && (headRef.result.ok || headCommit.result.ok || head.unborn),
     refs: parsed,
     head,
+    truncated: false,
     reason: refRecord.result.ok ? '' : '无法读取 Git 引用。',
   }
 }
@@ -308,7 +309,7 @@ contextBridge.exposeInMainWorld('gitglass', {
 })
 
 function commits() {
-  const { result } = execute(['log', '-n', '80', '--date=iso-strict', '--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'], 'Read recent commits')
+  const { result } = execute(['log', '-n', '80', '--topo-order', '--date=iso-strict', '--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'], 'Read recent commits')
   return result.ok ? parseCommits(result.stdout) : []
 }
 

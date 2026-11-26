@@ -1,5 +1,5 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
-const { REF_ARGV, parseRefs, buildHead } = require('./git-refs.cjs')
+const { REF_ARGV, parseRefs, buildHead, shortRefName } = require('./git-refs.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
@@ -336,7 +336,9 @@ class RepositoryService {
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
   commits() {
-    return this.run(['log', `-${HISTORY_DEFAULT_LIMIT}`, '--date=iso-strict', HISTORY_PRETTY], 'Read recent commits').then((record) => {
+    // Graph layout needs children before their parents even when commit dates
+    // are skewed; `--topo-order` guarantees that, unlike plain date ordering.
+    return this.run(['log', `-${HISTORY_DEFAULT_LIMIT}`, '--topo-order', '--date=iso-strict', HISTORY_PRETTY], 'Read recent commits').then((record) => {
       // 空仓库或尚无提交的分支是正常状态，给出中文说明而不是原始 stderr。
       const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
       return {
@@ -352,12 +354,51 @@ class RepositoryService {
   // all branches, remote-tracking refs and tags; HEAD needs its own symbolic and
   // commit reads because an unborn or detached HEAD has no branch row.
   async refs() {
-    const [refRecord, headRefRecord, headCommitRecord] = await Promise.all([
+    const [refRecord, headRefRecord, headCommitRecord, remotesRecord] = await Promise.all([
       this.run(REF_ARGV, 'Read Git refs'),
       this.run(['symbolic-ref', '-q', 'HEAD'], 'Read HEAD reference'),
       this.run(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], 'Read HEAD commit'),
+      this.run(['remote'], 'List remotes for default branch aliases'),
     ])
-    const refs = refRecord.ok ? parseRefs(refRecord.stdout) : []
+    const refsTruncated = refRecord.outputTruncated === true
+    const refs = refRecord.ok ? parseRefs(refRecord.stdout, { truncated: refsTruncated }) : []
+
+    // `for-each-ref` omits a symbolic `refs/remotes/<remote>/HEAD` when its
+    // target branch was deleted. Ask Git for each remote's default alias
+    // explicitly so a dangling alias stays visible and non-navigable.
+    const remotes = remotesRecord.ok
+      ? remotesRecord.stdout.split(/\r?\n/).map((name) => name.trim()).filter(isRemoteName)
+      : []
+    const aliasRecords = await Promise.all(remotes.map((remote) =>
+      this.run(['symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], 'Read remote default branch')))
+    for (let index = 0; index < remotes.length; index += 1) {
+      const record = aliasRecords[index]
+      const targetRef = record.ok ? record.stdout.trim() : ''
+      if (!targetRef) continue
+      const fullName = `refs/remotes/${remotes[index]}/HEAD`
+      let alias = refs.find((entry) => entry.fullName === fullName)
+      if (!alias) {
+        alias = {
+          fullName,
+          shortName: `${remotes[index]}/HEAD`,
+          kind: 'alias',
+          objectName: '',
+          objectType: '',
+          commit: '',
+          head: false,
+          annotated: false,
+          status: '',
+        }
+        refs.push(alias)
+      }
+      const target = refs.find((entry) => entry.fullName === targetRef)
+      alias.kind = 'alias'
+      alias.targetRef = targetRef
+      alias.targetShortName = shortRefName(targetRef)
+      alias.commit = target?.commit || ''
+      alias.status = target ? target.status || '' : '目标分支不存在'
+    }
+
     const head = buildHead({
       symbolicRef: headRefRecord.ok ? headRefRecord.stdout : '',
       headCommit: headCommitRecord.ok ? headCommitRecord.stdout : '',
@@ -368,7 +409,8 @@ class RepositoryService {
       ok: refRecord.ok && headRead,
       refs,
       head,
-      records: [refRecord, headRefRecord, headCommitRecord],
+      truncated: refsTruncated,
+      records: [refRecord, headRefRecord, headCommitRecord, remotesRecord, ...aliasRecords],
       reason: !refRecord.ok
         ? '无法读取 Git 引用。请确认仓库仍可访问后刷新；诊断信息已保留在命令账本。'
         : !headRead
@@ -417,7 +459,7 @@ class RepositoryService {
       if (!tracked.ok) return { ok: false, commits: [], reason: '只能按当前已跟踪的文件筛选历史。请重新选择文件或清除文件条件。', filters, record: tracked }
     }
     const hasAuthor = Boolean(filters.author)
-    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
+    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--topo-order', '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
     // --fixed-strings also changes --author semantics. With an author filter,
     // escape both patterns for Git's basic-regexp matcher instead.
     if (!hasAuthor) argv.push('--fixed-strings')

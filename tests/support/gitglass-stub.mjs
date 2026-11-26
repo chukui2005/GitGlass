@@ -81,6 +81,7 @@ export function createGitglassStub(overrides = {}) {
       ok: true,
       head: { fullName: 'HEAD', shortName: 'HEAD', commit: '', detached: false, unborn: true, status: '当前分支还没有提交。' },
       refs: [],
+      truncated: false,
       reason: '',
     })),
     getCommit: vi.fn(async () => ({ ok: false, commit: null, reason: '假桥未配置 getCommit。' })),

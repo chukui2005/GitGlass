@@ -39,7 +39,7 @@ export function CommitGraph({ row, selected = false }) {
           d={`M ${laneX(segment.lane)} ${GRAPH_HEIGHT * segment.from} L ${laneX(segment.lane)} ${GRAPH_HEIGHT * segment.to}`}
         />
       ))}
-      {row.parentEdges.map((edge, index) => {
+      {row.parentEdges.filter((edge) => !edge.omitted).map((edge, index) => {
         const x = laneX(edge.fromLane);
         const targetX = laneX(edge.toLane);
         const path = edge.fromLane === edge.toLane
@@ -104,11 +104,16 @@ export function HistoryGraphNotice({ graph, available = true, fileFiltered = fal
         <strong>提交图</strong>
         <span>{summary.commits} 条提交 · {summary.parentEdges} 条父边{summary.mergeCommits ? ` · ${summary.mergeCommits} 个合并提交` : ""}</span>
         {summary.boundaryEdges > 0 && <b className="graph-boundary-badge">边界 {summary.boundaryEdges}</b>}
-        {summary.overflow && <b className="graph-boundary-badge">泳道过多，图已限宽</b>}
+        {summary.omittedEdges > 0 && <b className="graph-boundary-badge">已省略 {summary.omittedEdges} 条连接</b>}
       </div>
-      {(summary.boundaryEdges > 0 || summary.atLimit || summary.truncated) && (
+      {(summary.boundaryEdges > 0 || summary.atLimit || summary.truncated || summary.overflow) && (
         <p>
           {summary.truncated ? "本次历史读取被截断。" : summary.atLimit ? "当前只读取最近一页提交。" : ""}
+          {summary.omittedEdges > 0
+            ? "泳道达到上限，无法放入的父连接已标记为省略，没有画成错误的实线。"
+            : summary.overflow
+              ? "泳道达到上限，超出画布的边界连接已压缩到最右泳道。"
+              : ""}
           父提交不在读取范围内时，虚线在列表底部标出边界；列表与详情仍然可读。
         </p>
       )}
@@ -156,7 +161,7 @@ function RefRow({ ref, activeHash, onSelect }) {
  * focus between them without leaving the sidebar. Unresolved tags are rendered
  * as non-interactive rows with a readable reason.
  */
-export function HistoryRefs({ head, refs = [], reason = "", loading = false, notice = "", activeHash = "", onSelect }) {
+export function HistoryRefs({ head, refs = [], reason = "", loading = false, truncated = false, notice = "", activeHash = "", onSelect }) {
   const groups = groupReferences(refs);
   const headRef = headReference(head);
   const count = refs.length + (headRef?.commit ? 1 : 0);
@@ -205,6 +210,11 @@ export function HistoryRefs({ head, refs = [], reason = "", loading = false, not
         </div>
       )}
       {reason && <p className="reference-error" role="alert">{reason}</p>}
+      {truncated && (
+        <p className="reference-truncated" role="status">
+          仅显示部分引用：引用列表超过读取上限，末尾不完整记录已丢弃。
+        </p>
+      )}
       {notice && <p className="ref-feedback" role="status" aria-live="polite">{notice}</p>}
       {!refs.length && !reason && !loading && (
         <p className="reference-empty">当前仓库没有可显示的分支或标签。</p>

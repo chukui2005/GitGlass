@@ -144,6 +144,66 @@ describe('history refs and bounded graph (rendered)', () => {
     expect(screen.getByText(/当前选中的提交不在本页/)).toBeInTheDocument()
   })
 
+  it('discards a slow Diff from the old commit after switching to another ref', async () => {
+    let resolveDiff
+    const slowDiff = new Promise((resolve) => { resolveDiff = resolve })
+    const { stub, user } = await renderHistory({
+      getCommitDiff: vi.fn(() => slowDiff),
+    })
+    const panel = screen.getByRole('region', { name: 'Git 引用' })
+
+    await user.click(screen.getByRole('button', { name: `查看提交 ${MERGE.subject}` }))
+    await waitFor(() => expect(stub.getCommitDetail).toHaveBeenCalledWith(M))
+    await user.click(screen.getByRole('button', { name: '查看完整 Diff' }))
+    await waitFor(() => expect(stub.getCommitDiff).toHaveBeenCalledWith(M))
+
+    await user.click(within(panel).getByRole('button', { name: `定位标签 release 到提交 ${C.slice(0, 7)}` }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'feat: feature work' })).toBeInTheDocument())
+    expect(screen.queryByText('OLD-DIFF-MUST-NOT-RENDER')).toBeNull()
+
+    await act(async () => {
+      resolveDiff({ ok: true, diff: 'OLD-DIFF-MUST-NOT-RENDER' })
+      await slowDiff
+    })
+    expect(screen.getByRole('heading', { name: 'feat: feature work' })).toBeInTheDocument()
+    expect(screen.queryByText('OLD-DIFF-MUST-NOT-RENDER')).toBeNull()
+    expect(screen.getByRole('button', { name: '查看完整 Diff' })).toBeEnabled()
+  })
+
+  it('recovers loading when returning to a cached list commit during an outside ref read', async () => {
+    let resolveOutside
+    const outsideRead = new Promise((resolve) => { resolveOutside = resolve })
+    const { stub, user } = await renderHistory({
+      getCommit: vi.fn(() => outsideRead),
+    })
+
+    await user.click(screen.getByRole('button', { name: `查看提交 ${MERGE.subject}` }))
+    await waitFor(() => expect(stub.getCommitDetail).toHaveBeenCalledWith(M))
+
+    const panel = screen.getByRole('region', { name: 'Git 引用' })
+    await user.click(within(panel).getByRole('button', { name: `定位标签 ancient 到提交 ${OUTSIDE.slice(0, 7)}` }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开仓库' })).toBeDisabled())
+    expect(screen.getByRole('button', { name: '查看完整 Diff' })).toBeDisabled()
+
+    // The list commit is already cached; selecting it must end the old
+    // outside-ref loading state immediately, while that read is still pending.
+    await user.click(screen.getByRole('button', { name: `查看提交 ${MERGE.subject}` }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开仓库' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: '查看完整 Diff' })).toBeEnabled()
+    expect(screen.getByRole('heading', { name: MERGE.subject })).toBeInTheDocument()
+
+    await act(async () => {
+      resolveOutside({
+        ok: true,
+        commit: commitFixture({ hash: OUTSIDE, shortHash: OUTSIDE.slice(0, 7), subject: 'outside response must be discarded', parents: [] }),
+      })
+      await outsideRead
+    })
+    expect(screen.getByRole('heading', { name: MERGE.subject })).toBeInTheDocument()
+    expect(screen.queryByText('outside response must be discarded')).toBeNull()
+    expect(screen.getByRole('button', { name: '打开仓库' })).toBeEnabled()
+  })
+
   it('discards an older out-of-page ref response when a newer ref is clicked first', async () => {
     let resolveFirst
     const first = new Promise((resolve) => { resolveFirst = resolve })
@@ -177,6 +237,32 @@ describe('history refs and bounded graph (rendered)', () => {
     })
     await waitFor(() => expect(screen.getByRole('heading', { name: second.subject })).toBeInTheDocument())
     expect(screen.queryByText('first: must be discarded')).toBeNull()
+  })
+
+  it('marks parent connections omitted at the lane cap instead of drawing misleading lines', async () => {
+    const parentHashes = Array.from({ length: 9 }, (_, index) => String(index + 1).repeat(40))
+    const octopus = commitFixture({
+      hash: M,
+      shortHash: M.slice(0, 7),
+      parents: parentHashes,
+      subject: 'merge: nine parents at the lane cap',
+      authoredAt: minutesAgo(1),
+    })
+    const parents = parentHashes.map((hash, index) => commitFixture({
+      hash,
+      shortHash: hash.slice(0, 7),
+      parents: [],
+      subject: `parent ${index + 1}`,
+      authoredAt: minutesAgo(index + 2),
+    }))
+    const { container } = await renderHistory({
+      getCommits: vi.fn(async () => ({ commits: [octopus, ...parents], limit: 80 })),
+    })
+    const row = screen.getByRole('button', { name: `查看提交 ${octopus.subject}` })
+    expect(within(row).getByText('省略 2')).toHaveAttribute('title', expect.stringContaining(parentHashes[8]))
+    expect(row.querySelectorAll('svg.commit-graph [data-parent]')).toHaveLength(7)
+    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('已省略 2 条连接')
+    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('没有画成错误的实线')
   })
 
   it('marks a parent outside the current page as a visible boundary edge', async () => {
@@ -257,6 +343,40 @@ describe('history refs and bounded graph (rendered)', () => {
     mergeRow.focus()
     await user.keyboard('{ArrowDown}')
     expect(screen.getByRole('button', { name: `查看提交 ${MAIN.subject}` })).toHaveFocus()
+  })
+
+  it('shows a dangling remote default alias as a readable missing-target row', async () => {
+    const dangling = {
+      fullName: 'refs/remotes/origin/HEAD',
+      shortName: 'origin/HEAD',
+      kind: 'alias',
+      targetRef: 'refs/remotes/origin/gone',
+      targetShortName: 'origin/gone',
+      commit: '',
+      status: '目标分支不存在',
+    }
+    const { stub } = await renderHistory({
+      getRefs: vi.fn(async () => ({
+        ok: true,
+        head: HEAD,
+        refs: [...REFS.filter((ref) => ref.fullName !== 'refs/remotes/origin/HEAD'), dangling],
+        truncated: false,
+        reason: '',
+      })),
+    })
+    await waitFor(() => expect(stub.getRefs).toHaveBeenCalled())
+    const panel = screen.getByRole('region', { name: 'Git 引用' })
+    expect(panel).toHaveTextContent('origin/HEAD → origin/gone')
+    expect(panel).toHaveTextContent('目标分支不存在')
+    expect(within(panel).queryByRole('button', { name: /origin\/HEAD/ })).toBeNull()
+  })
+
+  it('labels a truncated ref read instead of pretending the list is complete', async () => {
+    const { stub } = await renderHistory({
+      getRefs: vi.fn(async () => ({ ok: true, head: HEAD, refs: REFS.slice(0, 3), truncated: true, reason: '' })),
+    })
+    await waitFor(() => expect(stub.getRefs).toHaveBeenCalled())
+    expect(screen.getByRole('region', { name: 'Git 引用' })).toHaveTextContent('仅显示部分引用')
   })
 
   it('tells an empty repository that no refs can be shown yet', async () => {

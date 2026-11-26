@@ -153,6 +153,34 @@ describe('real Git refs and out-of-page commits', () => {
     expect(reads.every((record) => record.source === 'background')).toBe(true)
   }, 60_000)
 
+  it('marks a dangling origin/HEAD alias as missing instead of navigable', async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-refs-dangling-'))
+    const commands = new GitCommandService()
+    const { run, repository } = makeService(commands, root)
+    expect((await run(['init', '-b', 'main'])).ok).toBe(true)
+    expect((await run(['config', 'user.name', 'Refs Test'])).ok).toBe(true)
+    expect((await run(['config', 'user.email', 'refs@test.local'])).ok).toBe(true)
+    fs.writeFileSync(path.join(root, 'root.txt'), 'root\n')
+    expect((await run(['add', '--', 'root.txt'])).ok).toBe(true)
+    expect((await run(['commit', '-m', 'root'])).ok).toBe(true)
+    const hash = (await run(['rev-parse', 'HEAD'])).stdout.trim()
+
+    expect((await run(['remote', 'add', 'origin', 'https://example.invalid/repo.git'])).ok).toBe(true)
+    expect((await run(['update-ref', 'refs/remotes/origin/main', hash])).ok).toBe(true)
+    // The symbolic ref survives after its target branch is deleted.
+    expect((await run(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/gone'])).ok).toBe(true)
+
+    const refs = await repository.refs()
+    const alias = refs.refs.find((ref) => ref.fullName === 'refs/remotes/origin/HEAD')
+    expect(alias).toMatchObject({
+      kind: 'alias',
+      targetRef: 'refs/remotes/origin/gone',
+      targetShortName: 'origin/gone',
+      commit: '',
+      status: '目标分支不存在',
+    })
+  }, 20_000)
+
   it('reports an empty repository as unborn instead of inventing a branch commit', async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-refs-empty-'))
     const commands = new GitCommandService()

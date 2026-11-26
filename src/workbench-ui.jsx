@@ -1180,6 +1180,14 @@ export function CommitRow({ commit, selected, compareRole, graph = null, onSelec
                 边界
               </b>
             )}
+            {graph?.omittedEdges?.length > 0 && (
+              <b
+                className="graph-boundary-badge omitted"
+                title={`泳道达到上限，以下父连接未绘制：${graph.omittedEdges.join("、")}`}
+              >
+                省略 {graph.omittedEdges.length}
+              </b>
+            )}
             {compareRole === "base" && <b className="compare-badge base">基准</b>}
             {compareRole === "target" && <b className="compare-badge target">对比</b>}
           </span>

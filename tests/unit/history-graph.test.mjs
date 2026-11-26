@@ -71,10 +71,39 @@ describe('bounded history graph layout', () => {
 
   it('caps lanes and reports overflow instead of drawing an unbounded canvas', () => {
     const parents = Array.from({ length: 10 }, (_, index) => `f${String(index).padStart(39, '0')}`)
-    const graph = layoutHistoryGraph([commit(M, parents)], { maxLanes: 2, limit: 10 })
+    const graph = layoutHistoryGraph([
+      commit(M, parents),
+      ...parents.map((parent) => commit(parent, [])),
+    ], { maxLanes: 2, limit: 10 })
     expect(graph.laneCount).toBeLessThanOrEqual(2)
     expect(graph.overflow).toBe(true)
     expect(graph.rows[0].lane).toBeLessThan(2)
+    expect(graph.omittedCount).toBe(8)
+    expect(graph.rows[0].omittedEdges).toHaveLength(8)
+  })
+
+  it('marks omitted edges when several parent edges contend for the last lanes', () => {
+    const parents = [
+      '1111111111111111111111111111111111111111',
+      '2222222222222222222222222222222222222222',
+      '3333333333333333333333333333333333333333',
+      '4444444444444444444444444444444444444444',
+      '5555555555555555555555555555555555555555',
+    ]
+    const graph = layoutHistoryGraph([
+      commit(M, parents),
+      ...parents.map((parent) => commit(parent, [])),
+    ], { maxLanes: 3 })
+    const mergeRow = graph.rows[0]
+    const solid = mergeRow.parentEdges.filter((edge) => !edge.omitted)
+    const omitted = mergeRow.parentEdges.filter((edge) => edge.omitted)
+
+    expect(solid.map((edge) => edge.toLane)).toEqual([0, 1, 2])
+    expect(new Set(solid.map((edge) => edge.toLane)).size).toBe(3)
+    expect(omitted.map((edge) => edge.parent)).toEqual(parents.slice(3))
+    expect(mergeRow.omittedEdges).toEqual(parents.slice(3))
+    expect(graph.omittedCount).toBe(2)
+    expect(summarizeHistoryGraph(graph)).toMatchObject({ omittedEdges: 2, overflow: true })
   })
 
   it('handles an empty or malformed list without fabricating rows', () => {

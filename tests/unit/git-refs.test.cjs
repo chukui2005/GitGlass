@@ -64,9 +64,25 @@ describe('Git ref parsing', () => {
     expect(refs[2].objectName).toBe(ANNOTATED_OBJECT)
   })
 
-  it('marks an alias whose target remote branch is missing', () => {
+  it('drops the stale commit id of an alias whose target remote branch is missing', () => {
     const refs = parseRefs(row('refs/remotes/origin/HEAD', MAIN, 'commit', '', '', 'refs/remotes/origin/gone'))
-    expect(refs[0]).toMatchObject({ kind: 'alias', commit: MAIN, status: expect.stringContaining('不存在') })
+    expect(refs[0]).toMatchObject({
+      kind: 'alias',
+      targetRef: 'refs/remotes/origin/gone',
+      targetShortName: 'origin/gone',
+      commit: '',
+      status: '目标分支不存在',
+    })
+  })
+
+  it('drops a trailing partial record when for-each-ref output was truncated', () => {
+    const complete = row('refs/tags/complete', FEATURE, 'commit')
+    const partial = 'refs/tags/cut-off\t111111111111111111111111111111111111'
+    expect(parseRefs(`${complete}\n${partial}`, { truncated: true })).toHaveLength(1)
+    expect(parseRefs(`${complete}\n${partial}`, { truncated: true })[0]).toMatchObject({
+      fullName: 'refs/tags/complete',
+      commit: FEATURE,
+    })
   })
 
   it('builds detached and unborn HEAD states without inventing a commit', () => {

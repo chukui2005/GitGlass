@@ -204,6 +204,7 @@ export function App() {
     refs,
     refsHead,
     refsReason,
+    refsTruncated,
     refsLoading,
     refNotice,
     historyGraph,
@@ -1197,6 +1198,7 @@ export function App() {
             refs={refs}
             reason={refsReason}
             loading={refsLoading}
+            truncated={refsTruncated}
             notice={refNotice}
             activeHash={historySelected?.hash || ""}
             onSelect={selectHistoryRef}
@@ -1366,7 +1368,10 @@ export function App() {
                           }
                           onSelect={() => selectHistoryCommit(commit)}
                           onCompare={() => pinCompare(commit)}
-                          busy={loading}
+                          // Once a commit/ref is selected, another row click is a
+                          // navigation intent: it must be able to cancel a slow
+                          // detail or Diff read instead of being disabled by it.
+                          busy={loading && !historySelected}
                         />
                       ))
                     )}

@@ -377,6 +377,7 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .reference-group-title span{font:var(--font-aux) var(--mono);font-weight:500}
 .reference-empty,.ref-unborn{margin:4px 0;color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
 .reference-error{margin:4px 0;color:var(--red);font-size:var(--font-aux);line-height:var(--line-aux)}
+.reference-truncated{margin:4px 0;padding:5px 7px;border-left:2px solid var(--orange);background:var(--orange-soft);color:var(--orange-ink);font-size:var(--font-aux);line-height:var(--line-aux)}
 .ref-feedback{margin:5px 0;padding:5px 7px;border-left:2px solid var(--blue);background:var(--blue-soft);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
 .ref-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;width:100%;min-width:0;gap:6px;min-height:27px;padding:3px 4px;border-radius:var(--radius-sm);background:transparent;color:var(--text);text-align:left}
 .ref-row:hover{background:var(--active)}
@@ -399,6 +400,7 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .merge-badge,.graph-boundary-badge{flex:none;padding:1px 5px;border-radius:3px;font:600 var(--font-aux) var(--mono)}
 .merge-badge{background:var(--active);color:var(--muted)}
 .graph-boundary-badge{background:var(--orange-soft);color:var(--orange-ink)}
+.graph-boundary-badge.omitted{background:var(--red-soft);color:var(--red)}
 .history-graph-notice{display:grid;gap:2px;margin:0 0 5px;padding:5px 0 6px;border-bottom:1px solid var(--line);color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
 .history-graph-notice>div{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .history-graph-notice strong{color:var(--text);font-size:var(--font-aux)}

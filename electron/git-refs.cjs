@@ -52,11 +52,17 @@ function nonCommitStatus(kind, objectType) {
  * Parses tab-delimited `for-each-ref` output. Ref names cannot contain tabs or
  * newlines, so the fixed field delimiter cannot be confused with user data.
  *
+ * When the record budget cuts the stdout mid-line, the trailing line is not a
+ * complete ref record. Drop it instead of showing a fabricated unresolved tag.
+ *
  * @param {string} raw
+ * @param {{ truncated?: boolean }} [options]
  * @returns {Array<Record<string, unknown>>}
  */
-function parseRefs(raw) {
-  const refs = String(raw || '').split(/\r?\n/).filter(Boolean).map((line) => {
+function parseRefs(raw, { truncated = false } = {}) {
+  const lines = String(raw || '').split(/\r?\n/).filter(Boolean)
+  if (truncated && lines.length) lines.pop()
+  const refs = lines.map((line) => {
     const [fullName, objectName = '', objectType = '', peeledName = '', peeledType = '', symref = '', head = ''] = line.split('\t')
     if (!fullName) return null
     const kind = refKind(fullName)
@@ -94,7 +100,10 @@ function parseRefs(raw) {
     if (entry.kind !== 'alias') continue
     const target = byFullName.get(entry.targetRef)
     if (!target) {
-      entry.status = '远程默认分支别名指向的远程跟踪分支不存在。'
+      // A stale symbolic ref can still expose the old object id from Git. Do
+      // not make that commit clickable: the alias itself is dangling.
+      entry.commit = ''
+      entry.status = '目标分支不存在'
       continue
     }
     entry.targetShortName = target.shortName

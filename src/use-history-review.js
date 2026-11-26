@@ -84,7 +84,7 @@ import { refKindLabel } from "./history-refs.js";
  * @typedef {object} HistoryIpc
  * @property {(filters: HistoryFilters) => Promise<{ commits?: HistoryCommit[], reason?: string, limit?: number }>} queryHistory
  * @property {() => Promise<{ commits?: HistoryCommit[], reason?: string, limit?: number }>} getCommits
- * @property {() => Promise<{ ok?: boolean, refs?: Array<Record<string, unknown>>, head?: Record<string, unknown> | null, reason?: string }>} getRefs
+ * @property {() => Promise<{ ok?: boolean, refs?: Array<Record<string, unknown>>, head?: Record<string, unknown> | null, truncated?: boolean, reason?: string }>} getRefs
  * @property {(hash: string) => Promise<{ ok?: boolean, commit?: HistoryCommit | null, reason?: string }>} getCommit
  * @property {(hash: string) => Promise<HistoryDetail>} getCommitDetail
  * @property {(hash: string) => Promise<HistoryDiffResult>} getCommitDiff
@@ -123,6 +123,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   const [refs, setRefs] = useState(/** @type {Array<Record<string, unknown>>} */ ([]));
   const [refsHead, setRefsHead] = useState(/** @type {Record<string, unknown> | null} */ (null));
   const [refsReason, setRefsReason] = useState("");
+  const [refsTruncated, setRefsTruncated] = useState(false);
   const [refsLoading, setRefsLoading] = useState(false);
   const [refNotice, setRefNotice] = useState("");
   const searchRef = useRef(null);
@@ -132,6 +133,10 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   // that arrives after a repo switch or a newer ref click is discarded.
   const refsSequence = useRef(0);
   const selectionSequence = useRef(0);
+  // Detail, Diff, file-history and comparison reads all belong to the current
+  // selection. Selection changes and newer view requests advance this token, so
+  // a late response can still refresh the ledger but cannot overwrite the view.
+  const viewSequence = useRef(0);
   // An explicitly selected ref target may live outside the current page. A
   // background refresh of the same filters must not clear that selection merely
   // because the commit is not in the refreshed list.
@@ -163,6 +168,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     if (!keepExplicitOutside) setRefNotice("");
     if (selected && !hashes.has(selected.hash) && !keepExplicitOutside) {
       selectionSequence.current += 1;
+      viewSequence.current += 1;
       outsideSelection.current = "";
       setSelected(null);
       setDetail(null);
@@ -228,12 +234,14 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
       if (sequence !== refsSequence.current) return false;
       setRefs(Array.isArray(result?.refs) ? result.refs : []);
       setRefsHead(result?.head || null);
+      setRefsTruncated(result?.truncated === true);
       setRefsReason(result?.ok === false ? result.reason || "无法读取 Git 引用，请刷新后重试。" : result?.reason || "");
       return true;
     } catch {
       if (sequence !== refsSequence.current) return false;
       setRefs([]);
       setRefsHead(null);
+      setRefsTruncated(false);
       setRefsReason("无法读取 Git 引用，请刷新后重试。");
       return false;
     } finally {
@@ -245,11 +253,15 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   async function selectCommit(commit, { notice = "" } = {}) {
     if (!commit) return;
     const token = ++selectionSequence.current;
+    viewSequence.current += 1;
     outsideSelection.current = "";
     setRefNotice(notice);
     if (selected?.hash === commit.hash && detail) {
       setFile(null);
       setResult(null);
+      // This selection cancels any older detail/Diff loading that may still be
+      // owned by the previous request.
+      setLoading(false);
       return;
     }
     setSelected(commit);
@@ -258,6 +270,9 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     const cached = detailCache.current.get(commit.hash);
     if (cached) {
       setDetail(cached);
+      // Example: return to a cached list commit while an out-of-page ref read
+      // is still pending. The newer selection owns the loading flag now.
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -297,6 +312,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     }
 
     const token = ++selectionSequence.current;
+    viewSequence.current += 1;
     outsideSelection.current = ref.commit;
     const shortHash = ref.commit.slice(0, 7);
     setSelected({
@@ -356,6 +372,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
       refsSequence.current += 1;
       setRefs([]);
       setRefsHead(null);
+      setRefsTruncated(false);
       setRefsReason("");
       setRefsLoading(false);
       setRefNotice("");
@@ -385,50 +402,75 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
 
   async function readHistoryDiff() {
     if (!selected) return;
+    const token = ++viewSequence.current;
+    const commit = selected;
     setLoading(true);
-    const nextResult = await gitglass.getCommitDiff(selected.hash);
-    setResult({ ...nextResult, kind: "commit" });
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextResult = await gitglass.getCommitDiff(commit.hash);
+      // The ledger records the real read even when the user has already moved
+      // on, but only the current view may render the response.
+      await refreshLedger();
+      if (token !== viewSequence.current) return;
+      setResult({ ...nextResult, kind: "commit" });
+    } finally {
+      if (token === viewSequence.current) setLoading(false);
+    }
   }
 
   /** 提交详情里点某个文件：读该文件在这条提交里的 Diff。 */
   async function openCommitFileDiff(fileEntry) {
     if (!selected || !fileEntry) return;
+    const token = ++viewSequence.current;
+    const commit = selected;
     setLoading(true);
-    const nextResult = await gitglass.getFileHistoryDiff(selected.hash, fileEntry.path);
-    setResult({
-      ...nextResult,
-      kind: "file",
-      path: fileEntry.path,
-      shortHash: selected.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextResult = await gitglass.getFileHistoryDiff(commit.hash, fileEntry.path);
+      await refreshLedger();
+      if (token !== viewSequence.current) return;
+      setResult({
+        ...nextResult,
+        kind: "file",
+        path: fileEntry.path,
+        shortHash: commit.shortHash,
+      });
+    } finally {
+      if (token === viewSequence.current) setLoading(false);
+    }
   }
 
   /** 文件历史里点某条提交：读该文件在对应提交里的 Diff。 */
   async function openFileEntryDiff(commit) {
     if (!file || !commit) return;
+    const token = ++viewSequence.current;
+    const filePath = file.path;
     setLoading(true);
-    const nextResult = await gitglass.getFileHistoryDiff(commit.hash, file.path);
-    setResult({
-      ...nextResult,
-      kind: "file",
-      path: file.path,
-      shortHash: commit.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextResult = await gitglass.getFileHistoryDiff(commit.hash, filePath);
+      await refreshLedger();
+      if (token !== viewSequence.current) return;
+      setResult({
+        ...nextResult,
+        kind: "file",
+        path: filePath,
+        shortHash: commit.shortHash,
+      });
+    } finally {
+      if (token === viewSequence.current) setLoading(false);
+    }
   }
 
   async function openFileHistory(path) {
+    const token = ++viewSequence.current;
     setLoading(true);
-    const nextFile = await gitglass.getFileHistory(path);
-    setFile(nextFile);
-    setResult(null);
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextFile = await gitglass.getFileHistory(path);
+      await refreshLedger();
+      if (token !== viewSequence.current) return;
+      setFile(nextFile);
+      setResult(null);
+    } finally {
+      if (token === viewSequence.current) setLoading(false);
+    }
   }
 
   /** 加入双提交比较：重复点同一个提交 = 取消；两个都选好后按时间排序。 */
@@ -453,22 +495,31 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   async function readCompare() {
     const { base, target } = compare;
     if (!base || !target) return;
+    const token = ++viewSequence.current;
     setLoading(true);
-    const nextResult = await gitglass.compareCommits(base.hash, target.hash);
-    setResult({
-      ...nextResult,
-      kind: "compare",
-      baseShort: base.shortHash,
-      targetShort: target.shortHash,
-    });
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextResult = await gitglass.compareCommits(base.hash, target.hash);
+      await refreshLedger();
+      if (token !== viewSequence.current) return;
+      setResult({
+        ...nextResult,
+        kind: "compare",
+        baseShort: base.shortHash,
+        targetShort: target.shortHash,
+      });
+    } finally {
+      if (token === viewSequence.current) setLoading(false);
+    }
   }
 
   /** 「返回列表」/「返回提交详情」：丢掉当前 Diff 结果与文件历史。 */
   function dismissResult() {
+    // A pending Diff read belongs to the view being dismissed; it must not
+    // pop back after the user has returned to the list.
+    viewSequence.current += 1;
     setResult(null);
     setFile(null);
+    setLoading(false);
   }
 
   /**
@@ -504,11 +555,13 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     setListTruncated(false);
     setRefs([]);
     setRefsHead(null);
+    setRefsTruncated(false);
     setRefsReason("");
     setRefsLoading(false);
     setRefNotice("");
     refsSequence.current += 1;
     selectionSequence.current += 1;
+    viewSequence.current += 1;
     outsideSelection.current = "";
     detailCache.current.clear();
   }
@@ -526,11 +579,13 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     setListTruncated(false);
     setRefs([]);
     setRefsHead(null);
+    setRefsTruncated(false);
     setRefsReason("");
     setRefsLoading(false);
     setRefNotice("");
     refsSequence.current += 1;
     selectionSequence.current += 1;
+    viewSequence.current += 1;
     outsideSelection.current = "";
   }
 
@@ -601,6 +656,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     refs,
     refsHead,
     refsReason,
+    refsTruncated,
     refsLoading,
     refNotice,
     historyGraph,
