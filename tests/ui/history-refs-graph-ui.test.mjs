@@ -379,6 +379,29 @@ describe('history refs and bounded graph (rendered)', () => {
     expect(screen.getByRole('region', { name: 'Git 引用' })).toHaveTextContent('仅显示部分引用')
   })
 
+  it('keeps an origin/HEAD jump when its target is outside a truncated ref list', async () => {
+    const alias = REFS.find((ref) => ref.fullName === 'refs/remotes/origin/HEAD')
+    const { stub, user } = await renderHistory({
+      getRefs: vi.fn(async () => ({
+        ok: true,
+        head: HEAD,
+        // origin/main is deliberately absent, as it would be when local
+        // branches fill the 64 KiB ref-record budget.
+        refs: [REFS[0], REFS[1], alias],
+        truncated: true,
+        reason: '',
+      })),
+    })
+    await waitFor(() => expect(stub.getRefs).toHaveBeenCalled())
+    const panel = screen.getByRole('region', { name: 'Git 引用' })
+    expect(panel).toHaveTextContent('仅显示部分引用')
+    expect(within(panel).queryByText('origin/main')).toBeNull()
+
+    await user.click(within(panel).getByRole('button', { name: `定位远程别名 origin/HEAD → origin/main 到提交 ${M.slice(0, 7)}` }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: MERGE.subject })).toBeInTheDocument())
+    expect(stub.getCommitDetail).toHaveBeenCalledWith(M)
+  })
+
   it('tells an empty repository that no refs can be shown yet', async () => {
     const { container } = await renderHistory({
       getCommits: vi.fn(async () => ({ commits: [], limit: 80 })),

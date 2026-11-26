@@ -24,6 +24,7 @@ const intentText = {
   'Read HEAD commit': '读取 HEAD 提交',
   'List remotes for default branch aliases': '读取远程默认分支别名',
   'Read remote default branch': '读取远程默认分支',
+  'Resolve remote default branch target': '解析远程默认分支目标',
   'Read commit by ID': '按提交 ID 读取',
   'Validate history query': '校验历史筛选条件',
   'Verify tracked history query file': '校验历史筛选文件',

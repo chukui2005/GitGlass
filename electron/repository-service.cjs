@@ -371,6 +371,7 @@ class RepositoryService {
       : []
     const aliasRecords = await Promise.all(remotes.map((remote) =>
       this.run(['symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], 'Read remote default branch')))
+    const targetResolutionRecords = []
     for (let index = 0; index < remotes.length; index += 1) {
       const record = aliasRecords[index]
       const targetRef = record.ok ? record.stdout.trim() : ''
@@ -396,7 +397,20 @@ class RepositoryService {
       alias.targetRef = targetRef
       alias.targetShortName = shortRefName(targetRef)
       alias.commit = target?.commit || ''
-      alias.status = target ? target.status || '' : '目标分支不存在'
+      alias.status = target ? target.status || '' : ''
+      if (target) continue
+
+      // The target may simply be past the for-each-ref truncation point. A
+      // ref-list miss is not proof of deletion: ask Git to resolve the exact
+      // remote-tracking ref and only then decide whether the alias is dangling.
+      const resolved = await this.run(
+        ['rev-parse', '--verify', '--quiet', `${targetRef}^{commit}`],
+        'Resolve remote default branch target',
+      )
+      targetResolutionRecords.push(resolved)
+      const commit = resolved.ok ? resolved.stdout.trim() : ''
+      alias.commit = /^[0-9a-f]{40}$/i.test(commit) ? commit : ''
+      alias.status = alias.commit ? '' : '目标分支不存在'
     }
 
     const head = buildHead({
@@ -410,7 +424,7 @@ class RepositoryService {
       refs,
       head,
       truncated: refsTruncated,
-      records: [refRecord, headRefRecord, headCommitRecord, remotesRecord, ...aliasRecords],
+      records: [refRecord, headRefRecord, headCommitRecord, remotesRecord, ...aliasRecords, ...targetResolutionRecords],
       reason: !refRecord.ok
         ? '无法读取 Git 引用。请确认仓库仍可访问后刷新；诊断信息已保留在命令账本。'
         : !headRead
