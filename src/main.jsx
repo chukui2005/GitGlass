@@ -5,6 +5,7 @@ import {
   ArrowCounterClockwise,
   ArrowsLeftRight,
   CheckCircle,
+  CloudArrowDown,
   Copy,
   File,
   FolderOpen,
@@ -43,7 +44,9 @@ import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 import { useHistoryReview } from "./use-history-review.js";
 import { branchName, useSafetyPlans } from "./use-safety-plans.js";
 import { useRemoteOverview } from "./use-remote-overview.js";
+import { useCloneRepository } from "./use-clone-repository.js";
 import { usePanelResize } from "./use-panel-resize.js";
+import { CloneRepositoryDialog } from "./clone-repository-dialog.jsx";
 import {
   BatchStageToolbar,
   BranchContext,
@@ -85,6 +88,7 @@ function buildPaletteCommands({
 }) {
   return [
     { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: actions.chooseRepo },
+    { id: "clone-repository", label: "克隆仓库", keywords: "克隆 地址 远程 下载 仓库", ...availability.cloneRepository, run: actions.openClone },
     // ⟳ 常驻按钮已降级（0.6.5 验收反馈 #21）：自动刷新正常时没有手动入口，
     // watcher 不可用时才在面板里提供手动重读；label 写明「不联网」以区别「获取…」。
     ...(watcherActive
@@ -284,6 +288,15 @@ export function App() {
     setNotice,
     presetLedger,
     setFocusedOperationId,
+  });
+  // 克隆仓库：与「打开仓库」并列的第二种入口。成功后复用同一个
+  // applyOpenedRepository，所以最近仓库、watcher、历史/勾选清理不会出现第二份逻辑。
+  const clone = useCloneRepository({
+    gitglass: window.gitglass,
+    loading,
+    setLoading,
+    setNotice,
+    onOpened: applyOpenedRepository,
   });
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
@@ -772,6 +785,7 @@ export function App() {
     branchPlan,
     remotePlan,
     recoveryOpen,
+    cloneOpen: clone.open,
   });
   const blockingContextOpen = modalOpen || updates.open;
   // A merge/rebase in progress is state, not a transient message: keep it
@@ -873,6 +887,7 @@ export function App() {
     historySearchShortcut,
     actions: {
       chooseRepo,
+      openClone: clone.start,
       refreshFromUser,
       setHistoryMode,
       setLedgerOpen,
@@ -932,7 +947,7 @@ export function App() {
       onClose={() => setRecoveryOpen(false)}
     />
   ) : !repo ? (
-    <NoRepositoryGuide loading={loading} onOpen={chooseRepo} />
+    <NoRepositoryGuide loading={loading} onOpen={chooseRepo} onClone={clone.start} />
   ) : (
     <>
       {/* 右栏固定两段：上「当前文件」（只影响这一个文件），下「创建提交」（影响整个暂存区）。
@@ -1086,6 +1101,18 @@ export function App() {
               onForget={forgetRecentRepository}
             />
           </div>
+          {/* 「克隆仓库」与「打开仓库」是同一组入口：首屏、顶栏与命令面板都指向它。 */}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={clone.start}
+            aria-label="克隆仓库"
+            title="从远程地址克隆仓库"
+            disabled={loading}
+          >
+            <CloudArrowDown size={15} />
+            <span className="top-action-label">克隆</span>
+          </button>
           <button
             type="button"
             className="secondary-button"
@@ -1552,6 +1579,15 @@ export function App() {
               >
                 打开仓库
               </button>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={clone.start}
+                disabled={loading}
+              >
+                <CloudArrowDown size={15} />
+                克隆仓库
+              </button>
             </div>
           )}
         </aside>
@@ -1619,6 +1655,20 @@ export function App() {
           platform={shortcutPlatform}
           onClose={closeCommandPalette}
           onExecute={executePaletteCommand}
+        />
+      )}
+      {clone.open && (
+        <CloneRepositoryDialog
+          draft={clone.draft}
+          planned={clone.planned}
+          error={clone.error}
+          running={clone.running}
+          loading={loading}
+          onField={clone.updateField}
+          onChooseTarget={clone.chooseTarget}
+          onPrepare={clone.prepare}
+          onConfirm={clone.confirm}
+          onClose={clone.close}
         />
       )}
     </main>

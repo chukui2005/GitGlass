@@ -10,6 +10,7 @@ const { UpdateService, pendingUpdateState } = require('./update-service.cjs')
 const { createWindowsUpdater } = require('./windows-updater.cjs')
 const { RecentRepositories, describeRecent } = require('./recent-repositories.cjs')
 const { openRepositoryPath, MAX_REPOSITORY_PATH } = require('./repository-opener.cjs')
+const { normalizeCloneRequest, prepareClone, executeClone } = require('./repository-cloner.cjs')
 const { WindowStateStore, resolveLaunchBounds, trackWindowBounds } = require('./window-state.cjs')
 // 启动探针（scripts/report-startup.mjs 用）：GITGLASS_STARTUP_PROBE 未设置时是空函数，
 // 下面的 startupProbe() 调用在正常运行与打包产物里都不产生任何副作用。
@@ -32,6 +33,10 @@ const REPOSITORY_WRITE_CHANNELS = new Set([
   'safety:discard:execute',
   'safety:branch-delete:execute',
   'recovery:rescue:execute',
+  // Clone writes a new folder next to (never inside) the open repository. It is
+  // still a user write: silence the watcher so a target inside the open worktree
+  // cannot report the clone back as an external change.
+  'repo:clone:execute',
 ])
 
 let mainWindow
@@ -213,6 +218,41 @@ async function chooseRepository() {
 
 handleRepository('repo:choose', chooseRepository)
 handleRepository('repo:open', (_event, candidate) => openRepository(candidate))
+// 克隆在两种状态下都可用，所以它的三个入口不依赖当前仓库：目录选择器只回传用户
+// 选的父目录，计划和执行都由主进程校验后自己构造 argv、自己决定工作目录。
+handleRepository('repo:clone:choose-target', async () => {
+  const choice = await dialog.showOpenDialog(mainWindow, {
+    title: '选择克隆的目标位置',
+    buttonLabel: '选择此文件夹',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (choice.canceled || !choice.filePaths[0]) return { canceled: true }
+  return { canceled: false, path: choice.filePaths[0] }
+})
+handleRepository('repo:clone:prepare', (_event, input) => {
+  const request = normalizeCloneRequest(input)
+  if (!request.ok) return { ok: false, blocked: true, reason: request.reason, plan: null, target: null }
+  return prepareClone({ source: request.source, parent: request.parent, name: request.name, commandService })
+})
+handleRepository('repo:clone:execute', async (_event, input) => {
+  const request = normalizeCloneRequest(input, { allowOperationId: true })
+  if (!request.ok) return { ok: false, blocked: true, reason: request.reason, plan: null, target: null, execution: null }
+  const cloned = await executeClone({
+    source: request.source,
+    parent: request.parent,
+    name: request.name,
+    commandService,
+    operationId: request.operationId,
+  })
+  if (!cloned.ok) return cloned
+  // 克隆成功只说明目录里有了一个仓库：仍然走既有的打开流程（rev-parse 校验真实根目录、
+  // 写入最近仓库）并让 watcher 跟着切换。
+  const opened = await openRepository(cloned.target)
+  if (!opened.ok) {
+    return { ...cloned, ok: false, message: opened.message, reason: opened.message || '克隆已完成，但无法打开该仓库。' }
+  }
+  return { ...opened, target: cloned.target, plan: cloned.plan, execution: cloned.execution, openExecution: opened.execution }
+})
 // Listing and forgetting must work with no repository open, so these two do not
 // take the operation gate.
 handleUpdate('repo:recent', () => describeRecent(recentRepositories?.list() ?? []))

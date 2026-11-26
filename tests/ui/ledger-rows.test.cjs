@@ -17,7 +17,8 @@ describe('PR5 字号层级与按钮体系（真实窗口）', () => {
     expect(summary.rows.map((row) => row.intentFont)).toEqual(['13px', '13px', '13px'])
     expect(summary.rows.map((row) => row.commandFont)).toEqual(['12px', '12px', '12px'])
     expect(summary.rows.map((row) => row.metaFont)).toEqual(['11px', '11px', '11px'])
-    expect(summary.topbar).toEqual({ toolbar: 2, secondary: 2, icons: 1, primary: 0 })
+    // 顶栏右组：2 个工具条（命令 / 恢复）+ 3 个次按钮（打开仓库 / 克隆仓库 / 获取…）+ 1 颗图标按钮。
+    expect(summary.topbar).toEqual({ toolbar: 2, secondary: 3, icons: 1, primary: 0 })
     expect(summary.emptyPrimary).toBe('打开仓库')
     // 交接稿的密度：文件行 28px、分组标题 28px、账本单行 32px、Diff 行 22px，
     // 且侧栏不出现横向滚动（长路径靠省略号，而不是撑宽）。

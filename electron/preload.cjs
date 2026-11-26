@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('gitglass', {
   openRepository: (repositoryPath) => ipcRenderer.invoke('repo:open', repositoryPath),
   getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),
   forgetRecentRepository: (repositoryPath) => ipcRenderer.invoke('repo:recent:forget', repositoryPath),
+  // 克隆只表达「地址、父目录、文件夹名」：协议、最终目录与 argv 都由主进程决定，
+  // 先拿计划（尚未运行）再回传同一个 operationId 执行。
+  chooseCloneTarget: () => ipcRenderer.invoke('repo:clone:choose-target'),
+  prepareClone: (request) => ipcRenderer.invoke('repo:clone:prepare', request),
+  executeClone: (request) => ipcRenderer.invoke('repo:clone:execute', request),
   getState: () => ipcRenderer.invoke('repo:state'),
   getStagedOverview: () => ipcRenderer.invoke('repo:staged-overview'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),

@@ -757,7 +757,8 @@ export function FileInspector({ file, label, stagedCount, loading, onStage, onDi
 }
 // 没有打开仓库时，右栏不渲染一整套禁用的提交表单，只留一块引导：
 // 说明这里将来会出现什么，并复用顶栏/空状态同一个目录选择入口（主按钮仍只有左栏那一个）。
-export function NoRepositoryGuide({ loading, onOpen }) {
+// 「克隆仓库」是第二种起步方式，与「打开仓库」并列但权重更低。
+export function NoRepositoryGuide({ loading, onOpen, onClone }) {
   return (
     <section className="inspector-flow repository-guide">
       <div className="inspector-heading">
@@ -767,15 +768,27 @@ export function NoRepositoryGuide({ loading, onOpen }) {
       <p className="inspector-copy">
         打开一个本地 Git 仓库后，这里会显示当前文件的暂存动作、暂存状态与提交命令预览。
       </p>
-      <button
-        type="button"
-        className="secondary-button"
-        onClick={onOpen}
-        disabled={loading}
-      >
-        <FolderOpen size={15} />
-        打开仓库
-      </button>
+      <div className="repository-guide-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={onOpen}
+          disabled={loading}
+        >
+          <FolderOpen size={15} />
+          打开仓库
+        </button>
+        {onClone && (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={onClone}
+            disabled={loading}
+          >
+            克隆仓库
+          </button>
+        )}
+      </div>
     </section>
   );
 }

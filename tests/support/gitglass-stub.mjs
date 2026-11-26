@@ -69,6 +69,10 @@ export function createGitglassStub(overrides = {}) {
     forgetRecentRepository: vi.fn(async () => []),
     chooseRepository: vi.fn(async () => ({ canceled: true })),
     openRepository: vi.fn(async () => ({ ok: false, message: '假桥未配置 openRepository。' })),
+    // 克隆仓库（v0.6.10 PR 1）：默认「什么都没配」，用例只覆盖自己关心的那一支。
+    chooseCloneTarget: vi.fn(async () => ({ canceled: true })),
+    prepareClone: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置克隆计划。', plan: null, target: null })),
+    executeClone: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置克隆执行。', plan: null, target: null, execution: null })),
 
     // 历史审查
     getCommits: vi.fn(async () => ({ commits: [] })),
