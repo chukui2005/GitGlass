@@ -63,9 +63,22 @@ Staging and unstaging a single hunk are the first operations whose *input* is a 
 - A failure cleans up nothing itself: Git rolls back what it created, an existing empty folder and any other user files stay exactly as they were. Only a successful clone goes through `openRepositoryPath()` — still `git rev-parse --show-toplevel` for the real root, still the same "remember + watcher" tail — so a failed clone leaves the open repository, commit draft and staged content untouched.
 - `describeCloneFailure()` maps timeout, authentication failure, an existing destination, a missing remote and an unreachable host to one Chinese sentence each; the raw stderr stays in the ledger for diagnosis.
 
+## Remote and upstream boundary (0.6.10 PR 2)
+
+Remote configuration, remote-tracking branch checkouts, upstream settings and the first push use the same "review, then execute exactly that" contract as branch switching, with one addition: the reviewed `argv` stays in the main process.
+
+- `RepositoryService.rememberPreview()` stores `{ family, argv, intent, snapshot }` under the plan's `operationId` (bounded to 50 entries); `takePreview()` removes it, so a plan is single-use. The renderer only sends business arguments back — never argv, a working directory or a Git option.
+- The execution matrix is fixed: `remote add <name> <url>`, `remote set-url <name> <url>`, `switch --track -c <local> <remote>/<branch>`, `branch --set-upstream-to <remote>/<branch> <branch>`, and `push --set-upstream <remote> <branch>:refs/heads/<branch>`. Remote URLs go through the same address policy and `<redacted>` placeholder as the clone flow (`classifyCloneSource`/`redactCloneSource`), so an embedded credential is refused before any plan exists; remote names must match Git's own naming rules.
+- Every execute re-reads the repository and compares it with the preview snapshot: the remote list with redacted URLs for remote configuration, the current branch for upstream and first push, the worktree cleanliness, the absence of a same-named local branch and the existence of the remote-tracking ref for a checkout. A mismatch returns a local rejection with the reason and runs nothing. Remote configuration also re-reads `git remote -v` after success, so the sidebar always shows what Git saved.
+- Local and remote branches are always addressed by full refs (`refs/heads/…`, `refs/remotes/…`); the sidebar shows the short form but the IPC payloads carry `refs/remotes/<remote>/<branch>`. `origin/HEAD` is filtered out because it is a symbolic ref, not a checkout target.
+- A checkout refuses a dirty worktree and a local branch that already has the same name — GitGlass never stashes, resets or overwrites. The local name is editable in the plan, and editing it drops the reviewed plan.
+- The first push preview shows the local branch, the remote and the target `refs/heads/<branch>`; execute rechecks those three values. Git's fast-forward rule stays authoritative: a rejected push leaves the upstream unconfigured and the remote ref untouched, and the failure stays in the ledger with its original stderr.
+
+
+
 ## Remote synchronization safety boundary
 
-`RepositoryService.remoteOverview()` reads `git remote`, `git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`, `git remote get-url <remote>`, and `git rev-list --left-right --count @{upstream}...HEAD`. Each is a background CommandRecord. It returns a clear absence reason for a missing remote or upstream instead of fabricating counts.
+`RepositoryService.remoteOverview()` reads `git remote -v` (names plus redacted URLs), `git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`, and `git rev-list --left-right --count @{upstream}...HEAD`. Each is a background CommandRecord. It returns a clear absence reason for a missing remote or upstream instead of fabricating counts.
 
 Remote plans are built only from validated data read from the current repository:
 
@@ -94,7 +107,14 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `queryHistory(filters)` | `{ ok, commits, filters, reason, record }` | fixed `background` branch/file validation and history query records |
 | `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; generated `plan.operationId` is not a record |
 | `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record with the reviewed plan's operation ID if safe |
-| `getRemoteOverview()` | `{ remote, upstream, ahead, behind, reason, suggestion, state }` | background records for remote/upstream URL/count reads |
+| `getRemoteOverview()` | `{ remote, remotes, details, upstream, ahead, behind, reason, suggestion, state }` | background records for the remote list, upstream and counts |
+| `getRemoteBranches()` | `{ record, branches: [{ full, short, hash, remote, branch }], reason }` | one background `branch --remotes` record |
+| `prepareRemoteConfig(kind, request)` | `{ ok, blocked, reason, plan, name, url, urlDisplay, previousUrl }` | background state + `remote -v` reads; the plan is not a ledger entry |
+| `executeRemoteConfig(kind, request, operationId)` | `{ execution, ok, remotes, overview }` | one `user` record, then a fresh `remote -v` read |
+| `prepareRemoteBranch(kind, ref, localName)` | `{ ok, blocked, reason, plan, remoteBranch, localName }` | background ref/state reads; no ledger entry |
+| `executeRemoteBranch(kind, ref, localName, operationId)` | `{ execution, ok, state, upstream }` | one `user` record, then state and upstream re-reads |
+| `prepareFirstPush(request)` | `{ ok, blocked, reason, plan, branch, remote, targetRef, head }` | background state + remote reads |
+| `executeFirstPush(request, operationId)` | `{ execution, ok, upstream, state, overview }` | one `user` record, then upstream and count re-reads |
 | `prepareRemote(kind)` | `{ ok, blocked, reason, plan, overview }` | background remote safety reads; plan is not a ledger entry |
 | `executeRemote(kind, operationId)` | `{ execution, ok, blocked, reason, plan, overview }` | repeats safety reads, then appends one user record with the planned operation ID |
 | `openRepository(path)` | `{ ok, path, state, execution }` or `{ ok: false, message }` | one `background` `rev-parse --show-toplevel` record |
