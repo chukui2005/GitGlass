@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld('gitglass', {
   getBranches: () => ipcRenderer.invoke('repo:branches'),
   getCommits: () => ipcRenderer.invoke('repo:commits'),
   queryHistory: (filters) => ipcRenderer.invoke('history:query', filters),
+  // References carry the full ref name and full commit id; the renderer only
+  // sends the commit id back when it needs a commit outside the current list.
+  getRefs: () => ipcRenderer.invoke('history:refs'),
+  getCommit: (sha) => ipcRenderer.invoke('history:commit', sha),
   getCommitDetail: (sha) => ipcRenderer.invoke('history:detail', sha),
   getCommitDiff: (sha) => ipcRenderer.invoke('history:diff', sha),
   compareCommits: (baseSha, targetSha) => ipcRenderer.invoke('history:compare', baseSha, targetSha),

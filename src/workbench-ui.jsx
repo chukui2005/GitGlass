@@ -19,6 +19,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { fullLocalTime, isHeadCommit, relativeTime } from "./history-search.js";
+import { CommitGraph } from "./history-graph.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { basename, breadcrumbSegments, labelFiles, stageSelectionKey } from "./file-labels.js";
 import { riskLabel } from "./plan-risk.js";
@@ -1117,20 +1118,40 @@ export function HistoryFilters({ draft, branches, currentBranch, selectedFile, l
   </section>
 }
 
-export function CommitRow({ commit, selected, compareRole, onSelect, onCompare, busy = false }) {
+export function CommitRow({ commit, selected, compareRole, graph = null, onSelect, onCompare, busy = false }) {
+  function moveRowFocus(event) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const list = event.currentTarget.closest(".commit-list");
+    if (!list) return;
+    const buttons = [...list.querySelectorAll("button.commit-select:not(:disabled)")];
+    if (!buttons.length) return;
+    const current = buttons.indexOf(event.currentTarget);
+    let next = current;
+    if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = buttons.length - 1;
+    else if (event.key === "ArrowDown") next = current < 0 ? 0 : Math.min(buttons.length - 1, current + 1);
+    else if (event.key === "ArrowUp") next = current <= 0 ? 0 : current - 1;
+    event.preventDefault();
+    buttons[next]?.focus();
+  }
   return (
     <div className={`history-row ${selected ? "selected" : ""}`}>
       <button
         type="button"
-        className="commit-select"
+        className={`commit-select ${graph ? "has-graph" : ""}`}
         aria-label={`查看提交 ${commit.subject}`}
         title={commit.subject}
         onClick={onSelect}
+        onKeyDown={moveRowFocus}
         disabled={busy}
       >
-        <span className="graph-line" aria-hidden="true">
-          <i />
-        </span>
+        {graph ? (
+          <CommitGraph row={graph} selected={selected} />
+        ) : (
+          <span className="graph-line" aria-hidden="true">
+            <i />
+          </span>
+        )}
         <span className="commit-main">
           <strong className="commit-title">{commit.subject}</strong>
           <span className="commit-meta">
@@ -1144,6 +1165,19 @@ export function CommitRow({ commit, selected, compareRole, onSelect, onCompare, 
             {isHeadCommit(commit) && (
               <b className="head-badge" title="当前 HEAD 所在提交">
                 HEAD
+              </b>
+            )}
+            {commit.parents?.length > 1 && (
+              <b className="merge-badge" title={`合并提交，${commit.parents.length} 个父提交`}>
+                合并 {commit.parents.length}
+              </b>
+            )}
+            {graph?.boundaryParents?.length > 0 && (
+              <b
+                className="graph-boundary-badge"
+                title={`父提交 ${graph.boundaryParents.join("、")} 不在当前读取范围内`}
+              >
+                边界
               </b>
             )}
             {compareRole === "base" && <b className="compare-badge base">基准</b>}

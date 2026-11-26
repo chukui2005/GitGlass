@@ -1,4 +1,5 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
+const { REF_ARGV, parseRefs, buildHead } = require('./git-refs.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 const fs = require('node:fs')
@@ -341,9 +342,57 @@ class RepositoryService {
       return {
         record,
         commits: record.ok ? parseCommits(record.stdout) : [],
+        limit: HISTORY_DEFAULT_LIMIT,
+        truncated: record.outputTruncated === true,
         reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请刷新后重试；诊断信息已保留在命令账本。',
       }
     })
+  }
+  // Refs are the navigation surface of the history lens. One fixed read lists
+  // all branches, remote-tracking refs and tags; HEAD needs its own symbolic and
+  // commit reads because an unborn or detached HEAD has no branch row.
+  async refs() {
+    const [refRecord, headRefRecord, headCommitRecord] = await Promise.all([
+      this.run(REF_ARGV, 'Read Git refs'),
+      this.run(['symbolic-ref', '-q', 'HEAD'], 'Read HEAD reference'),
+      this.run(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], 'Read HEAD commit'),
+    ])
+    const refs = refRecord.ok ? parseRefs(refRecord.stdout) : []
+    const head = buildHead({
+      symbolicRef: headRefRecord.ok ? headRefRecord.stdout : '',
+      headCommit: headCommitRecord.ok ? headCommitRecord.stdout : '',
+      refs,
+    })
+    const headRead = headRefRecord.ok || headCommitRecord.ok || head.unborn
+    return {
+      ok: refRecord.ok && headRead,
+      refs,
+      head,
+      records: [refRecord, headRefRecord, headCommitRecord],
+      reason: !refRecord.ok
+        ? '无法读取 Git 引用。请确认仓库仍可访问后刷新；诊断信息已保留在命令账本。'
+        : !headRead
+          ? '无法读取当前 HEAD。请刷新后重试；诊断信息已保留在命令账本。'
+          : '',
+    }
+  }
+  // A ref can point at a commit outside the current 80/200 row window. The
+  // renderer sends only the full SHA it received from refs(); the service
+  // re-verifies it and reads the structured one-line summary by that ID.
+  async commitBySha(hash) {
+    const verified = await this.verifyHistoryCommit(hash)
+    if (!verified.ok) return { ok: false, commit: null, reason: verified.reason, record: verified.record }
+    const record = await this.run(
+      ['show', '-s', '--no-ext-diff', '--date=iso-strict', HISTORY_PRETTY, verified.hash],
+      'Read commit by ID',
+    )
+    const commit = record.ok ? parseCommits(record.stdout)[0] || null : null
+    return {
+      ok: record.ok && Boolean(commit),
+      commit,
+      record,
+      reason: record.ok && commit ? '' : '无法按提交 ID 读取该提交。请刷新引用后重试；诊断信息已保留在命令账本。',
+    }
   }
   rejectHistoryQuery(reason, filters = {}) {
     const requested = [filters.keyword, filters.author, filters.branch, filters.filePath].filter((value) => typeof value === 'string' && value)
@@ -356,7 +405,7 @@ class RepositoryService {
     const filters = normalized.filters
     if (!filters.keyword && !filters.author && !filters.branch && !filters.filePath) {
       const defaults = await this.commits()
-      return { ok: defaults.record.ok, commits: defaults.commits, filters, record: defaults.record, reason: defaults.reason }
+      return { ok: defaults.record.ok, commits: defaults.commits, filters, limit: defaults.limit, truncated: defaults.truncated, record: defaults.record, reason: defaults.reason }
     }
     if (filters.branch) {
       const branchResult = await this.branches()
@@ -382,7 +431,7 @@ class RepositoryService {
     if (filters.filePath) argv.push('--', filters.filePath)
     const record = await this.run(argv, 'Query commit history')
     const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
-    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
+    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, limit: HISTORY_QUERY_LIMIT, truncated: record.outputTruncated === true, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
   }
 
   async verifyHistoryCommit(hash) {

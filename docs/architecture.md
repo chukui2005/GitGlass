@@ -90,8 +90,10 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `operate(action, payload)` | `{ execution: CommandRecord, state, commit }` | user operation plus background refresh records |
 | `getLedger()` | `CommandRecord[]` newest first | read-only |
 | `getBranches()` | `{ record, branches }` | one `background` branch record |
-| `getCommits()` | `{ record, commits }` | one `background` log record |
-| `queryHistory(filters)` | `{ ok, commits, filters, reason, record }` | fixed `background` branch/file validation and history query records |
+| `getCommits()` | `{ record, commits, limit }` | one `background` log record |
+| `queryHistory(filters)` | `{ ok, commits, filters, limit, reason, record }` | fixed `background` branch/file validation and history query records |
+| `getRefs()` | `{ ok, head, refs, records, reason }`; each ref carries `fullName`, `shortName`, `kind`, `commit` (and `targetRef` for `origin/HEAD`) | three `background` reads: refs, symbolic HEAD, HEAD commit |
+| `getCommit(sha)` | `{ ok, commit, record, reason }` | `background` verify + one-line commit summary read by full ID |
 | `prepareBranch(name, create)` | `{ ok, blocked, reason, plan, state }` | background cleanliness check; generated `plan.operationId` is not a record |
 | `executeBranch(name, create, operationId)` | `{ execution, ok, blocked, reason, plan, state }` | rechecks state, then appends a user record with the reviewed plan's operation ID if safe |
 | `getRemoteOverview()` | `{ remote, upstream, ahead, behind, reason, suggestion, state }` | background records for remote/upstream URL/count reads |
@@ -203,3 +205,13 @@ The renderer subscribes once and reads the latest `refreshAll` from a ref, then 
 The top-bar entry reads `获取…` and its plan panel starts with 「这一步不会执行任何命令。」; the only execution point is the confirm button in the plan. The ellipsis is intentional and documented in `docs/design.md`.
 
 `RepositoryService.state()` also reports `operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null`, derived from the marker files (`MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) inside the resolved git directory, so the renderer can explain an in-progress operation instead of blaming uncommitted changes. `refreshAll` compares its refresh sequence before and after each await and drops a snapshot that a newer refresh has superseded.
+
+## Refs and bounded history graph boundary (0.6.10 PR 3)
+
+This round is read-only: it creates, deletes and pushes no refs, edits no remote, checks out no tracking branch, and sets no upstream. Refs are navigation, not an action surface.
+
+`getRefs()` runs one fixed `git for-each-ref` over `refs/heads`, `refs/remotes` and `refs/tags` with a tab-delimited format, plus `git symbolic-ref -q HEAD` and `git rev-parse --verify --quiet HEAD^{commit}`. The parser (`electron/git-refs.cjs`) keeps the full ref name and full commit id for every row; the renderer may shorten them only for display. A local branch and a tag may share `release`: they remain two rows because `refs/heads/release` and `refs/tags/release` are different identifiers. An annotated tag uses `%(*objectname)` (the peeled commit), a lightweight tag uses `%(objectname)`, and a tag pointing at a tree/blob is retained with a Chinese `status` instead of becoming a clickable commit. A symbolic remote ref (`origin/HEAD`) is kind `alias`, keeps its `targetRef`, and resolves to the target branch's commit; if that target is missing it carries a readable status.
+
+When a ref targets a commit outside the current `getCommits()` page, `getCommit(fullSha)` verifies the 40-hex id and reads one structured summary by that id. The renderer shows a placeholder, then the selected commit and its existing `getCommitDetail()`/`getCommitDiff()` path; the ref read, the summary read and the detail read are all `background` CommandRecords. `getRefs()` is also re-read by `refreshAll()`, which reacts to the repository watcher's `head`/`refs` events. A refs sequence guard drops a response after a repository switch or a newer refs refresh; a separate selection guard drops a detail response after a newer ref/row click.
+
+`src/history-graph.js` is a pure lane layout over the real `parents` array from `git log`/`git show`. It keeps lane columns stable, draws every parent edge of a merge, and marks a parent absent from the current read window as a `boundary` edge instead of silently dropping it. `outputTruncated`, the 80/200 page limit, keyword/author/branch filters and a missing parent all surface as a boundary badge and a graph note. A file filter (`git log -- <path>`) may invoke Git's history simplification, so that view deliberately keeps the list and states that the graph is unavailable until the file condition is cleared. The lane count is capped; exceeding it is reported rather than expanding the canvas without bound. Refs and commit rows are native buttons; Up/Down/Home/End move focus between them, and the graph itself is an aria-hidden visual inside the row button.

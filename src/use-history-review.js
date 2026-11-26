@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { emptyHistoryFilters, resolveHistoryEscape, sameHistoryFilters } from "./history-filter-state.js";
 import { orderComparePair } from "./history-search.js";
+import { layoutHistoryGraph } from "./history-graph.js";
+import { refKindLabel } from "./history-refs.js";
 
 // 历史审查领域：筛选（草稿 / 已应用）、提交查询序号、提交选择与详情缓存、
 // 双提交比较、文件历史与 Diff。`App` 只负责把它接到 JSX 上。
@@ -32,6 +34,8 @@ import { orderComparePair } from "./history-search.js";
 /**
  * 提交详情（`getCommitDetail` 的输出里界面要用的字段）。
  * @typedef {object} HistoryDetail
+ * @property {boolean} [ok]
+ * @property {string} [reason]
  * @property {string} [subject]
  * @property {string} [message]
  * @property {string} [authorName]
@@ -78,8 +82,10 @@ import { orderComparePair } from "./history-search.js";
 /**
  * `useHistoryReview` 依赖的 IPC 子集（`electron/preload.cjs` 暴露）。
  * @typedef {object} HistoryIpc
- * @property {(filters: HistoryFilters) => Promise<{ commits?: HistoryCommit[], reason?: string }>} queryHistory
- * @property {() => Promise<{ commits?: HistoryCommit[], reason?: string }>} getCommits
+ * @property {(filters: HistoryFilters) => Promise<{ commits?: HistoryCommit[], reason?: string, limit?: number }>} queryHistory
+ * @property {() => Promise<{ commits?: HistoryCommit[], reason?: string, limit?: number }>} getCommits
+ * @property {() => Promise<{ ok?: boolean, refs?: Array<Record<string, unknown>>, head?: Record<string, unknown> | null, reason?: string }>} getRefs
+ * @property {(hash: string) => Promise<{ ok?: boolean, commit?: HistoryCommit | null, reason?: string }>} getCommit
  * @property {(hash: string) => Promise<HistoryDetail>} getCommitDetail
  * @property {(hash: string) => Promise<HistoryDiffResult>} getCommitDiff
  * @property {(base: string, target: string) => Promise<HistoryDiffResult>} compareCommits
@@ -112,9 +118,24 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   const [applied, setApplied] = useState(/** @type {HistoryFilters | null} */ (null));
   const [commits, setCommits] = useState(/** @type {HistoryCommit[]} */ ([]));
   const [commitsReason, setCommitsReason] = useState("");
+  const [listLimit, setListLimit] = useState(80);
+  const [listTruncated, setListTruncated] = useState(false);
+  const [refs, setRefs] = useState(/** @type {Array<Record<string, unknown>>} */ ([]));
+  const [refsHead, setRefsHead] = useState(/** @type {Record<string, unknown> | null} */ (null));
+  const [refsReason, setRefsReason] = useState("");
+  const [refsLoading, setRefsLoading] = useState(false);
+  const [refNotice, setRefNotice] = useState("");
   const searchRef = useRef(null);
   // 查询序号：只有最新一次查询的响应能落地（快速连点两次「应用筛选」时旧响应会被丢弃）。
   const querySequence = useRef(0);
+  // Refs and commit selection have independent cancellation tokens. A response
+  // that arrives after a repo switch or a newer ref click is discarded.
+  const refsSequence = useRef(0);
+  const selectionSequence = useRef(0);
+  // An explicitly selected ref target may live outside the current page. A
+  // background refresh of the same filters must not clear that selection merely
+  // because the commit is not in the refreshed list.
+  const outsideSelection = useRef("");
   // 提交详情按 SHA 缓存：再次查看同一个提交不再执行 Git 命令。
   const detailCache = useRef(new Map());
 
@@ -130,12 +151,19 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
   };
 
   /** 查询结果落地：提交列表、原因，并把已失效的选中 / 比较端点收掉。 */
-  function applyQueryResult(nextResult) {
+  function applyQueryResult(nextResult, { preserveOutsideSelection = false } = {}) {
     const nextCommits = nextResult?.commits || [];
     const hashes = new Set(nextCommits.map((commit) => commit.hash));
     setCommits(nextCommits);
     setCommitsReason(nextResult?.reason || "");
-    if (selected && !hashes.has(selected.hash)) {
+    if (Number.isSafeInteger(nextResult?.limit) && nextResult.limit > 0) setListLimit(nextResult.limit);
+    setListTruncated(nextResult?.truncated === true);
+    if (!preserveOutsideSelection) outsideSelection.current = "";
+    const keepExplicitOutside = preserveOutsideSelection && selected && outsideSelection.current === selected.hash;
+    if (!keepExplicitOutside) setRefNotice("");
+    if (selected && !hashes.has(selected.hash) && !keepExplicitOutside) {
+      selectionSequence.current += 1;
+      outsideSelection.current = "";
       setSelected(null);
       setDetail(null);
       setResult(null);
@@ -165,7 +193,7 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
    */
   function applyQueryResultIfCurrent(token, nextResult) {
     if (token !== querySequence.current) return false;
-    applyQueryResult(nextResult);
+    applyQueryResult(nextResult, { preserveOutsideSelection: true });
     return true;
   }
 
@@ -187,9 +215,38 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     }
   }
 
+  /**
+   * Read refs for the current repository. The sequence guard covers two cases
+   * the UI can produce quickly: switching repositories, and switching between
+   * two history modes before the first read returns.
+   */
+  async function refreshRefs() {
+    const sequence = ++refsSequence.current;
+    setRefsLoading(true);
+    try {
+      const result = await gitglass.getRefs();
+      if (sequence !== refsSequence.current) return false;
+      setRefs(Array.isArray(result?.refs) ? result.refs : []);
+      setRefsHead(result?.head || null);
+      setRefsReason(result?.ok === false ? result.reason || "无法读取 Git 引用，请刷新后重试。" : result?.reason || "");
+      return true;
+    } catch {
+      if (sequence !== refsSequence.current) return false;
+      setRefs([]);
+      setRefsHead(null);
+      setRefsReason("无法读取 Git 引用，请刷新后重试。");
+      return false;
+    } finally {
+      if (sequence === refsSequence.current) setRefsLoading(false);
+    }
+  }
+
   /** 选中一个提交：命中缓存就直接显示，否则读详情并写缓存。 */
-  async function selectCommit(commit) {
+  async function selectCommit(commit, { notice = "" } = {}) {
     if (!commit) return;
+    const token = ++selectionSequence.current;
+    outsideSelection.current = "";
+    setRefNotice(notice);
     if (selected?.hash === commit.hash && detail) {
       setFile(null);
       setResult(null);
@@ -205,12 +262,109 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     }
     setLoading(true);
     setDetail(null);
-    const nextDetail = await gitglass.getCommitDetail(commit.hash);
-    detailCache.current.set(commit.hash, nextDetail);
-    setDetail(nextDetail);
-    await refreshLedger();
-    setLoading(false);
+    try {
+      const nextDetail = await gitglass.getCommitDetail(commit.hash);
+      // A newer row/ref selection or a repository switch owns the view now.
+      if (token !== selectionSequence.current) return;
+      detailCache.current.set(commit.hash, nextDetail);
+      setDetail(nextDetail);
+      await refreshLedger();
+    } catch {
+      if (token === selectionSequence.current) setRefNotice("读取提交详情失败，请刷新后重试。");
+    } finally {
+      if (token === selectionSequence.current) setLoading(false);
+    }
   }
+
+  /**
+   * Navigate from a ref to its commit. If the target is outside the current
+   * page, read it by full id; the placeholder gives immediate feedback while
+   * the authoritative summary and detail arrive.
+   */
+  async function selectRef(ref) {
+    if (!ref) return;
+    const label = refKindLabel(ref);
+    if (!ref.commit) {
+      setRefNotice(ref.status || `无法从${label}「${ref.shortName || ref.fullName}」解析到提交。`);
+      return;
+    }
+    const known = commits.find((entry) => entry.hash === ref.commit);
+    if (known) {
+      await selectCommit(known, {
+        notice: `已从${label}「${ref.shortName || ref.fullName}」定位到当前列表中的提交 ${known.shortHash || ref.commit.slice(0, 7)}。`,
+      });
+      return;
+    }
+
+    const token = ++selectionSequence.current;
+    outsideSelection.current = ref.commit;
+    const shortHash = ref.commit.slice(0, 7);
+    setSelected({
+      hash: ref.commit,
+      shortHash,
+      subject: `正在读取${label}「${ref.shortName || ref.fullName}」指向的提交…`,
+      parents: [],
+      author: "",
+      authoredAt: "",
+      refs: [],
+    });
+    setDetail(null);
+    setFile(null);
+    setResult(null);
+    setRefNotice(`提交 ${shortHash} 不在当前列表，正在按完整 ID 读取…`);
+    setLoading(true);
+    try {
+      const result = await gitglass.getCommit(ref.commit);
+      if (token !== selectionSequence.current) return;
+      if (!result?.ok || !result.commit) {
+        outsideSelection.current = "";
+        setSelected(null);
+        setRefNotice(result?.reason || "无法按完整 ID 读取该提交，请刷新引用后重试。");
+        return;
+      }
+      const commit = result.commit;
+      setSelected(commit);
+      setRefNotice(`引用「${ref.shortName || ref.fullName}」指向的提交不在当前列表，已按完整 ID ${shortHash} 读取并选中。`);
+      const cached = detailCache.current.get(commit.hash);
+      if (cached) {
+        setDetail(cached);
+      } else {
+        const nextDetail = await gitglass.getCommitDetail(commit.hash);
+        if (token !== selectionSequence.current) return;
+        detailCache.current.set(commit.hash, nextDetail);
+        setDetail(nextDetail);
+        if (nextDetail?.ok === false) {
+          setRefNotice(`已按完整 ID 选中提交 ${shortHash}，但提交详情读取失败：${nextDetail.reason || "请刷新后重试。"}`);
+        }
+      }
+      await refreshLedger();
+    } catch {
+      if (token === selectionSequence.current) {
+        outsideSelection.current = "";
+        setSelected(null);
+        setRefNotice("读取引用指向的提交失败，请刷新引用后重试。");
+      }
+    } finally {
+      if (token === selectionSequence.current) setLoading(false);
+    }
+  }
+
+  // Refs follow the repository and history mode. External ref changes arrive
+  // through App's refreshAll(), which calls refreshRefs() as well.
+  useEffect(() => {
+    if (!mode || !repo) {
+      refsSequence.current += 1;
+      setRefs([]);
+      setRefsHead(null);
+      setRefsReason("");
+      setRefsLoading(false);
+      setRefNotice("");
+      return;
+    }
+    refreshRefs();
+    // refreshRefs owns its sequence guard; repo/mode are the actual inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, repo]);
 
   /** 父提交可能是列表里没有的更早提交：先用占位对象选中，详情回来后再替换。 */
   function viewParentCommit(parentHash) {
@@ -347,6 +501,15 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     setApplied(null);
     setCommits([]);
     setCommitsReason("");
+    setListTruncated(false);
+    setRefs([]);
+    setRefsHead(null);
+    setRefsReason("");
+    setRefsLoading(false);
+    setRefNotice("");
+    refsSequence.current += 1;
+    selectionSequence.current += 1;
+    outsideSelection.current = "";
     detailCache.current.clear();
   }
 
@@ -360,7 +523,28 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     setCompare({ base: null, target: null });
     setDraft(emptyHistoryFilters);
     setApplied(null);
+    setListTruncated(false);
+    setRefs([]);
+    setRefsHead(null);
+    setRefsReason("");
+    setRefsLoading(false);
+    setRefNotice("");
+    refsSequence.current += 1;
+    selectionSequence.current += 1;
+    outsideSelection.current = "";
   }
+
+  // 图只使用 Git 返回的真实 parents；文件筛选会触发历史简化，因此保持列表。
+  const graphAvailable = !applied?.filePath;
+  const historyGraph = useMemo(
+    () => layoutHistoryGraph(commits, { limit: listLimit, truncated: listTruncated }),
+    [commits, listLimit, listTruncated],
+  );
+  const historyGraphRows = useMemo(
+    () => new Map(historyGraph.rows.map((row) => [row.hash, row])),
+    [historyGraph],
+  );
+  const selectedOutsideList = Boolean(selected && !commits.some((commit) => commit.hash === selected.hash));
 
   const detailSubject = detail?.subject || selected?.subject || "";
   const detailAuthor = detail?.authorName || selected?.author || "";
@@ -413,6 +597,16 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     historyApplied: applied,
     commits,
     commitsReason,
+    listLimit,
+    refs,
+    refsHead,
+    refsReason,
+    refsLoading,
+    refNotice,
+    historyGraph,
+    historyGraphRows,
+    graphAvailable,
+    selectedOutsideList,
     historyFiltersDirty: filtersDirty,
     historySearchRef: searchRef,
     // 派生文案
@@ -431,6 +625,8 @@ export function useHistoryReview({ gitglass, repo, loading, setLoading, refreshL
     beginQuery,
     applyQueryResultIfCurrent,
     selectHistoryCommit: selectCommit,
+    selectHistoryRef: selectRef,
+    refreshHistoryRefs: refreshRefs,
     viewParentCommit,
     readHistoryDiff,
     openCommitFileDiff,
