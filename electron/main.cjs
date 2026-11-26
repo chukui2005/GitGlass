@@ -33,6 +33,10 @@ const REPOSITORY_WRITE_CHANNELS = new Set([
   'safety:discard:execute',
   'safety:branch-delete:execute',
   'recovery:rescue:execute',
+  // 远程与上游：写 git 配置、创建本地分支、首次推送都会改仓库（推送还改远端）。
+  'remote:config:execute',
+  'remote:branch:execute',
+  'remote:first-push:execute',
   // Clone writes a new folder next to (never inside) the open repository. It is
   // still a user write: silence the watcher so a target inside the open worktree
   // cannot report the clone back as an external change.
@@ -280,6 +284,17 @@ handleRepository('history:file-diff', (_event, sha, filePath) => repository.file
 handleRepository('branch:prepare', (_event, branch, create) => repository.prepareSwitch(branch, Boolean(create)))
 handleRepository('branch:execute', (_event, branch, create, operationId) => repository.executeSwitch(branch, Boolean(create), operationId))
 handleRepository('remote:overview', () => repository.remoteOverview())
+handleRepository('remote:branches', () => repository.remoteBranches())
+// 远程配置、远程跟踪分支的检出/上游、首次推送：一条 prepare 一条 execute，
+// 每个 kind 只对应一条固定命令，argv 全部由主进程构造。
+handleRepository('remote:config:prepare', (_event, kind, request) => repository.prepareRemoteConfig(kind, request))
+handleRepository('remote:config:execute', (_event, kind, request, operationId) => repository.executeRemoteConfig(kind, request, operationId))
+handleRepository('remote:branch:prepare', (_event, kind, remoteBranch, localName) =>
+  kind === 'set-upstream' ? repository.prepareSetUpstream(remoteBranch) : repository.prepareCheckoutRemote(remoteBranch, localName))
+handleRepository('remote:branch:execute', (_event, kind, remoteBranch, localName, operationId) =>
+  kind === 'set-upstream' ? repository.executeSetUpstream(remoteBranch, operationId) : repository.executeCheckoutRemote(remoteBranch, localName, operationId))
+handleRepository('remote:first-push:prepare', (_event, request) => repository.prepareFirstPush(request))
+handleRepository('remote:first-push:execute', (_event, request, operationId) => repository.executeFirstPush(request, operationId))
 handleRepository('remote:prepare', (_event, kind) => repository.prepareRemote(kind))
 handleRepository('remote:execute', (_event, kind, operationId) => repository.executeRemote(kind, operationId))
 handleRepository('safety:discard:prepare', (_event, filePath) => repository.prepareDiscard(filePath))

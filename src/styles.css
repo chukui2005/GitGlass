@@ -365,3 +365,20 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 /* 窄窗口：先把顶栏文字标签折成图标，再略去仓库名。 */
 @media(max-width:1240px){.view-tab-label{display:none}.view-tab{padding:0 8px}}
 @media(max-width:1120px){.brand strong{display:none}}
+
+/* 远程与上游：远程列表、远程跟踪分支行、配置与计划表单。 */
+.remote-label-actions{display:flex;align-items:center;gap:2px}
+.remote-list{display:grid;gap:2px;margin:2px 0 0;padding:0;list-style:none}
+.remote-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:6px;font-size:12px}
+.remote-row code{color:var(--text);font:12px var(--mono)}
+.remote-row>span{overflow:hidden;color:var(--muted);font:11px var(--mono);text-overflow:ellipsis;white-space:nowrap}
+.remote-row .text-action{height:24px;padding:0 6px;font-size:11px}
+.remote-branches{display:grid;gap:2px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.remote-branch-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:5px;font-size:12px}
+.remote-branch-row code{overflow:hidden;color:var(--text);font:12px var(--mono);text-overflow:ellipsis;white-space:nowrap}
+.remote-branch-row>span{color:var(--muted);font:11px var(--mono)}
+.remote-branch-row .text-action{height:24px;padding:0 5px;font-size:11px}
+.field-block{display:grid;gap:5px}
+.field-block label{color:var(--text);font-size:12px;font-weight:600}
+.field-block input{width:100%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);color:var(--text);font:12px var(--mono)}
+.field-block input:focus-visible{outline:2px solid var(--ring);outline-offset:1px}

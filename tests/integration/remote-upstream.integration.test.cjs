@@ -1,0 +1,265 @@
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { GitCommandService } = require('../../electron/git-command-service.cjs')
+const { RepositoryService } = require('../../electron/repository-service.cjs')
+const { openRepositoryPath } = require('../../electron/repository-opener.cjs')
+
+// v0.6.10 PR 2「远程与上游」的真实 Git 验收：远程配置、远程跟踪分支的检出、上游设置
+// 与首次推送，全部以实际 Git 配置与远端引用为准。
+let workspace
+afterEach(() => {
+  if (workspace) fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+  workspace = null
+})
+
+function tempWorkspace() {
+  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-remote-'))
+  return workspace
+}
+
+const commandsFor = () => new GitCommandService()
+const git = async (cwd, argv) => {
+  const record = await commandsFor(cwd).run({ argv, intent: 'Fixture', source: 'background', cwd })
+  expect(record.ok, `${argv.join(' ')}: ${record.stderr}`).toBe(true)
+  return record.stdout.trim()
+}
+const gitFails = async (cwd, argv) => {
+  const record = await commandsFor(cwd).run({ argv, intent: 'Fixture', source: 'background', cwd })
+  expect(record.ok, `${argv.join(' ')} 应当失败`).toBe(false)
+  return record
+}
+// `git config --get` exits 1 when the key is absent: read it tolerantly.
+const configValue = async (cwd, key) => {
+  const record = await commandsFor(cwd).run({ argv: ['config', '--get', key], intent: 'Fixture', source: 'background', cwd })
+  return record.ok ? record.stdout.trim() : ''
+}
+
+// A real bare remote with `main` plus a second branch `feature/report`.
+async function createOrigin() {
+  const seed = path.join(workspace, 'seed')
+  fs.mkdirSync(seed)
+  await git(seed, ['init', '-b', 'main'])
+  await git(seed, ['config', 'user.name', 'Remote Fixture'])
+  await git(seed, ['config', 'user.email', 'remote@test.local'])
+  fs.writeFileSync(path.join(seed, 'readme.txt'), 'main\n')
+  await git(seed, ['add', '-A'])
+  await git(seed, ['commit', '-m', 'chore: seed main'])
+  const mainHead = await git(seed, ['rev-parse', 'HEAD'])
+  await git(seed, ['switch', '-c', 'feature/report'])
+  fs.writeFileSync(path.join(seed, 'report.txt'), 'report\n')
+  await git(seed, ['add', '-A'])
+  await git(seed, ['commit', '-m', 'feat: report'])
+  const featureHead = await git(seed, ['rev-parse', 'HEAD'])
+  await git(seed, ['switch', 'main'])
+  const bare = path.join(workspace, 'origin.git')
+  await commandsFor(workspace).run({ argv: ['clone', '--bare', seed, bare], intent: 'Fixture', source: 'background', cwd: workspace })
+  return { bare, seed, mainHead, featureHead }
+}
+
+// A repository opened through the product opener, with local identity configured.
+async function setup() {
+  tempWorkspace()
+  const origin = await createOrigin()
+  const work = path.join(workspace, 'work')
+  const commands = new GitCommandService()
+  const cloned = await commands.run({ argv: ['clone', '--', origin.bare, work], intent: 'Fixture', source: 'background', cwd: workspace })
+  expect(cloned.ok, cloned.stderr).toBe(true)
+  await git(work, ['config', 'user.name', 'Remote Fixture'])
+  await git(work, ['config', 'user.email', 'remote@test.local'])
+  const current = { root: work }
+  const repository = new RepositoryService(commands, () => current.root)
+  const opened = await openRepositoryPath({ candidate: work, commandService: commands, repository, remember: () => {}, setRepositoryPath: (root) => { current.root = root } })
+  expect(opened.ok).toBe(true)
+  return { ...origin, work, commands, repository }
+}
+
+const cloneRecords = (commands, intent) => commands.history().filter((record) => record.intent === intent)
+
+describe('v0.6.10 remote configuration (real Git)', () => {
+  it('previews, executes and re-reads an added and an edited remote', async () => {
+    const { work, repository } = await setup()
+    const prepared = await repository.prepareRemoteConfig('add', { name: 'upstream', url: 'https://example.invalid/team/repo.git' })
+    expect(prepared.ok).toBe(true)
+    expect(prepared.plan.argv).toEqual(['remote', 'add', 'upstream', 'https://example.invalid/team/repo.git'])
+
+    const added = await repository.executeRemoteConfig('add', { name: 'upstream', url: 'https://example.invalid/team/repo.git' }, prepared.plan.operationId)
+    expect(added.execution.ok).toBe(true)
+    // 成功后有重新读取的 Git 配置，界面的列表来自这里而不是计划里的值。
+    expect(added.remotes.map((entry) => entry.name).sort()).toEqual(['origin', 'upstream'])
+    expect(added.remotes.find((entry) => entry.name === 'upstream').url).toBe('https://example.invalid/team/repo.git')
+    expect(await git(work, ['remote', 'get-url', 'upstream'])).toBe('https://example.invalid/team/repo.git')
+
+    const edited = await repository.prepareRemoteConfig('set-url', { name: 'upstream', url: 'https://example.invalid/team/renamed.git' })
+    expect(edited.ok).toBe(true)
+    expect(edited.previousUrl).toBe('https://example.invalid/team/repo.git')
+    const result = await repository.executeRemoteConfig('set-url', { name: 'upstream', url: 'https://example.invalid/team/renamed.git' }, edited.plan.operationId)
+    expect(result.execution.ok).toBe(true)
+    expect(await git(work, ['remote', 'get-url', 'upstream'])).toBe('https://example.invalid/team/renamed.git')
+    expect(result.remotes.find((entry) => entry.name === 'upstream').url).toBe('https://example.invalid/team/renamed.git')
+  })
+
+  it('refuses a duplicate name and a credential-bearing address without running Git', async () => {
+    const { repository, commands } = await setup()
+    const duplicate = await repository.prepareRemoteConfig('add', { name: 'origin', url: 'https://example.invalid/other.git' })
+    expect(duplicate).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(duplicate.reason).toContain('已存在')
+
+    const credential = await repository.prepareRemoteConfig('add', { name: 'leaky', url: 'https://user:tok3n@example.invalid/other.git' })
+    expect(credential).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(credential.reason).not.toContain('tok3n')
+    expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
+
+    // 名称规则同样由主进程守：`..`、空格与以连字符开头的名称都不接受。
+    for (const name of ['bad name', '-leading', 'a/b']) {
+      const invalid = await repository.prepareRemoteConfig('add', { name, url: 'https://example.invalid/x.git' })
+      expect(invalid.ok, name).toBe(false)
+    }
+    expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
+  })
+
+  it('refuses an execute whose preview no longer matches the repository configuration', async () => {
+    const { work, repository, commands } = await setup()
+    const prepared = await repository.prepareRemoteConfig('add', { name: 'stale', url: 'https://example.invalid/stale.git' })
+    expect(prepared.ok).toBe(true)
+
+    // 预览之后配置被别人改了（例如终端里 git remote add）。
+    await git(work, ['remote', 'add', 'other', 'https://example.invalid/other.git'])
+    const stale = await repository.executeRemoteConfig('add', { name: 'stale', url: 'https://example.invalid/stale.git' }, prepared.plan.operationId)
+    expect(stale).toMatchObject({ ok: false, blocked: true, execution: null })
+    expect(stale.reason).toContain('发生了变化')
+    expect(await git(work, ['remote'])).not.toContain('stale')
+    expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
+
+    // 预览是一次性的：同一个 operationId 不会被第二次执行。
+    const repeat = await repository.executeRemoteConfig('add', { name: 'stale', url: 'https://example.invalid/stale.git' }, prepared.plan.operationId)
+    expect(repeat).toMatchObject({ ok: false, blocked: true })
+    expect(repeat.reason).toContain('过期')
+  })
+})
+
+describe('v0.6.10 remote-tracked branches and upstream (real Git)', () => {
+  it('checks out a remote-tracking branch as a local tracking branch', async () => {
+    const { work, repository, featureHead } = await setup()
+    const remoteBranches = await repository.remoteBranches()
+    expect(remoteBranches.branches.map((entry) => entry.full).sort()).toEqual(['refs/remotes/origin/feature/report', 'refs/remotes/origin/main'])
+
+    const prepared = await repository.prepareCheckoutRemote('refs/remotes/origin/feature/report', 'report-work')
+    expect(prepared.ok).toBe(true)
+    expect(prepared.plan.argv).toEqual(['switch', '--track', '-c', 'report-work', 'origin/feature/report'])
+    const result = await repository.executeCheckoutRemote('refs/remotes/origin/feature/report', 'report-work', prepared.plan.operationId)
+    expect(result.execution.ok).toBe(true)
+
+    // 本地分支、HEAD 与上游都以 Git 的实际状态为准。
+    expect(await git(work, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('report-work')
+    expect(await git(work, ['rev-parse', 'HEAD'])).toBe(featureHead)
+    expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).toBe('origin/feature/report')
+    expect(result.state.branch).toBe('report-work')
+  })
+
+  it('refuses a checkout when a local branch has the same name or the worktree has changes', async () => {
+    const { work, repository } = await setup()
+    // 本地同名分支：先建一个同名的，再试检出。
+    await git(work, ['branch', 'report-work', 'origin/feature/report'])
+    const sameName = await repository.prepareCheckoutRemote('refs/remotes/origin/feature/report', 'report-work')
+    expect(sameName).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(sameName.reason).toContain('同名分支')
+
+    // 工作区有改动：不 stash、不覆盖，直接阻断。
+    fs.writeFileSync(path.join(work, 'readme.txt'), 'dirty\n')
+    const dirty = await repository.prepareCheckoutRemote('refs/remotes/origin/feature/report', 'another-name')
+    expect(dirty).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(dirty.reason).toContain('工作区存在未提交或未暂存的变更')
+    expect(await git(work, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
+    expect(fs.readFileSync(path.join(work, 'readme.txt'), 'utf8')).toBe('dirty\n')
+  })
+
+  it('sets the upstream and reports the tracking relation Git actually saved', async () => {
+    const { work, repository } = await setup()
+    await git(work, ['switch', '-c', 'local-topic'])
+    const prepared = await repository.prepareSetUpstream('refs/remotes/origin/feature/report')
+    expect(prepared.ok).toBe(true)
+    expect(prepared.plan.argv).toEqual(['branch', '--set-upstream-to', 'origin/feature/report', 'local-topic'])
+
+    const result = await repository.executeSetUpstream('refs/remotes/origin/feature/report', prepared.plan.operationId)
+    expect(result.execution.ok).toBe(true)
+    expect(result.upstream).toMatchObject({ ref: 'origin/feature/report', remote: 'origin', branch: 'feature/report' })
+    expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).toBe('origin/feature/report')
+    expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', 'local-topic@{upstream}'])).toBe('origin/feature/report')
+  })
+})
+
+describe('v0.6.10 first push with upstream (real Git)', () => {
+  it('runs clone, checkout, new branch, commit and first push against a temporary bare remote', async () => {
+    const { bare, work, repository } = await setup()
+
+    // 1. 检出已有的远程跟踪分支。
+    const checkout = await repository.prepareCheckoutRemote('refs/remotes/origin/feature/report')
+    const checkedOut = await repository.executeCheckoutRemote('refs/remotes/origin/feature/report', undefined, checkout.plan.operationId)
+    expect(checkedOut.execution.ok).toBe(true)
+    expect(checkedOut.state.branch).toBe('feature/report')
+
+    // 2. 新建本地分支并提交。
+    const branch = await repository.prepareSwitch('my-feature', true)
+    expect(branch.ok).toBe(true)
+    const switched = await repository.executeSwitch('my-feature', true, branch.plan.operationId)
+    expect(switched.execution.ok).toBe(true)
+    fs.writeFileSync(path.join(work, 'my-feature.txt'), 'work\n')
+    expect((await repository.stage('my-feature.txt')).ok).toBe(true)
+    expect((await repository.commit('feat: my feature')).ok).toBe(true)
+    const head = await git(work, ['rev-parse', 'HEAD'])
+
+    // 3. 首次推送：预览里写清本地分支、实际推送目标与目标 refs/heads/…。
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared.ok).toBe(true)
+    expect(prepared.branch).toBe('my-feature')
+    expect(prepared.remote).toBe('origin')
+    expect(prepared.targetRef).toBe('refs/heads/my-feature')
+    expect(prepared.remoteBranch).toBe('my-feature')
+    expect(prepared.plan.argv).toEqual(['push', '--set-upstream', 'origin', 'my-feature:refs/heads/my-feature'])
+    expect(prepared.plan.displayCommand).toBe('git push --set-upstream origin my-feature:refs/heads/my-feature')
+
+    const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
+    expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
+    // 远端提交 ID、实际上游与同步状态。
+    expect(await git(bare, ['rev-parse', 'refs/heads/my-feature'])).toBe(head)
+    expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).toBe('origin/my-feature')
+    expect(pushed.upstream).toMatchObject({ ref: 'origin/my-feature', remote: 'origin', branch: 'my-feature' })
+    expect(pushed.overview).toMatchObject({ ok: true, ahead: 0, behind: 0 })
+    // 本地分支的配置也记下了跟踪关系。
+    expect(await configValue(work, 'branch.my-feature.remote')).toBe('origin')
+    expect(await configValue(work, 'branch.my-feature.merge')).toBe('refs/heads/my-feature')
+  })
+
+  it('reports a rejected non-fast-forward push and leaves the upstream and remote ref untouched', async () => {
+    const { bare, work, repository } = await setup()
+    await git(work, ['switch', '-c', 'clash'])
+    fs.writeFileSync(path.join(work, 'clash.txt'), 'local\n')
+    await git(work, ['add', '-A'])
+    await git(work, ['commit', '-m', 'feat: local clash'])
+
+    // 另一个人先把同名分支推到了远端，历史与本地互不相同。
+    const other = path.join(workspace, 'other')
+    await commandsFor(workspace).run({ argv: ['clone', '--', bare, other], intent: 'Fixture', source: 'background', cwd: workspace })
+    await git(other, ['config', 'user.name', 'Other'])
+    await git(other, ['config', 'user.email', 'other@test.local'])
+    await git(other, ['switch', '-c', 'clash'])
+    fs.writeFileSync(path.join(other, 'other.txt'), 'remote\n')
+    await git(other, ['add', '-A'])
+    await git(other, ['commit', '-m', 'feat: remote clash'])
+    await git(other, ['push', 'origin', 'clash'])
+    const remoteHead = await git(bare, ['rev-parse', 'refs/heads/clash'])
+
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared.ok).toBe(true)
+    const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
+    expect(pushed.execution.ok).toBe(false)
+    expect(pushed.execution.stderr).toMatch(/rejected|non-fast-forward|fetch first/i)
+
+    // 上游仍然没有配置，远端引用也保持原值。
+    expect(pushed.upstream).toBeNull()
+    await gitFails(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    expect(await configValue(work, 'branch.clash.remote')).toBe('')
+    expect(await git(bare, ['rev-parse', 'refs/heads/clash'])).toBe(remoteHead)
+  })
+})

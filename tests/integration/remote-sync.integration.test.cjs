@@ -111,8 +111,8 @@ describe('real remote sync integration', () => {
     expect(nonFastForward.fastForward).toMatchObject({ ok: false, exitCode: 1, argv: ['git', 'merge-base', '--is-ancestor', 'HEAD', '@{upstream}'] })
 
     const ledger = commands.history()
-    expect(ledger.some((record) => record.argv.join(' ') === 'git remote')).toBe(true)
-    expect(ledger.some((record) => record.argv.join(' ') === 'git remote get-url origin')).toBe(true)
+    // 名称与地址来自同一次 `git remote -v` 读取（0.6.10 PR 2 起不再单独读 get-url）。
+    expect(ledger.some((record) => record.argv.join(' ') === 'git remote -v')).toBe(true)
     expect(ledger.some((record) => record.argv.join(' ') === 'git rev-list --left-right --count @{upstream}...HEAD')).toBe(true)
     expect(ledger.some((record) => record.operationId === fetchPlan.plan.operationId && record.argv.join(' ') === 'git fetch origin')).toBe(true)
     expect(ledger.some((record) => record.operationId === pushPlan.plan.operationId && record.argv.join(' ') === 'git push origin main:main')).toBe(true)

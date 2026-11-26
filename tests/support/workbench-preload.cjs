@@ -182,6 +182,27 @@ contextBridge.exposeInMainWorld('gitglass', {
     const branches = execute(['for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)', 'refs/heads'], 'Read local branches')
     return { branches: parseBranches(branches.result.stdout) }
   },
+  getRemoteBranches: async () => {
+    const branches = execute(['branch', '--remotes', '--format=%(refname)%00%(refname:short)%00%(objectname:short)'], 'Read remote-tracking branches')
+    const list = branches.result.ok
+      ? branches.result.stdout
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => {
+            const [full, short, hash] = line.split('\0')
+            const slash = String(short || '').indexOf('/')
+            return { full, short, hash, remote: slash === -1 ? '' : short.slice(0, slash), branch: slash === -1 ? '' : short.slice(slash + 1) }
+          })
+          .filter((entry) => entry.full && entry.branch && entry.branch !== 'HEAD')
+      : []
+    return { branches: list, reason: '' }
+  },
+  prepareRemoteConfig: async () => ({ ok: false, blocked: true, reason: '探针未配置远程配置。', plan: null }),
+  executeRemoteConfig: async () => ({ execution: null }),
+  prepareRemoteBranch: async () => ({ ok: false, blocked: true, reason: '探针未配置远程分支操作。', plan: null }),
+  executeRemoteBranch: async () => ({ execution: null }),
+  prepareFirstPush: async () => ({ ok: false, blocked: true, reason: '探针未配置首次推送。', plan: null }),
+  executeFirstPush: async () => ({ execution: null }),
   getDiff: async (file) => {
     const detail = fileDiff(file)
     return { ...detail, outputTruncated: false }

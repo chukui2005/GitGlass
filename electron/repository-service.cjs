@@ -1,6 +1,8 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
+// 地址策略与占位符脱敏只有一份实现：远程 URL 与克隆地址用同一条白名单和同一套拦截。
+const { classifyCloneSource, redactCloneSource, redactCloneOutput } = require('./repository-cloner.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -147,10 +149,27 @@ function parseAheadBehind(value) {
   return Number.isSafeInteger(ahead) && ahead >= 0 && Number.isSafeInteger(behind) && behind >= 0 ? { ahead, behind } : null
 }
 
+const PREVIEW_EXPIRED = '这份预览已过期，请重新预览后再执行。'
+const STALE_REPOSITORY = '仓库或远程配置在预览后发生了变化，请重新预览再执行。'
+const STALE_BRANCH = '本地分支或推送目标在预览后发生了变化，请重新预览再执行。'
+
 class RepositoryService {
-  constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath }
+  constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath; this.previews = new Map() }
   get cwd() { return this.getRepoPath() }
   run(argv, intent, source = 'background', operationId, redactOutput, maxOutputBytes, timeoutMs, extras = null) { return this.commands.run({ argv, intent, source, cwd: this.cwd, operationId, redactOutput, maxOutputBytes, timeoutMs, ...(extras || {}) }) }
+  // 远程与上游的「预览 → 执行」：预览时把 argv 与当时的仓库快照记在主进程里，执行时按
+  // operationId 取出这一份并复核。渲染层只能回传标识，既改不了命令，也无法让执行
+  // 跳过复核。预览是一次性的：取出即作废，重复确认不会跑第二遍。
+  rememberPreview(operationId, entry) {
+    this.previews.set(operationId, entry)
+    while (this.previews.size > 50) this.previews.delete(this.previews.keys().next().value)
+  }
+  takePreview(operationId, family) {
+    const entry = typeof operationId === 'string' ? this.previews.get(operationId) : null
+    if (!entry || entry.family !== family) return null
+    this.previews.delete(operationId)
+    return entry
+  }
   // 按块操作的读取要拿到脱敏前的原始输出：补丁必须逐字节回到 Git，而账本记录照旧脱敏。
   async readPatch(area, filePath, intent) {
     const { record, stdout } = await this.commands.runCapturingOutput({ argv: hunkDiffArgs(area, filePath), intent, source: 'background', cwd: this.cwd, maxOutputBytes: DIFF_OUTPUT_BYTES })
@@ -460,22 +479,24 @@ class RepositoryService {
 
   async remoteOverview() {
     const state = await this.state()
-    const remotesRecord = await this.run(['remote'], 'List remotes')
-    const remotes = remotesRecord.ok ? remotesRecord.stdout.split(/\r?\n/).map((name) => name.trim()).filter(isRemoteName) : []
-    if (!remotesRecord.ok) return { ok: false, state, remotes: [], reason: '无法读取远程仓库配置。', suggestion: '确认仓库仍可访问后刷新；诊断信息已保留在命令账本。', records: [remotesRecord] }
-    if (!remotes.length) return { ok: true, state, remotes, upstream: null, remote: null, ahead: 0, behind: 0, reason: '此仓库尚未配置远程仓库。', suggestion: '添加远程仓库后即可获取远程更新；为当前分支设置上游分支后可推送和拉取。', records: [remotesRecord] }
+    // 一次 `git remote -v` 同时给出名称与地址：列表与「编辑地址」都用同一份读取结果。
+    const details = await this.remotesDetailed()
+    const remotesRecord = details.record
+    const remotes = details.remotes.map((entry) => entry.name).filter(isRemoteName)
+    const remoteDetails = details.remotes
+    if (!details.ok) return { ok: false, state, remotes: [], details: [], reason: '无法读取远程仓库配置。', suggestion: '确认仓库仍可访问后刷新；诊断信息已保留在命令账本。', records: [remotesRecord] }
+    if (!remotes.length) return { ok: true, state, remotes, details: [], upstream: null, remote: null, ahead: 0, behind: 0, reason: '此仓库尚未配置远程仓库。', suggestion: '添加远程仓库后即可获取远程更新；为当前分支设置上游分支后可推送和拉取。', records: [remotesRecord] }
 
     const upstreamRecord = await this.run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], 'Read branch upstream')
     const upstream = upstreamRecord.ok ? parseUpstream(upstreamRecord.stdout) : null
     const remoteName = upstream?.remote || remotes[0]
-    const urlRecord = await this.run(['remote', 'get-url', remoteName], 'Read remote URL', 'background', undefined, redactRemoteUrl)
-    const remote = { name: remoteName, url: urlRecord.ok ? urlRecord.stdout.trim() : '' }
-    if (!upstream) return { ok: true, state, remotes, remote, upstream: null, ahead: 0, behind: 0, reason: '当前分支尚未配置上游分支。', suggestion: '设置上游分支后即可查看领先与落后状态，并安全推送或拉取。', records: [remotesRecord, upstreamRecord, urlRecord] }
+    const remote = remoteDetails.find((entry) => entry.name === remoteName) || { name: remoteName, url: '' }
+    if (!upstream) return { ok: true, state, remotes, details: remoteDetails, remote, upstream: null, ahead: 0, behind: 0, reason: '当前分支尚未配置上游分支。', suggestion: '设置上游分支后即可查看领先与落后状态，并安全推送或拉取。', records: [remotesRecord, upstreamRecord] }
 
     const countRecord = await this.run(['rev-list', '--left-right', '--count', '@{upstream}...HEAD'], 'Read ahead and behind counts')
     const counts = countRecord.ok ? parseAheadBehind(countRecord.stdout) : null
-    if (!counts) return { ok: false, state, remotes, remote, upstream, ahead: 0, behind: 0, reason: '无法读取远程同步状态。', suggestion: '先获取远程更新后重试；诊断信息已保留在命令账本。', records: [remotesRecord, upstreamRecord, urlRecord, countRecord] }
-    return { ok: true, state, remotes, remote, upstream, ...counts, reason: '', suggestion: '', records: [remotesRecord, upstreamRecord, urlRecord, countRecord] }
+    if (!counts) return { ok: false, state, remotes, details: remoteDetails, remote, upstream, ahead: 0, behind: 0, reason: '无法读取远程同步状态。', suggestion: '先获取远程更新后重试；诊断信息已保留在命令账本。', records: [remotesRecord, upstreamRecord, countRecord] }
+    return { ok: true, state, remotes, details: remoteDetails, remote, upstream, ...counts, reason: '', suggestion: '', records: [remotesRecord, upstreamRecord, countRecord] }
   }
 
   async prepareRemote(kind, operationId) {
@@ -594,6 +615,293 @@ class RepositoryService {
     if (!prepared.ok) return { execution: null, ...prepared }
     const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId)
     return { execution, ...prepared, state: await this.state() }
+  }
+
+  // ---------------------------------------------------------------- 远程与上游
+  //
+  // 远程配置、远程跟踪分支的检出、上游设置与首次推送都属于「先预览、再执行」：
+  // 计划里的 argv 是唯一会执行的命令，执行前重新读取仓库与远程配置，任何一项与
+  // 预览时不一致就拒绝执行（用户改过配置、切过仓库、别人动过 remote）。
+
+  /** `git remote -v` 的解析：每个远程一行 fetch 地址（地址按克隆同一套占位符脱敏）。 */
+  async remotesDetailed() {
+    const record = await this.run(['remote', '-v'], 'Read remote configuration', 'background', undefined, redactCloneOutput)
+    const remotes = []
+    if (record.ok) {
+      for (const line of record.stdout.split(/\r?\n/)) {
+        const match = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/.exec(line.trim())
+        if (match && match[3] === 'fetch') remotes.push({ name: match[1], url: redactCloneSource(match[2]) })
+      }
+    }
+    return { ok: record.ok, remotes, record }
+  }
+
+  /** 远程跟踪分支：完整引用 + 短名 + 远程名 + 分支名 + 短提交 ID。 */
+  async remoteBranches() {
+    const record = await this.run(['branch', '--remotes', '--format=%(refname)%00%(refname:short)%00%(objectname:short)'], 'Read remote-tracking branches')
+    const branches = record.ok
+      ? record.stdout
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => {
+            const [full, short, hash] = line.split('\0')
+            const slash = String(short || '').indexOf('/')
+            return { full, short, hash, remote: slash === -1 ? '' : short.slice(0, slash), branch: slash === -1 ? '' : short.slice(slash + 1) }
+          })
+          // `origin/HEAD` 是符号引用，不是可以检出的分支。
+          .filter((entry) => entry.full && entry.branch && entry.branch !== 'HEAD')
+      : []
+    return { record, branches, reason: record.ok ? '' : '无法读取远程跟踪分支。请刷新后重试；诊断信息已保留在命令账本。' }
+  }
+
+  /** 远程配置的预览：只校验与规划，绝不执行。 */
+  async prepareRemoteConfig(kind, request, operationId) {
+    if (kind !== 'add' && kind !== 'set-url') return { ok: false, blocked: true, reason: '不支持的远程配置操作。', plan: null }
+    const name = typeof request?.name === 'string' ? request.name.trim() : ''
+    const url = typeof request?.url === 'string' ? request.url.trim() : ''
+    if (!isRemoteName(name) || name === 'HEAD') return { ok: false, blocked: true, reason: '远程名称无效：请以字母或数字开头，只使用字母、数字、点、下划线和连字符。', plan: null }
+    const address = classifyCloneSource(url)
+    if (!address.ok) return { ok: false, blocked: true, reason: address.reason, plan: null }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    const details = await this.remotesDetailed()
+    if (!details.ok) return { ok: false, blocked: true, reason: '无法读取远程配置，请刷新后重试。', plan: null, state }
+    const existing = details.remotes.find((entry) => entry.name === name)
+    if (kind === 'add' && existing) {
+      return { ok: false, blocked: true, reason: `远程「${name}」已存在。请换一个名称，或编辑现有远程的地址。`, plan: null, state, remotes: details.remotes }
+    }
+    if (kind === 'set-url' && !existing) {
+      return { ok: false, blocked: true, reason: `远程「${name}」不存在。请先添加，或刷新后重试。`, plan: null, state, remotes: details.remotes }
+    }
+    const argv = kind === 'add' ? ['remote', 'add', name, address.value] : ['remote', 'set-url', name, address.value]
+    const plan = this.plan(argv, kind === 'add' ? 'Add remote' : 'Edit remote URL', operationId)
+    const snapshot = { repo: this.cwd, remotes: details.remotes.map((entry) => ({ name: entry.name, url: entry.url })) }
+    this.rememberPreview(plan.operationId, { family: 'remote-config', kind, name, argv: plan.argv, intent: plan.intent, snapshot })
+    return {
+      ok: true,
+      blocked: false,
+      kind,
+      name,
+      url: address.value,
+      urlDisplay: address.display,
+      previousUrl: existing?.url || '',
+      snapshot,
+      state,
+      plan,
+    }
+  }
+
+  /** 执行远程配置：取出预览时记下的 argv，复核仓库与远程配置仍一致后才运行。 */
+  async executeRemoteConfig(kind, request, operationId) {
+    const preview = this.takePreview(operationId, 'remote-config')
+    if (!preview || preview.kind !== kind) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
+    const current = await this.remotesDetailed()
+    const unchanged =
+      current.ok &&
+      preview.snapshot.repo === this.cwd &&
+      JSON.stringify(current.remotes.map((entry) => ({ name: entry.name, url: entry.url }))) === JSON.stringify(preview.snapshot.remotes)
+    if (!unchanged) {
+      return { execution: null, ok: false, blocked: true, reason: STALE_REPOSITORY, overview: await this.remoteOverview() }
+    }
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId)
+    const details = await this.remotesDetailed()
+    return {
+      execution,
+      ok: execution.ok,
+      kind,
+      name: preview.name,
+      remotes: details.remotes,
+      overview: await this.remoteOverview(),
+      reason: execution.ok ? '' : 'Git 返回了失败，请查看命令账本中的真实命令与错误输出。',
+    }
+  }
+
+  /** 检出远程跟踪分支：本地同名、工作区有改动、名称非法都在这里阻断。 */
+  async prepareCheckoutRemote(remoteBranch, localName, operationId) {
+    if (!isBranchInput(remoteBranch)) return { ok: false, blocked: true, reason: '请选择一个远程跟踪分支。', plan: null }
+    const remoteList = await this.remoteBranches()
+    if (!remoteList.record.ok) return { ok: false, blocked: true, reason: remoteList.reason, plan: null }
+    const target = remoteList.branches.find((entry) => entry.full === remoteBranch || entry.short === remoteBranch)
+    if (!target) return { ok: false, blocked: true, reason: '所选远程跟踪分支已不存在，请刷新后重试。', plan: null }
+    const name = typeof localName === 'string' && localName.trim() ? localName.trim() : target.branch
+    if (!isBranchInput(name)) return { ok: false, blocked: true, reason: '本地分支名无效。', plan: null }
+    const validation = await this.run(['check-ref-format', '--branch', name], 'Validate local branch name')
+    if (!validation.ok) return { ok: false, blocked: true, reason: '本地分支名不符合 Git ref 规则。', plan: null, validation }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    if (state.files.length) return { ok: false, blocked: true, reason: '工作区存在未提交或未暂存的变更。GitGlass 不会自动 stash、丢弃或覆盖它们。', plan: null, state }
+    const locals = await this.branches()
+    if (locals.branches.some((entry) => entry.name === name)) {
+      return { ok: false, blocked: true, reason: `本地已存在同名分支「${name}」。请换一个本地分支名，或先切换到该分支再设置上游。`, plan: null, state, remotes: remoteList.branches }
+    }
+    const plan = this.plan(['switch', '--track', '-c', name, target.short], 'Check out remote-tracking branch', operationId)
+    const snapshot = { repo: this.cwd, remoteBranch: target.full, head: state.branch, local: name }
+    this.rememberPreview(plan.operationId, { family: 'remote-checkout', argv: plan.argv, intent: plan.intent, snapshot, remoteBranch: target.full })
+    return {
+      ok: true,
+      blocked: false,
+      kind: 'checkout',
+      remote: target.remote,
+      remoteBranch: target.full,
+      remoteBranchShort: target.short,
+      branch: target.branch,
+      local: name,
+      snapshot,
+      state,
+      plan,
+    }
+  }
+
+  async executeCheckoutRemote(remoteBranch, localName, operationId) {
+    const preview = this.takePreview(operationId, 'remote-checkout')
+    if (!preview) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
+    const state = await this.state()
+    const remoteList = await this.remoteBranches()
+    const target = remoteList.branches.find((entry) => entry.full === preview.snapshot.remoteBranch)
+    const locals = await this.branches()
+    const problems = []
+    if (!state.ok) problems.push(state.error)
+    else if (preview.snapshot.repo !== this.cwd || state.branch !== preview.snapshot.head) problems.push(STALE_BRANCH)
+    else if (state.files.length) problems.push('工作区存在未提交或未暂存的变更。GitGlass 不会自动 stash、丢弃或覆盖它们。')
+    if (!target) problems.push('所选远程跟踪分支已不存在，请刷新后重试。')
+    if (locals.branches.some((entry) => entry.name === preview.snapshot.local)) problems.push(`本地已存在同名分支「${preview.snapshot.local}」。请换一个本地分支名，或先切换到该分支再设置上游。`)
+    if (problems.length) {
+      return { execution: null, ok: false, blocked: true, reason: problems[0], state, remoteBranches: remoteList.branches }
+    }
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId)
+    return {
+      execution,
+      ok: execution.ok,
+      kind: 'checkout',
+      local: preview.snapshot.local,
+      remoteBranch: preview.snapshot.remoteBranch,
+      state: await this.state(),
+      branches: (await this.branches()).branches,
+      remoteBranches: (await this.remoteBranches()).branches,
+      reason: execution.ok ? '' : 'Git 返回了失败，请查看命令账本中的真实命令与错误输出。',
+    }
+  }
+
+  /** 为当前分支设置上游：目标必须是远程跟踪引用，DETACHED HEAD 不能设置。 */
+  async prepareSetUpstream(remoteBranch, operationId) {
+    if (!isBranchInput(remoteBranch)) return { ok: false, blocked: true, reason: '请选择一个远程跟踪分支作为上游。', plan: null }
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    if (!state.branch || state.branch === 'DETACHED HEAD') return { ok: false, blocked: true, reason: '当前处于分离头指针状态，没有可设置上游的本地分支。', plan: null, state }
+    const remoteList = await this.remoteBranches()
+    if (!remoteList.record.ok) return { ok: false, blocked: true, reason: remoteList.reason, plan: null, state }
+    const target = remoteList.branches.find((entry) => entry.full === remoteBranch || entry.short === remoteBranch)
+    if (!target) return { ok: false, blocked: true, reason: '所选远程跟踪分支已不存在，请刷新后重试。', plan: null, state }
+    const plan = this.plan(['branch', '--set-upstream-to', target.short, state.branch], 'Set branch upstream', operationId)
+    const snapshot = { repo: this.cwd, branch: state.branch, remoteBranch: target.full }
+    this.rememberPreview(plan.operationId, { family: 'set-upstream', argv: plan.argv, intent: plan.intent, snapshot, remoteBranch: target.full })
+    return {
+      ok: true,
+      blocked: false,
+      kind: 'set-upstream',
+      branch: state.branch,
+      remote: target.remote,
+      remoteBranch: target.full,
+      remoteBranchShort: target.short,
+      snapshot,
+      state,
+      plan,
+    }
+  }
+
+  async executeSetUpstream(remoteBranch, operationId) {
+    const preview = this.takePreview(operationId, 'set-upstream')
+    if (!preview) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
+    const state = await this.state()
+    const remoteList = await this.remoteBranches()
+    const target = remoteList.branches.find((entry) => entry.full === preview.snapshot.remoteBranch)
+    if (!state.ok) return { execution: null, ok: false, blocked: true, reason: state.error, state }
+    if (preview.snapshot.repo !== this.cwd || state.branch !== preview.snapshot.branch) {
+      return { execution: null, ok: false, blocked: true, reason: '当前分支在预览后发生了变化，请重新预览再执行。', state }
+    }
+    if (!target) return { execution: null, ok: false, blocked: true, reason: '所选远程跟踪分支已不存在，请刷新后重试。', state }
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId)
+    // 上游以 Git 实际保存的跟踪关系为准，不用计划里的值回填。
+    const upstreamRecord = await this.run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], 'Read branch upstream')
+    return {
+      execution,
+      ok: execution.ok,
+      kind: 'set-upstream',
+      branch: preview.snapshot.branch,
+      remoteBranch: preview.snapshot.remoteBranch,
+      upstream: upstreamRecord.ok ? parseUpstream(upstreamRecord.stdout) : null,
+      state: await this.state(),
+      reason: execution.ok ? '' : 'Git 返回了失败，请查看命令账本中的真实命令与错误输出。',
+    }
+  }
+
+  /** 第一次推送并设置上游：预览里写清本地分支、实际推送目标与目标 refs/heads/…。 */
+  async prepareFirstPush(request, operationId) {
+    const state = await this.state()
+    if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
+    if (!state.branch || state.branch === 'DETACHED HEAD') return { ok: false, blocked: true, reason: '当前处于分离头指针状态，没有可推送的本地分支。', plan: null, state }
+    const remoteList = await this.remotesDetailed()
+    if (!remoteList.ok) return { ok: false, blocked: true, reason: '无法读取远程配置，请刷新后重试。', plan: null, state }
+    const remote = typeof request?.remote === 'string' && request.remote ? request.remote : remoteList.remotes[0]?.name || ''
+    if (!isRemoteName(remote)) return { ok: false, blocked: true, reason: '请选择一个远程仓库。', plan: null, state, remotes: remoteList.remotes }
+    const remoteEntry = remoteList.remotes.find((entry) => entry.name === remote)
+    if (!remoteEntry) return { ok: false, blocked: true, reason: `远程「${remote}」不存在，请刷新后重试。`, plan: null, state, remotes: remoteList.remotes }
+    const requestedBranch = typeof request?.remoteBranch === 'string' && request.remoteBranch.trim() ? request.remoteBranch.trim() : state.branch
+    if (!isBranchInput(requestedBranch)) return { ok: false, blocked: true, reason: '远程分支名无效。', plan: null, state, remotes: remoteList.remotes }
+    const validation = await this.run(['check-ref-format', '--branch', requestedBranch], 'Validate remote branch name')
+    if (!validation.ok) return { ok: false, blocked: true, reason: '远程分支名不符合 Git ref 规则。', plan: null, state, remotes: remoteList.remotes, validation }
+    const targetRef = `refs/heads/${requestedBranch}`
+    const head = await this.run(['rev-parse', '--verify', '--quiet', 'HEAD'], 'Read local HEAD for first push')
+    if (!head.ok) return { ok: false, blocked: true, reason: '当前分支还没有提交，无法推送。', plan: null, state, remotes: remoteList.remotes }
+    const plan = this.plan(['push', '--set-upstream', remote, `${state.branch}:${targetRef}`], 'Push branch and set upstream', operationId)
+    const snapshot = { repo: this.cwd, branch: state.branch, remote, targetRef, head: head.stdout.trim() }
+    this.rememberPreview(plan.operationId, { family: 'first-push', argv: plan.argv, intent: plan.intent, snapshot })
+    return {
+      ok: true,
+      blocked: false,
+      kind: 'first-push',
+      branch: state.branch,
+      remote,
+      remoteUrl: remoteEntry.url,
+      remoteBranch: requestedBranch,
+      targetRef,
+      head: head.stdout.trim(),
+      snapshot,
+      state,
+      remotes: remoteList.remotes,
+      plan,
+    }
+  }
+
+  async executeFirstPush(request, operationId) {
+    const preview = this.takePreview(operationId, 'first-push')
+    if (!preview) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
+    const state = await this.state()
+    // 复核预览里的三个值：当前分支、远程与目标 refs/heads/…，任何一项变了都不执行。
+    const sameTarget =
+      state.ok &&
+      preview.snapshot.repo === this.cwd &&
+      state.branch === preview.snapshot.branch &&
+      preview.argv[preview.argv.length - 2] === preview.snapshot.remote &&
+      preview.argv[preview.argv.length - 1] === `${preview.snapshot.branch}:${preview.snapshot.targetRef}`
+    if (!sameTarget) {
+      return { execution: null, ok: false, blocked: true, reason: STALE_BRANCH, state, overview: await this.remoteOverview() }
+    }
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId, null, null, NETWORK_TIMEOUT_MS)
+    // 推送后以上游的实际结果为准：失败时上游与远端引用都保持原值。
+    const upstreamRecord = await this.run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], 'Read branch upstream after push')
+    return {
+      execution,
+      ok: execution.ok,
+      kind: 'first-push',
+      branch: preview.snapshot.branch,
+      remote: preview.snapshot.remote,
+      targetRef: preview.snapshot.targetRef,
+      upstream: upstreamRecord.ok ? parseUpstream(upstreamRecord.stdout) : null,
+      state: await this.state(),
+      overview: await this.remoteOverview(),
+      reason: execution.ok ? '' : 'Git 拒绝了这次推送，请查看命令账本中的真实命令与错误输出。',
+    }
   }
 
   invalid(intent, stderr) { return { id: null, operationId: null, intent, source: 'user', argv: ['git'], displayCommand: 'git', command: 'git', cwd: this.cwd || '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), stdout: '', stderr, exitCode: -1, ok: false } }

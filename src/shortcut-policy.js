@@ -22,13 +22,14 @@ export function isCommitMessageTarget(target) {
  * @property {unknown} [safetyPlan]
  * @property {unknown} [branchPlan]
  * @property {unknown} [remotePlan]
+ * @property {unknown} [remoteTask]
  * @property {boolean} [recoveryOpen]
  * @property {boolean} [cloneOpen]
  */
 
 /** @param {BlockingContext} [context] */
-export function isBlockingContextOpen({ paletteOpen, safetyPlan, branchPlan, remotePlan, recoveryOpen, cloneOpen } = {}) {
-  return Boolean(paletteOpen || safetyPlan || branchPlan || remotePlan || recoveryOpen || cloneOpen)
+export function isBlockingContextOpen({ paletteOpen, safetyPlan, branchPlan, remotePlan, remoteTask, recoveryOpen, cloneOpen } = {}) {
+  return Boolean(paletteOpen || safetyPlan || branchPlan || remotePlan || remoteTask || recoveryOpen || cloneOpen)
 }
 
 export function resolveShortcut(event, context = {}) {

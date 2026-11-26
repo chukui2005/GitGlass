@@ -96,6 +96,13 @@ contextBridge.exposeInMainWorld('gitglass', {
   },
 
   getBranches: async () => (root ? repository.branches() : { branches: [] }),
+  getRemoteBranches: async () => (root ? repository.remoteBranches() : { branches: [] }),
+  prepareRemoteConfig: notCovered('探针只覆盖克隆流程。'),
+  executeRemoteConfig: async () => ({ execution: null }),
+  prepareRemoteBranch: notCovered('探针只覆盖克隆流程。'),
+  executeRemoteBranch: async () => ({ execution: null }),
+  prepareFirstPush: notCovered('探针只覆盖克隆流程。'),
+  executeFirstPush: async () => ({ execution: null }),
   getCommits: async () => (root ? repository.commits() : { commits: [], reason: '' }),
   queryHistory: async (filters) => (root ? repository.queryHistory(filters) : { commits: [], reason: '' }),
   getRemoteOverview: async () =>

@@ -66,6 +66,7 @@ import {
   PathBreadcrumb,
   RecoveryContext,
   RemotePlanContext,
+  RemoteTaskContext,
   SafetyContext,
   SidebarRemote,
   WorkspaceEmptyState,
@@ -271,13 +272,26 @@ export function App() {
   // 远程域：overview 与 fetch / push / pull 的计划。
   const {
     remote,
+    remoteBranches,
     applyOverview,
+    applyRemoteBranches,
     remotePlan,
     setRemotePlan,
     fetch: fetchRemote,
     push: pushRemote,
     pull: pullRemote,
     confirmRemote,
+    remoteTask,
+    setRemoteTask,
+    openRemoteConfig,
+    updateRemoteForm,
+    updateRemoteLocalName,
+    confirmRemoteConfig,
+    requestCheckoutRemote,
+    requestSetUpstream,
+    requestFirstPush,
+    confirmRemoteTask,
+    reprepareRemoteTask,
   } = useRemoteOverview({
     gitglass: window.gitglass,
     repo,
@@ -551,14 +565,17 @@ export function App() {
     await applyState(next, preference, cycle);
     if (sequence !== refreshSequence.current) return { ok: false, stale: true };
     const queryToken = beginQuery();
-    const [branchResult, commitResult, remoteResult] = await Promise.all([
+    const [branchResult, commitResult, remoteResult, remoteBranchResult] = await Promise.all([
       window.gitglass.getBranches(),
       historyApplied ? window.gitglass.queryHistory(historyApplied) : window.gitglass.getCommits(),
       window.gitglass.getRemoteOverview(),
+      // 远程跟踪分支与 overview 一起读：侧栏的检出入口永远来自 Git 的实际引用。
+      window.gitglass.getRemoteBranches ? window.gitglass.getRemoteBranches() : Promise.resolve({ branches: [] }),
     ]);
     setBranches(branchResult.branches || []);
     applyQueryResultIfCurrent(queryToken, commitResult);
     applyOverview(remoteResult);
+    applyRemoteBranches(remoteBranchResult?.branches || []);
     await refreshLedger(cycle);
     // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
     // 跟着实际暂存区更新；收起（或从未展开）时保持按需读取，不多发后台命令。
@@ -784,6 +801,8 @@ export function App() {
     safetyPlan,
     branchPlan,
     remotePlan,
+    // 远程配置 / 检出 / 上游 / 首次推送共用同一个任务槽位：有任务就算模态上下文。
+    remoteTask,
     recoveryOpen,
     cloneOpen: clone.open,
   });
@@ -839,6 +858,7 @@ export function App() {
     if (safetyPlan) { setSafetyPlan(null); return; }
     if (branchPlan) { setBranchPlan(null); return; }
     if (remotePlan) { setRemotePlan(null); return; }
+    if (remoteTask) { setRemoteTask(null); return; }
     if (recoveryOpen) { setRecoveryOpen(false); return; }
     // 历史模式自己决定 Esc 的三段语义（关 Diff → 丢草稿 → 还原筛选 → 退出模式）。
     handleEscape();
@@ -937,6 +957,16 @@ export function App() {
       loading={loading}
       onConfirm={confirmRemote}
       onCancel={() => setRemotePlan(null)}
+    />
+  ) : remoteTask ? (
+    <RemoteTaskContext
+      task={remoteTask}
+      loading={loading}
+      onField={updateRemoteForm}
+      onLocalName={updateRemoteLocalName}
+      onPrepare={reprepareRemoteTask}
+      onConfirm={remoteTask.kind === "config" ? confirmRemoteConfig : confirmRemoteTask}
+      onCancel={() => setRemoteTask(null)}
     />
   ) : recoveryOpen ? (
     <RecoveryContext
@@ -1559,11 +1589,17 @@ export function App() {
               </section>
               <SidebarRemote
                 remote={remote}
+                branches={remoteBranches}
                 files={state.files}
                 loading={loading}
                 onFetch={fetchRemote}
                 onPush={pushRemote}
                 onPull={pullRemote}
+                onAddRemote={() => openRemoteConfig("add")}
+                onEditRemote={(entry) => openRemoteConfig("set-url", entry)}
+                onCheckout={(entry) => requestCheckoutRemote(entry.full)}
+                onSetUpstream={(entry) => requestSetUpstream(entry.full)}
+                onFirstPush={requestFirstPush}
               />
             </>
           ) : (

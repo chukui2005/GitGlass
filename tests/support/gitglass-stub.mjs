@@ -87,6 +87,15 @@ export function createGitglassStub(overrides = {}) {
     getRemoteOverview: vi.fn(async () => ({ ok: true, remotes: [], remote: null, upstream: null, ahead: 0, behind: 0 })),
     getReflog: vi.fn(async () => ({ entries: [] })),
 
+    // 远程与上游（v0.6.10 PR 2）：默认“什么都没配”，用例只覆盖自己关心的那一支。
+    getRemoteBranches: vi.fn(async () => ({ branches: [] })),
+    prepareRemoteConfig: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程配置计划。', plan: null })),
+    executeRemoteConfig: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程配置执行。', execution: null })),
+    prepareRemoteBranch: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程分支计划。', plan: null })),
+    executeRemoteBranch: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程分支执行。', execution: null })),
+    prepareFirstPush: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置首次推送计划。', plan: null })),
+    executeFirstPush: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置首次推送执行。', execution: null })),
+
     // “计划 → 执行”两步操作
     operate: vi.fn(async () => ({ execution: { ok: true }, state: { files: [] } })),
     prepareBranch: vi.fn(unsupported),
