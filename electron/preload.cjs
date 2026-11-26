@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('gitglass', {
   openRepository: (repositoryPath) => ipcRenderer.invoke('repo:open', repositoryPath),
   getRecentRepositories: () => ipcRenderer.invoke('repo:recent'),
   forgetRecentRepository: (repositoryPath) => ipcRenderer.invoke('repo:recent:forget', repositoryPath),
+  // 克隆只表达「地址、父目录、文件夹名」：协议、最终目录与 argv 都由主进程决定，
+  // 先拿计划（尚未运行）再回传同一个 operationId 执行。
+  chooseCloneTarget: () => ipcRenderer.invoke('repo:clone:choose-target'),
+  prepareClone: (request) => ipcRenderer.invoke('repo:clone:prepare', request),
+  executeClone: (request) => ipcRenderer.invoke('repo:clone:execute', request),
   getState: () => ipcRenderer.invoke('repo:state'),
   getStagedOverview: () => ipcRenderer.invoke('repo:staged-overview'),
   getDiff: (file) => ipcRenderer.invoke('repo:diff', file),
@@ -49,6 +54,10 @@ contextBridge.exposeInMainWorld('gitglass', {
   getBranches: () => ipcRenderer.invoke('repo:branches'),
   getCommits: () => ipcRenderer.invoke('repo:commits'),
   queryHistory: (filters) => ipcRenderer.invoke('history:query', filters),
+  // References carry the full ref name and full commit id; the renderer only
+  // sends the commit id back when it needs a commit outside the current list.
+  getRefs: () => ipcRenderer.invoke('history:refs'),
+  getCommit: (sha) => ipcRenderer.invoke('history:commit', sha),
   getCommitDetail: (sha) => ipcRenderer.invoke('history:detail', sha),
   getCommitDiff: (sha) => ipcRenderer.invoke('history:diff', sha),
   compareCommits: (baseSha, targetSha) => ipcRenderer.invoke('history:compare', baseSha, targetSha),
@@ -57,6 +66,15 @@ contextBridge.exposeInMainWorld('gitglass', {
   prepareBranch: (branch, create) => ipcRenderer.invoke('branch:prepare', branch, create),
   executeBranch: (branch, create, operationId) => ipcRenderer.invoke('branch:execute', branch, create, operationId),
   getRemoteOverview: () => ipcRenderer.invoke('remote:overview'),
+  getRemoteBranches: () => ipcRenderer.invoke('remote:branches'),
+  // 远程配置 / 检出远程跟踪分支 / 上游 / 首次推送：都只传业务参数（kind、名称、
+  // 引用），argv 由主进程按预览过的计划构造，执行时回传同一个 operationId。
+  prepareRemoteConfig: (kind, request) => ipcRenderer.invoke('remote:config:prepare', kind, request),
+  executeRemoteConfig: (kind, request, operationId) => ipcRenderer.invoke('remote:config:execute', kind, request, operationId),
+  prepareRemoteBranch: (kind, remoteBranch, localName) => ipcRenderer.invoke('remote:branch:prepare', kind, remoteBranch, localName),
+  executeRemoteBranch: (kind, remoteBranch, localName, operationId) => ipcRenderer.invoke('remote:branch:execute', kind, remoteBranch, localName, operationId),
+  prepareFirstPush: (request) => ipcRenderer.invoke('remote:first-push:prepare', request),
+  executeFirstPush: (request, operationId) => ipcRenderer.invoke('remote:first-push:execute', request, operationId),
   prepareRemote: (kind) => ipcRenderer.invoke('remote:prepare', kind),
   executeRemote: (kind, operationId) => ipcRenderer.invoke('remote:execute', kind, operationId),
   prepareDiscard: (filePath) => ipcRenderer.invoke('safety:discard:prepare', filePath),

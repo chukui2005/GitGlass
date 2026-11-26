@@ -19,6 +19,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { fullLocalTime, isHeadCommit, relativeTime } from "./history-search.js";
+import { CommitGraph } from "./history-graph.jsx";
 import { presentDiff } from "./diff-presentation.js";
 import { basename, breadcrumbSegments, labelFiles, stageSelectionKey } from "./file-labels.js";
 import { riskLabel } from "./plan-risk.js";
@@ -597,6 +598,166 @@ export function RemotePlanContext({ plan, onCancel, onConfirm, loading }) {
     </PlannedContext>
   );
 }
+// 远程配置 / 检出远程跟踪分支 / 设置上游 / 首次推送：一个组件覆盖四种任务，
+// 因为它们的形态一致——先填必要信息，再预览命令，最后确认执行。
+export function RemoteTaskContext({ task, loading, onField, onLocalName, onPrepare, onConfirm, onCancel }) {
+  if (task.kind === "config") {
+    const adding = task.mode === "add";
+    const preview = task.preview || {};
+    return (
+      <section className="inspector-flow">
+        <div className="inspector-heading">
+          <span>远程配置</span>
+          <h2>{adding ? "添加远程仓库" : "编辑远程地址"}</h2>
+        </div>
+        <p className="inspector-copy">
+          <strong>这一步不会执行任何命令。</strong>
+          先预览真实命令，确认后才会写入 Git 配置。
+        </p>
+        <div className="field-block">
+          <label htmlFor="remote-name">远程名称</label>
+          <input
+            id="remote-name"
+            name="remote-name"
+            value={task.form.name}
+            onChange={(event) => onField("name", event.target.value)}
+            placeholder="origin"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={loading}
+          />
+        </div>
+        <div className="field-block">
+          <label htmlFor="remote-url">仓库地址</label>
+          <input
+            id="remote-url"
+            name="remote-url"
+            value={task.form.url}
+            onChange={(event) => onField("url", event.target.value)}
+            placeholder="https://host/owner/repo.git 或 git@host:owner/repo.git"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={loading}
+          />
+        </div>
+        {preview.previousUrl && (
+          <p className="inspector-copy">当前地址：<code>{preview.previousUrl}</code></p>
+        )}
+        {task.reason && (
+          <p className="inspector-message danger" role="alert">
+            {task.reason}
+          </p>
+        )}
+        <RemoteTaskPlan task={task} confirmLabel={adding ? "确认添加远程" : "确认更新地址"} loading={loading} onConfirm={onConfirm} onPrepare={onPrepare} />
+        <button type="button" className="text-action" onClick={onCancel}>
+          返回
+        </button>
+      </section>
+    );
+  }
+
+  const checkout = task.kind === "checkout";
+  const firstPush = task.kind === "first-push";
+  const preview = task.preview || {};
+  const title = checkout ? "检出远程跟踪分支" : task.kind === "set-upstream" ? "设置上游分支" : "首次推送并设置上游";
+  const confirmLabel = checkout ? "确认检出并跟踪" : task.kind === "set-upstream" ? "确认设置上游" : "确认首次推送并设置上游";
+  return (
+    <section className="inspector-flow">
+      <div className="inspector-heading">
+        <span>{firstPush ? "推送与上游" : "分支与上游"}</span>
+        <h2>{title}</h2>
+      </div>
+      <p className="inspector-copy">
+        <strong>这一步不会执行任何命令。</strong>
+        确认后才会运行下方「计划执行」里的 Git 命令。
+      </p>
+      {checkout && (
+        <>
+          <p className="inspector-copy">
+            远程跟踪分支 <code>{preview.remoteBranchShort || task.remoteBranch}</code>
+          </p>
+          <div className="field-block">
+            <label htmlFor="checkout-local">本地分支名</label>
+            <input
+              id="checkout-local"
+              name="checkout-local"
+              value={task.localName}
+              onChange={(event) => onLocalName(event.target.value)}
+              placeholder={preview.branch || "本地分支名"}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={loading}
+            />
+          </div>
+        </>
+      )}
+      {task.kind === "set-upstream" && (
+        <p className="inspector-copy">
+          将把当前分支 <code>{preview.branch || "—"}</code> 的上游设为 <code>{preview.remoteBranch || task.remoteBranch}</code>
+          。不会修改工作区文件。
+        </p>
+      )}
+      {firstPush && (
+        <dl className="file-facts">
+          <div>
+            <dt>本地分支</dt>
+            <dd><code>{preview.branch || "—"}</code></dd>
+          </div>
+          <div>
+            <dt>推送目标</dt>
+            <dd><code>{preview.remote || "—"}</code></dd>
+          </div>
+          <div>
+            <dt>目标引用</dt>
+            <dd><code>{preview.targetRef || "—"}</code></dd>
+          </div>
+          <div>
+            <dt>推送地址</dt>
+            <dd title={(preview.pushUrls || []).join('\n')}>
+              {(preview.pushUrls || []).length
+                ? (preview.pushUrls || []).map((url) => <code key={url}>{url}</code>)
+                : preview.remoteUrl || "—"}
+            </dd>
+          </div>
+        </dl>
+      )}
+      {task.reason && (
+        <p className="inspector-message danger" role="alert">
+          {task.reason}
+        </p>
+      )}
+      <RemoteTaskPlan task={task} confirmLabel={confirmLabel} loading={loading} onConfirm={onConfirm} onPrepare={onPrepare} />
+      <button type="button" className="text-action" onClick={onCancel}>
+        返回
+      </button>
+    </section>
+  );
+}
+
+function RemoteTaskPlan({ task, confirmLabel, loading, onConfirm, onPrepare }) {
+  if (!task.plan) {
+    return (
+      <button type="button" className="primary-action" onClick={onPrepare} disabled={loading}>
+        预览命令
+      </button>
+    );
+  }
+  return (
+    <>
+      <div className="planned-command">
+        <span>计划执行（尚未运行）</span>
+        <code>{task.plan.displayCommand}</code>
+      </div>
+      <button type="button" className="primary-action" onClick={onConfirm} disabled={loading}>
+        {confirmLabel}
+      </button>
+      <button type="button" className="text-action" onClick={onPrepare} disabled={loading}>
+        重新预览
+      </button>
+    </>
+  );
+}
+
 export function SafetyContext({
   plan,
   acknowledgement,
@@ -757,7 +918,8 @@ export function FileInspector({ file, label, stagedCount, loading, onStage, onDi
 }
 // 没有打开仓库时，右栏不渲染一整套禁用的提交表单，只留一块引导：
 // 说明这里将来会出现什么，并复用顶栏/空状态同一个目录选择入口（主按钮仍只有左栏那一个）。
-export function NoRepositoryGuide({ loading, onOpen }) {
+// 「克隆仓库」是第二种起步方式，与「打开仓库」并列但权重更低。
+export function NoRepositoryGuide({ loading, onOpen, onClone }) {
   return (
     <section className="inspector-flow repository-guide">
       <div className="inspector-heading">
@@ -767,15 +929,27 @@ export function NoRepositoryGuide({ loading, onOpen }) {
       <p className="inspector-copy">
         打开一个本地 Git 仓库后，这里会显示当前文件的暂存动作、暂存状态与提交命令预览。
       </p>
-      <button
-        type="button"
-        className="secondary-button"
-        onClick={onOpen}
-        disabled={loading}
-      >
-        <FolderOpen size={15} />
-        打开仓库
-      </button>
+      <div className="repository-guide-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={onOpen}
+          disabled={loading}
+        >
+          <FolderOpen size={15} />
+          打开仓库
+        </button>
+        {onClone && (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={onClone}
+            disabled={loading}
+          >
+            克隆仓库
+          </button>
+        )}
+      </div>
     </section>
   );
 }
@@ -986,59 +1160,130 @@ export function RecoveryContext({ entries, reason, loading, onRescue, onClose })
     </section>
   );
 }
-export function SidebarRemote({ remote, files, loading, onFetch, onPush, onPull }) {
+export function SidebarRemote({
+  remote,
+  branches = [],
+  files,
+  loading,
+  onFetch,
+  onPush,
+  onPull,
+  onAddRemote,
+  onEditRemote,
+  onCheckout,
+  onSetUpstream,
+  onFirstPush,
+}) {
   if (!remote) return null;
-  if (!remote.remotes?.length)
-    return (
-      <section className="remote-summary">
-        <div className="section-label">
-          <span>远程仓库</span>
-        </div>
-        <p>{remote.reason}</p>
-        <span>{remote.suggestion}</span>
-      </section>
-    );
+  const remotes = remote.details?.length ? remote.details : (remote.remotes || []).map((name) => ({ name, url: "" }));
   return (
     <section className="remote-summary">
       <div className="section-label">
         <span>远程</span>
-        <button
-          type="button"
-          aria-label="获取远程更新（先查看计划）"
-          title="获取远程更新（先查看计划，不会立即执行）"
-          onClick={onFetch}
-          disabled={loading}
-        >
-          <ArrowClockwise size={14} />
-        </button>
+        <span className="remote-label-actions">
+          <button
+            type="button"
+            aria-label="添加远程仓库"
+            title="添加远程仓库（先预览，不会立即执行）"
+            onClick={onAddRemote}
+            disabled={loading}
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            aria-label="获取远程更新（先查看计划）"
+            title="获取远程更新（先查看计划，不会立即执行）"
+            onClick={onFetch}
+            disabled={loading || !remote.remotes?.length}
+          >
+            <ArrowClockwise size={14} />
+          </button>
+        </span>
       </div>
-      <code title={remote.remote?.name}>{remote.remote?.name || "—"}</code>
-      <span title={remote.remote?.url}>{remote.remote?.url}</span>
-      {remote.upstream && (
+      {!remote.remotes?.length ? (
         <>
-          <div className="remote-status">
-            <span>{remote.upstream.ref}</span>
-            <b className={remote.ahead > 0 ? "ahead" : ""}>↑ {remote.ahead}</b>
-            <b className={remote.behind > 0 ? "behind" : ""}>
-              ↓ {remote.behind}
-            </b>
-          </div>
-          <div className="remote-actions">
-            <button
-              type="button"
-              disabled={loading || remote.ahead <= 0}
-              onClick={onPush}
-            >
-              推送
-            </button>
-            <button
-              type="button"
-              disabled={loading || remote.behind <= 0 || files.length > 0}
-              onClick={onPull}
-            >
-              拉取
-            </button>
-          </div>
+          <p>{remote.reason}</p>
+          <span>{remote.suggestion}</span>
+        </>
+      ) : (
+        <>
+          <ul className="remote-list">
+            {remotes.map((entry) => (
+              <li key={entry.name} className="remote-row">
+                <code title={entry.name}>{entry.name}</code>
+                <span title={entry.url}>{entry.url || "—"}</span>
+                <button
+                  type="button"
+                  className="text-action"
+                  aria-label={`编辑远程 ${entry.name} 的地址`}
+                  title="编辑远程地址（先预览）"
+                  onClick={() => onEditRemote(entry)}
+                  disabled={loading}
+                >
+                  编辑地址…
+                </button>
+              </li>
+            ))}
+          </ul>
+          {remote.upstream ? (
+            <>
+              <div className="remote-status">
+                <span>{remote.upstream.ref}</span>
+                <b className={remote.ahead > 0 ? "ahead" : ""}>↑ {remote.ahead}</b>
+                <b className={remote.behind > 0 ? "behind" : ""}>↓ {remote.behind}</b>
+              </div>
+              <div className="remote-actions">
+                <button type="button" disabled={loading || remote.ahead <= 0} onClick={onPush}>
+                  推送
+                </button>
+                <button type="button" disabled={loading || remote.behind <= 0 || files.length > 0} onClick={onPull}>
+                  拉取
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>当前分支尚未配置上游分支。</p>
+              <button type="button" className="secondary-action" onClick={onFirstPush} disabled={loading}>
+                首次推送并设置上游…
+              </button>
+            </>
+          )}
+          {branches.length > 0 && (
+            <div className="remote-branches">
+              <div className="section-label">
+                <span>远程跟踪分支</span>
+                <b>{branches.length}</b>
+              </div>
+              {branches.map((entry) => (
+                <div className="remote-branch-row" key={entry.full}>
+                  <code title={entry.full}>{entry.short}</code>
+                  <span>{entry.hash}</span>
+                  <button
+                    type="button"
+                    className="text-action"
+                    aria-label={`检出远程分支 ${entry.short}`}
+                    title="检出为本地跟踪分支（先预览）"
+                    onClick={() => onCheckout(entry)}
+                    disabled={loading}
+                  >
+                    检出…
+                  </button>
+                  <button
+                    type="button"
+                    className="text-action"
+                    aria-label={`把 ${entry.short} 设为当前分支上游`}
+                    title="设置当前分支的上游（先预览）"
+                    onClick={() => onSetUpstream(entry)}
+                    disabled={loading || !remote.state?.branch}
+                  >
+                    设为上游…
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -1104,20 +1349,40 @@ export function HistoryFilters({ draft, branches, currentBranch, selectedFile, l
   </section>
 }
 
-export function CommitRow({ commit, selected, compareRole, onSelect, onCompare, busy = false }) {
+export function CommitRow({ commit, selected, compareRole, graph = null, onSelect, onCompare, busy = false }) {
+  function moveRowFocus(event) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const list = event.currentTarget.closest(".commit-list");
+    if (!list) return;
+    const buttons = [...list.querySelectorAll("button.commit-select:not(:disabled)")];
+    if (!buttons.length) return;
+    const current = buttons.indexOf(event.currentTarget);
+    let next = current;
+    if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = buttons.length - 1;
+    else if (event.key === "ArrowDown") next = current < 0 ? 0 : Math.min(buttons.length - 1, current + 1);
+    else if (event.key === "ArrowUp") next = current <= 0 ? 0 : current - 1;
+    event.preventDefault();
+    buttons[next]?.focus();
+  }
   return (
     <div className={`history-row ${selected ? "selected" : ""}`}>
       <button
         type="button"
-        className="commit-select"
+        className={`commit-select ${graph ? "has-graph" : ""}`}
         aria-label={`查看提交 ${commit.subject}`}
         title={commit.subject}
         onClick={onSelect}
+        onKeyDown={moveRowFocus}
         disabled={busy}
       >
-        <span className="graph-line" aria-hidden="true">
-          <i />
-        </span>
+        {graph ? (
+          <CommitGraph row={graph} selected={selected} />
+        ) : (
+          <span className="graph-line" aria-hidden="true">
+            <i />
+          </span>
+        )}
         <span className="commit-main">
           <strong className="commit-title">{commit.subject}</strong>
           <span className="commit-meta">
@@ -1131,6 +1396,27 @@ export function CommitRow({ commit, selected, compareRole, onSelect, onCompare, 
             {isHeadCommit(commit) && (
               <b className="head-badge" title="当前 HEAD 所在提交">
                 HEAD
+              </b>
+            )}
+            {commit.parents?.length > 1 && (
+              <b className="merge-badge" title={`合并提交，${commit.parents.length} 个父提交`}>
+                合并 {commit.parents.length}
+              </b>
+            )}
+            {graph?.boundaryParents?.length > 0 && (
+              <b
+                className="graph-boundary-badge"
+                title={`父提交 ${graph.boundaryParents.join("、")} 不在当前读取范围内`}
+              >
+                边界
+              </b>
+            )}
+            {graph?.omittedEdges?.length > 0 && (
+              <b
+                className="graph-boundary-badge omitted"
+                title={`泳道达到上限，以下父连接未绘制：${graph.omittedEdges.join("、")}`}
+              >
+                省略 {graph.omittedEdges.length}
               </b>
             )}
             {compareRole === "base" && <b className="compare-badge base">基准</b>}

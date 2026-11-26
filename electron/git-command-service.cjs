@@ -51,6 +51,27 @@ function auditTarget({ target = '', hunk = '' } = {}) {
 }
 
 /**
+ * The three variables that keep Git from blocking on a credential prompt. A caller
+ * may extend the child environment (the clone transport allow-list needs it), but
+ * these three are owned by this module.
+ */
+const RESERVED_ENVIRONMENT = new Set(['GIT_TERMINAL_PROMPT', 'GIT_ASKPASS', 'SSH_ASKPASS'])
+
+/**
+ * @param {unknown} env Caller-supplied overrides
+ * @returns {Record<string, string>} Only string values, never a prompt variable
+ */
+function safeEnvironmentOverrides(env) {
+  const result = {}
+  if (!env || typeof env !== 'object') return result
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string' || RESERVED_ENVIRONMENT.has(key)) continue
+    result[key] = value
+  }
+  return result
+}
+
+/**
  * The only module allowed to execute the local Git binary. Each attempt,
  * including inexpensive background reads, appends one immutable CommandRecord.
  */
@@ -122,14 +143,16 @@ class GitCommandService {
   async runCapturingOutput(request) { return this.execute(request) }
 
   /** @returns {Promise<{ record: object, stdout: string }>} */
-  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
+  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '', env = null, retainOutput = true }) {
     const outputLimit = Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0 ? maxOutputBytes : this.defaultMaxOutputBytes
     const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs
+    // 有些读取只用于内部计算（例如远程配置版本）：账本留执行元数据，输出一个字都不留。
+    const keepOutput = retainOutput !== false
     const record = {
       id: this.idFactory(), operationId: operationId || this.createOperationId(), intent, source,
       argv: ['git', ...argv], displayCommand: displayGitCommand(argv), command: displayGitCommand(argv),
       cwd: cwd || '', ...auditTarget({ target, hunk }), startedAt: this.now(), endedAt: null, stdout: '', stderr: '', exitCode: null, ok: false,
-      outputTruncated: false, timedOut: false,
+      outputTruncated: false, timedOut: false, ...(keepOutput ? {} : { outputRetained: false }),
     }
     let settled = false
     let timedOut = false
@@ -139,24 +162,27 @@ class GitCommandService {
       if (timer) { this.clearTimer(timer); timer = null }
       if (killTimer) { this.clearTimer(killTimer); killTimer = null }
     }
+    // 原始 stdout 单独累积：补丁需要逐字节原文，而 `retainOutput: false` 只用于内部
+    // 计算（远程配置版本），账本里连一个字符都不留。
+    let rawStdout = ''
+    let rawStderr = ''
     const finish = (exitCode, error = '') => {
       clearTimers()
-      if (error) record.stderr += error
+      if (error) rawStderr += error
       if (timedOut) {
         record.timedOut = true
-        record.stderr += `\n命令执行超时（${Math.round(timeout / 1000)} 秒），已终止。`
+        rawStderr += `\n命令执行超时（${Math.round(timeout / 1000)} 秒），已终止。`
       }
-      // 补丁必须逐字节回到 Git：先留一份脱敏前的 stdout。账本与 IPC 只看得到
-      // 下面这份脱敏后的记录，调用方拿到原始输出时也不得保存或外传。
-      const rawStdout = record.stdout
       // Some Git output legitimately contains a credential-bearing URL. Redact
       // before the immutable audit record is retained or sent over IPC, then let
       // the caller apply its own narrower redaction on top.
-      record.stdout = redactCredentials(rawStdout)
-      record.stderr = redactCredentials(record.stderr)
-      if (typeof redactOutput === 'function') {
-        record.stdout = redactOutput(record.stdout)
-        record.stderr = redactOutput(record.stderr)
+      if (keepOutput) {
+        record.stdout = redactCredentials(rawStdout)
+        record.stderr = redactCredentials(rawStderr)
+        if (typeof redactOutput === 'function') {
+          record.stdout = redactOutput(record.stdout)
+          record.stderr = redactOutput(record.stderr)
+        }
       }
       record.exitCode = Number.isInteger(exitCode) ? exitCode : -1
       record.ok = record.exitCode === 0 && !timedOut
@@ -174,26 +200,30 @@ class GitCommandService {
         // Never pass a command string or enable a shell: argv is the source of truth.
         // Credential prompts are disabled so a missing credential fails instead of
         // blocking the process (and the update gate) until the timeout kills it.
+        // `env` is a narrow, per-command extension (the clone protocol allow-list);
+        // the three prompt variables can never be overridden through it.
         child = this.spawnImpl('git', argv, {
           cwd,
           shell: false,
           windowsHide: true,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' },
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', ...safeEnvironmentOverrides(env) },
         })
       } catch (error) { settle(-1, error.message); return }
       const collect = (field, data) => {
-        if (outputBytes >= outputLimit) { record.outputTruncated = true; return }
-        const text = data.toString()
-        const size = Buffer.byteLength(text)
-        const remaining = outputLimit - outputBytes
-        if (size > remaining) {
-          record[field] += Buffer.from(text).subarray(0, remaining).toString()
-          outputBytes = outputLimit
+        if (outputBytes >= outputLimit) {
+          // 截断标志与是否保留输出无关：调用方必须知道这次读取不完整。
           record.outputTruncated = true
           return
         }
-        record[field] += text
-        outputBytes += size
+        const text = data.toString()
+        const size = Buffer.byteLength(text)
+        const remaining = outputLimit - outputBytes
+        const chunk = size > remaining ? Buffer.from(text).subarray(0, remaining).toString() : text
+        if (field === 'stdout') rawStdout += chunk
+        else rawStderr += chunk
+        if (keepOutput) record[field] += chunk
+        outputBytes += Math.min(size, remaining)
+        if (size > remaining) record.outputTruncated = true
       }
       child.stdout?.on('data', (data) => collect('stdout', data))
       child.stderr?.on('data', (data) => collect('stderr', data))

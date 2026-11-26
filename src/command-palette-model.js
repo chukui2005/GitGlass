@@ -14,6 +14,7 @@ export function commandAvailability({ hasRepository, loading, historyMode, selec
   if (loading) {
     return {
       openRepository: busy,
+      cloneRepository: busy,
       refresh: busy,
       workspace: busy,
       history: busy,
@@ -24,6 +25,8 @@ export function commandAvailability({ hasRepository, loading, historyMode, selec
   }
   return {
     openRepository: enabled(),
+    // 克隆可以从没有仓库的状态启动，所以它只受「正在执行其他操作」限制。
+    cloneRepository: enabled(),
     refresh: !hasRepository ? needsRepository : enabled(),
     workspace: enabled(),
     history: hasRepository ? enabled() : needsRepository,

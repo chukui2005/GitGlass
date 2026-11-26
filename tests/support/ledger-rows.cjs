@@ -51,7 +51,8 @@ app.whenReady().then(async () => {
 
     await waitUntil(() => js(`Boolean(document.querySelector('.top-actions'))`), '顶栏渲染')
 
-    // 顶栏右组：两个次按钮 + 两个低权重工具条（视图切换是独立的 .view-tab），没有任何实心主按钮。
+    // 顶栏右组：三个次按钮（打开仓库 / 克隆仓库 / 获取…）+ 两个低权重工具条（视图切换是独立的 .view-tab），
+    // 没有任何实心主按钮。
     const topbar = await js(`(() => {
       const actions = document.querySelector('.top-actions')
       const buttons = [...actions.querySelectorAll('button')]
@@ -65,7 +66,7 @@ app.whenReady().then(async () => {
       }
     })()`)
     assert.equal(topbar.toolbar, 2, `顶栏右组应有两个低权重工具条（命令 / 恢复）：${JSON.stringify(topbar.labels)}`)
-    assert.equal(topbar.secondary, 2, `顶栏应有「打开仓库」「获取…」两个次按钮：${JSON.stringify(topbar.labels)}`)
+    assert.equal(topbar.secondary, 3, `顶栏应有「打开仓库」「克隆仓库」「获取…」三个次按钮：${JSON.stringify(topbar.labels)}`)
     // 没有可用更新时「更新」是 30×30 的纯图标按钮（检查更新），不占文字宽度。
     assert.equal(topbar.icons, 1, `顶栏应有一颗纯图标按钮（检查更新）：${JSON.stringify(topbar.labels)}`)
     assert.equal(topbar.primary, 0, '没有可用更新时顶栏不允许出现实心主按钮')

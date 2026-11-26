@@ -5,6 +5,7 @@
 const { contextBridge } = require('electron')
 const { execFileSync } = require('node:child_process')
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('../../electron/git-parsers.cjs')
+const { REF_ARGV, parseRefs, buildHead } = require('../../electron/git-refs.cjs')
 const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk } = require('../../electron/patch-hunks.cjs')
 
 const repository = process.env.GITGLASS_WORKBENCH_REPO || ''
@@ -146,6 +147,33 @@ const stagedOverview = () => {
   return { ok: stats.result.ok, files, totals, reason: stats.result.ok ? '' : '无法读取暂存统计。文件清单仍来自实际暂存区。' }
 }
 
+const refs = () => {
+  const refRecord = execute(REF_ARGV, 'Read Git refs')
+  const headRef = execute(['symbolic-ref', '-q', 'HEAD'], 'Read HEAD reference')
+  const headCommit = execute(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], 'Read HEAD commit')
+  const parsed = refRecord.result.ok ? parseRefs(refRecord.result.stdout) : []
+  const head = buildHead({
+    symbolicRef: headRef.result.ok ? headRef.result.stdout : '',
+    headCommit: headCommit.result.ok ? headCommit.result.stdout : '',
+    refs: parsed,
+  })
+  return {
+    ok: refRecord.result.ok && (headRef.result.ok || headCommit.result.ok || head.unborn),
+    refs: parsed,
+    head,
+    truncated: false,
+    reason: refRecord.result.ok ? '' : '无法读取 Git 引用。',
+  }
+}
+
+const commitById = (hash) => {
+  const verified = execute(['rev-parse', '--verify', `${hash}^{commit}`], 'Verify history commit')
+  if (!verified.result.ok) return { ok: false, commit: null, reason: '提交不存在或不是有效提交。' }
+  const shown = execute(['show', '-s', '--no-ext-diff', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D', verified.result.stdout.trim()], 'Read commit by ID')
+  const commit = shown.result.ok ? parseCommits(shown.result.stdout)[0] || null : null
+  return { ok: Boolean(commit), commit, reason: commit ? '' : '无法按提交 ID 读取该提交。' }
+}
+
 const updateState = {
   supported: false,
   currentVersion: '0.7.0-probe',
@@ -182,6 +210,27 @@ contextBridge.exposeInMainWorld('gitglass', {
     const branches = execute(['for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)', 'refs/heads'], 'Read local branches')
     return { branches: parseBranches(branches.result.stdout) }
   },
+  getRemoteBranches: async () => {
+    const branches = execute(['branch', '--remotes', '--format=%(refname)%00%(refname:short)%00%(objectname:short)'], 'Read remote-tracking branches')
+    const list = branches.result.ok
+      ? branches.result.stdout
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => {
+            const [full, short, hash] = line.split('\0')
+            const slash = String(short || '').indexOf('/')
+            return { full, short, hash, remote: slash === -1 ? '' : short.slice(0, slash), branch: slash === -1 ? '' : short.slice(slash + 1) }
+          })
+          .filter((entry) => entry.full && entry.branch && entry.branch !== 'HEAD')
+      : []
+    return { branches: list, reason: '' }
+  },
+  prepareRemoteConfig: async () => ({ ok: false, blocked: true, reason: '探针未配置远程配置。', plan: null }),
+  executeRemoteConfig: async () => ({ execution: null }),
+  prepareRemoteBranch: async () => ({ ok: false, blocked: true, reason: '探针未配置远程分支操作。', plan: null }),
+  executeRemoteBranch: async () => ({ execution: null }),
+  prepareFirstPush: async () => ({ ok: false, blocked: true, reason: '探针未配置首次推送。', plan: null }),
+  executeFirstPush: async () => ({ execution: null }),
   getDiff: async (file) => {
     const detail = fileDiff(file)
     return { ...detail, outputTruncated: false }
@@ -189,8 +238,10 @@ contextBridge.exposeInMainWorld('gitglass', {
   getStagedOverview: async () => stagedOverview(),
   applyDiffHunk: async (direction, locator) => applyHunkLocator(direction, locator),
 
-  getCommits: async () => ({ commits: commits(), reason: '' }),
-  queryHistory: async () => ({ commits: commits(), reason: '' }),
+  getCommits: async () => ({ commits: commits(), reason: '', limit: 80 }),
+  queryHistory: async () => ({ commits: commits(), reason: '', limit: 200 }),
+  getRefs: async () => refs(),
+  getCommit: async (hash) => commitById(hash),
   getCommitDetail: async (hash) => {
     const detail = execute(['show', '--no-ext-diff', '--format=%B%x1e%an%x1f%ae%x1f%aI', '--shortstat', hash], 'Read commit detail and statistics')
     if (!detail.result.ok) return { ok: false }
@@ -279,7 +330,7 @@ contextBridge.exposeInMainWorld('gitglass', {
 })
 
 function commits() {
-  const { result } = execute(['log', '-n', '40', '--date=iso-strict', '--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'], 'Read recent commits')
+  const { result } = execute(['log', '-n', '80', '--topo-order', '--date=iso-strict', '--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%D'], 'Read recent commits')
   return result.ok ? parseCommits(result.stdout) : []
 }
 

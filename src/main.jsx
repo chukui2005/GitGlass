@@ -5,6 +5,7 @@ import {
   ArrowCounterClockwise,
   ArrowsLeftRight,
   CheckCircle,
+  CloudArrowDown,
   Copy,
   File,
   FolderOpen,
@@ -43,7 +44,10 @@ import { useAppUpdates, UpdateButton, UpdateDialog } from "./app-updates.jsx";
 import { useHistoryReview } from "./use-history-review.js";
 import { branchName, useSafetyPlans } from "./use-safety-plans.js";
 import { useRemoteOverview } from "./use-remote-overview.js";
+import { useCloneRepository } from "./use-clone-repository.js";
 import { usePanelResize } from "./use-panel-resize.js";
+import { CloneRepositoryDialog } from "./clone-repository-dialog.jsx";
+import { HistoryGraphNotice, HistoryRefs } from "./history-graph.jsx";
 import {
   BatchStageToolbar,
   BranchContext,
@@ -63,6 +67,7 @@ import {
   PathBreadcrumb,
   RecoveryContext,
   RemotePlanContext,
+  RemoteTaskContext,
   SafetyContext,
   SidebarRemote,
   WorkspaceEmptyState,
@@ -85,6 +90,7 @@ function buildPaletteCommands({
 }) {
   return [
     { id: "open-repository", label: "打开仓库", shortcut: commandShortcut, keywords: "打开 文件夹 仓库", ...availability.openRepository, run: actions.chooseRepo },
+    { id: "clone-repository", label: "克隆仓库", keywords: "克隆 地址 远程 下载 仓库", ...availability.cloneRepository, run: actions.openClone },
     // ⟳ 常驻按钮已降级（0.6.5 验收反馈 #21）：自动刷新正常时没有手动入口，
     // watcher 不可用时才在面板里提供手动重读；label 写明「不联网」以区别「获取…」。
     ...(watcherActive
@@ -196,6 +202,16 @@ export function App() {
     commitsReason,
     historyFiltersDirty,
     historySearchRef,
+    refs,
+    refsHead,
+    refsReason,
+    refsTruncated,
+    refsLoading,
+    refNotice,
+    historyGraph,
+    historyGraphRows,
+    graphAvailable,
+    selectedOutsideList,
     detailSubject,
     detailAuthor,
     detailEmail,
@@ -209,6 +225,8 @@ export function App() {
     beginQuery,
     applyQueryResultIfCurrent,
     selectHistoryCommit,
+    selectHistoryRef,
+    refreshHistoryRefs,
     viewParentCommit,
     readHistoryDiff,
     openCommitFileDiff,
@@ -267,13 +285,26 @@ export function App() {
   // 远程域：overview 与 fetch / push / pull 的计划。
   const {
     remote,
+    remoteBranches,
     applyOverview,
+    applyRemoteBranches,
     remotePlan,
     setRemotePlan,
     fetch: fetchRemote,
     push: pushRemote,
     pull: pullRemote,
     confirmRemote,
+    remoteTask,
+    setRemoteTask,
+    openRemoteConfig,
+    updateRemoteForm,
+    updateRemoteLocalName,
+    confirmRemoteConfig,
+    requestCheckoutRemote,
+    requestSetUpstream,
+    requestFirstPush,
+    confirmRemoteTask,
+    reprepareRemoteTask,
   } = useRemoteOverview({
     gitglass: window.gitglass,
     repo,
@@ -284,6 +315,15 @@ export function App() {
     setNotice,
     presetLedger,
     setFocusedOperationId,
+  });
+  // 克隆仓库：与「打开仓库」并列的第二种入口。成功后复用同一个
+  // applyOpenedRepository，所以最近仓库、watcher、历史/勾选清理不会出现第二份逻辑。
+  const clone = useCloneRepository({
+    gitglass: window.gitglass,
+    loading,
+    setLoading,
+    setNotice,
+    onOpened: applyOpenedRepository,
   });
   const staged = useMemo(
     () => state.files.filter((file) => file.area === "staged"),
@@ -538,14 +578,21 @@ export function App() {
     await applyState(next, preference, cycle);
     if (sequence !== refreshSequence.current) return { ok: false, stale: true };
     const queryToken = beginQuery();
-    const [branchResult, commitResult, remoteResult] = await Promise.all([
+    const [branchResult, commitResult, remoteResult, remoteBranchResult] = await Promise.all([
       window.gitglass.getBranches(),
       historyApplied ? window.gitglass.queryHistory(historyApplied) : window.gitglass.getCommits(),
       window.gitglass.getRemoteOverview(),
+      // 远程跟踪分支与 overview 一起读：侧栏的检出入口永远来自 Git 的实际引用。
+      window.gitglass.getRemoteBranches ? window.gitglass.getRemoteBranches() : Promise.resolve({ branches: [] }),
     ]);
     setBranches(branchResult.branches || []);
     applyQueryResultIfCurrent(queryToken, commitResult);
     applyOverview(remoteResult);
+    applyRemoteBranches(remoteBranchResult?.branches || []);
+    // External Git changes refresh the history list through this path; the refs
+    // sidebar must follow the same signal. The hook's sequence guard drops a
+    // response from a repository switch that happened while this read was live.
+    if (historyMode) await refreshHistoryRefs();
     await refreshLedger(cycle);
     // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
     // 跟着实际暂存区更新；收起（或从未展开）时保持按需读取，不多发后台命令。
@@ -771,7 +818,10 @@ export function App() {
     safetyPlan,
     branchPlan,
     remotePlan,
+    // 远程配置 / 检出 / 上游 / 首次推送共用同一个任务槽位：有任务就算模态上下文。
+    remoteTask,
     recoveryOpen,
+    cloneOpen: clone.open,
   });
   const blockingContextOpen = modalOpen || updates.open;
   // A merge/rebase in progress is state, not a transient message: keep it
@@ -825,6 +875,7 @@ export function App() {
     if (safetyPlan) { setSafetyPlan(null); return; }
     if (branchPlan) { setBranchPlan(null); return; }
     if (remotePlan) { setRemotePlan(null); return; }
+    if (remoteTask) { setRemoteTask(null); return; }
     if (recoveryOpen) { setRecoveryOpen(false); return; }
     // 历史模式自己决定 Esc 的三段语义（关 Diff → 丢草稿 → 还原筛选 → 退出模式）。
     handleEscape();
@@ -873,6 +924,7 @@ export function App() {
     historySearchShortcut,
     actions: {
       chooseRepo,
+      openClone: clone.start,
       refreshFromUser,
       setHistoryMode,
       setLedgerOpen,
@@ -923,6 +975,16 @@ export function App() {
       onConfirm={confirmRemote}
       onCancel={() => setRemotePlan(null)}
     />
+  ) : remoteTask ? (
+    <RemoteTaskContext
+      task={remoteTask}
+      loading={loading}
+      onField={updateRemoteForm}
+      onLocalName={updateRemoteLocalName}
+      onPrepare={reprepareRemoteTask}
+      onConfirm={remoteTask.kind === "config" ? confirmRemoteConfig : confirmRemoteTask}
+      onCancel={() => setRemoteTask(null)}
+    />
   ) : recoveryOpen ? (
     <RecoveryContext
       entries={reflogEntries}
@@ -932,7 +994,7 @@ export function App() {
       onClose={() => setRecoveryOpen(false)}
     />
   ) : !repo ? (
-    <NoRepositoryGuide loading={loading} onOpen={chooseRepo} />
+    <NoRepositoryGuide loading={loading} onOpen={chooseRepo} onClone={clone.start} />
   ) : (
     <>
       {/* 右栏固定两段：上「当前文件」（只影响这一个文件），下「创建提交」（影响整个暂存区）。
@@ -1086,6 +1148,18 @@ export function App() {
               onForget={forgetRecentRepository}
             />
           </div>
+          {/* 「克隆仓库」与「打开仓库」是同一组入口：首屏、顶栏与命令面板都指向它。 */}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={clone.start}
+            aria-label="克隆仓库"
+            title="从远程地址克隆仓库"
+            disabled={loading}
+          >
+            <CloudArrowDown size={15} />
+            <span className="top-action-label">克隆</span>
+          </button>
           <button
             type="button"
             className="secondary-button"
@@ -1148,6 +1222,16 @@ export function App() {
             onApply={() => applyHistoryFilters()}
             onReset={() => applyHistoryFilters(undefined, true)}
             onUseSelected={() => applySelectedFile(selected)}
+          />
+          <HistoryRefs
+            head={refsHead}
+            refs={refs}
+            reason={refsReason}
+            loading={refsLoading}
+            truncated={refsTruncated}
+            notice={refNotice}
+            activeHash={historySelected?.hash || ""}
+            onSelect={selectHistoryRef}
           />
           <section className="branch-list compare-panel">
             <div className="section-label"><span>双提交比较</span></div>
@@ -1253,6 +1337,19 @@ export function App() {
                     </>
                   )}
                   <div className="commit-list">
+                    {!historyFile && (
+                      <HistoryGraphNotice
+                        graph={historyGraph}
+                        available={graphAvailable}
+                        fileFiltered={Boolean(historyApplied?.filePath)}
+                        loading={loading}
+                      />
+                    )}
+                    {selectedOutsideList && !historyFile && (
+                      <div className="history-selection-note" role="status">
+                        当前选中的提交不在本页 {commits.length} 条历史中；右侧详情来自按完整 ID 的只读读取。
+                      </div>
+                    )}
                     {!repo ? (
                       <div className="history-empty"><p>打开仓库后可查看提交历史。</p></div>
                     ) : loading && !commits.length && !historyFile ? (
@@ -1290,6 +1387,7 @@ export function App() {
                         <CommitRow
                           key={commit.hash}
                           commit={commit}
+                          graph={graphAvailable ? historyGraphRows.get(commit.hash) : null}
                           selected={historySelected?.hash === commit.hash}
                           compareRole={
                             historyCompare.base?.hash === commit.hash
@@ -1300,7 +1398,10 @@ export function App() {
                           }
                           onSelect={() => selectHistoryCommit(commit)}
                           onCompare={() => pinCompare(commit)}
-                          busy={loading}
+                          // Once a commit/ref is selected, another row click is a
+                          // navigation intent: it must be able to cancel a slow
+                          // detail or Diff read instead of being disabled by it.
+                          busy={loading && !historySelected}
                         />
                       ))
                     )}
@@ -1532,11 +1633,17 @@ export function App() {
               </section>
               <SidebarRemote
                 remote={remote}
+                branches={remoteBranches}
                 files={state.files}
                 loading={loading}
                 onFetch={fetchRemote}
                 onPush={pushRemote}
                 onPull={pullRemote}
+                onAddRemote={() => openRemoteConfig("add")}
+                onEditRemote={(entry) => openRemoteConfig("set-url", entry)}
+                onCheckout={(entry) => requestCheckoutRemote(entry.full)}
+                onSetUpstream={(entry) => requestSetUpstream(entry.full)}
+                onFirstPush={requestFirstPush}
               />
             </>
           ) : (
@@ -1551,6 +1658,15 @@ export function App() {
                 disabled={loading}
               >
                 打开仓库
+              </button>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={clone.start}
+                disabled={loading}
+              >
+                <CloudArrowDown size={15} />
+                克隆仓库
               </button>
             </div>
           )}
@@ -1619,6 +1735,20 @@ export function App() {
           platform={shortcutPlatform}
           onClose={closeCommandPalette}
           onExecute={executePaletteCommand}
+        />
+      )}
+      {clone.open && (
+        <CloneRepositoryDialog
+          draft={clone.draft}
+          planned={clone.planned}
+          error={clone.error}
+          running={clone.running}
+          loading={loading}
+          onField={clone.updateField}
+          onChooseTarget={clone.chooseTarget}
+          onPrepare={clone.prepare}
+          onConfirm={clone.confirm}
+          onClose={clone.close}
         />
       )}
     </main>

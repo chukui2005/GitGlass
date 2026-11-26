@@ -69,10 +69,22 @@ export function createGitglassStub(overrides = {}) {
     forgetRecentRepository: vi.fn(async () => []),
     chooseRepository: vi.fn(async () => ({ canceled: true })),
     openRepository: vi.fn(async () => ({ ok: false, message: '假桥未配置 openRepository。' })),
+    // 克隆仓库（v0.6.10 PR 1）：默认「什么都没配」，用例只覆盖自己关心的那一支。
+    chooseCloneTarget: vi.fn(async () => ({ canceled: true })),
+    prepareClone: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置克隆计划。', plan: null, target: null })),
+    executeClone: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置克隆执行。', plan: null, target: null, execution: null })),
 
     // 历史审查
     getCommits: vi.fn(async () => ({ commits: [] })),
     queryHistory: vi.fn(async () => ({ commits: [] })),
+    getRefs: vi.fn(async () => ({
+      ok: true,
+      head: { fullName: 'HEAD', shortName: 'HEAD', commit: '', detached: false, unborn: true, status: '当前分支还没有提交。' },
+      refs: [],
+      truncated: false,
+      reason: '',
+    })),
+    getCommit: vi.fn(async () => ({ ok: false, commit: null, reason: '假桥未配置 getCommit。' })),
     getCommitDetail: vi.fn(async () => ({ ok: true, changedFiles: [] })),
     getCommitDiff: vi.fn(async () => ({ ok: true, diff: '' })),
     compareCommits: vi.fn(async () => ({ ok: true, diff: '' })),
@@ -82,6 +94,15 @@ export function createGitglassStub(overrides = {}) {
     // 远程与恢复
     getRemoteOverview: vi.fn(async () => ({ ok: true, remotes: [], remote: null, upstream: null, ahead: 0, behind: 0 })),
     getReflog: vi.fn(async () => ({ entries: [] })),
+
+    // 远程与上游（v0.6.10 PR 2）：默认“什么都没配”，用例只覆盖自己关心的那一支。
+    getRemoteBranches: vi.fn(async () => ({ branches: [] })),
+    prepareRemoteConfig: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程配置计划。', plan: null })),
+    executeRemoteConfig: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程配置执行。', execution: null })),
+    prepareRemoteBranch: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程分支计划。', plan: null })),
+    executeRemoteBranch: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置远程分支执行。', execution: null })),
+    prepareFirstPush: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置首次推送计划。', plan: null })),
+    executeFirstPush: vi.fn(async () => ({ ok: false, blocked: true, reason: '假桥未配置首次推送执行。', execution: null })),
 
     // “计划 → 执行”两步操作
     operate: vi.fn(async () => ({ execution: { ok: true }, state: { files: [] } })),
