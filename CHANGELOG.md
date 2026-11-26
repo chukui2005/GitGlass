@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.10-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.9-beta.1...v0.6.10-beta.1) (2026-11-26)
+
+### Features
+
+* prepare v0.6.10 clone, remote and history workbench (#95) ([beed712](https://github.com/chukui2005/GitGlass/commit/beed712ea11cbdc82d1fc1009ea105adfe931321))
+
 ## [0.6.9-beta.1](https://github.com/chukui2005/GitGlass/compare/v0.6.8...v0.6.9-beta.1) (2026-11-25)
 
 ### Features
