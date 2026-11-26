@@ -152,6 +152,11 @@ app.whenReady().then(async () => {
     })()`), '克隆后打开仓库')
     if (!cloneOutcome.ok) throw new Error(`克隆失败：${cloneOutcome.error}`)
 
+    // A CI runner has no personal global Git identity. The workbench commit must
+    // carry a real author, so configure the cloned worktree before committing.
+    git(['config', 'user.name', 'Integration Probe'], repository)
+    git(['config', 'user.email', 'integration@test.local'], repository)
+
     // Remote management entry is still present after the merge.
     await waitUntil(() => js(`Boolean([...document.querySelectorAll('.remote-summary .section-label span')].find((node) => node.textContent === '远程')) && Boolean(document.querySelector('[aria-label="检出远程分支 origin/feature"]'))`), '远程管理与远程跟踪分支入口')
 
