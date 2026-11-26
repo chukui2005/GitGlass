@@ -711,8 +711,12 @@ export function RemoteTaskContext({ task, loading, onField, onLocalName, onPrepa
             <dd><code>{preview.targetRef || "—"}</code></dd>
           </div>
           <div>
-            <dt>远程地址</dt>
-            <dd title={preview.remoteUrl || ""}>{preview.remoteUrl || "—"}</dd>
+            <dt>推送地址</dt>
+            <dd title={(preview.pushUrls || []).join('\n')}>
+              {(preview.pushUrls || []).length
+                ? (preview.pushUrls || []).map((url) => <code key={url}>{url}</code>)
+                : preview.remoteUrl || "—"}
+            </dd>
           </div>
         </dl>
       )}

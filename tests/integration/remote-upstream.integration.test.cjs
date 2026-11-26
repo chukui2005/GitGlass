@@ -216,8 +216,17 @@ describe('v0.6.10 first push with upstream (real Git)', () => {
     expect(prepared.remote).toBe('origin')
     expect(prepared.targetRef).toBe('refs/heads/my-feature')
     expect(prepared.remoteBranch).toBe('my-feature')
-    expect(prepared.plan.argv).toEqual(['push', '--set-upstream', 'origin', 'my-feature:refs/heads/my-feature'])
-    expect(prepared.plan.displayCommand).toBe('git push --set-upstream origin my-feature:refs/heads/my-feature')
+    // 源与目标都是完整引用，并且显式关掉 followTags。
+    expect(prepared.plan.argv).toEqual([
+      'push',
+      '--set-upstream',
+      '--no-follow-tags',
+      'origin',
+      'refs/heads/my-feature:refs/heads/my-feature',
+    ])
+    expect(prepared.plan.displayCommand).toBe('git push --set-upstream --no-follow-tags origin refs/heads/my-feature:refs/heads/my-feature')
+    // 预览里的 push 地址来自实际配置（这里与 fetch 地址相同）。
+    expect(prepared.pushUrls).toEqual([bare])
 
     const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
     expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
@@ -261,5 +270,119 @@ describe('v0.6.10 first push with upstream (real Git)', () => {
     await gitFails(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
     expect(await configValue(work, 'branch.clash.remote')).toBe('')
     expect(await git(bare, ['rev-parse', 'refs/heads/clash'])).toBe(remoteHead)
+  })
+})
+
+describe('v0.6.10 first push uses the actual push URL (real Git)', () => {
+  const bareClone = async (from, to) => {
+    const record = await commandsFor().run({ argv: ['clone', '--bare', from, to], intent: 'Fixture', source: 'background', cwd: workspace })
+    expect(record.ok, record.stderr).toBe(true)
+  }
+
+  it('previews the configured push URL, pushes there, and refuses the plan after the push URL changes', async () => {
+    const { bare, work, repository } = await setup()
+    const pushTarget = path.join(workspace, 'push-target.git')
+    await bareClone(bare, pushTarget)
+    // fetch 地址仍是第一个 bare；push 地址改成第二个。
+    await git(work, ['remote', 'set-url', '--add', '--push', 'origin', pushTarget])
+    expect((await git(work, ['remote', 'get-url', '--push', '--all', 'origin'])).split(/\r?\n/)).toEqual([pushTarget])
+
+    await git(work, ['switch', '-c', 'split-push'])
+    fs.writeFileSync(path.join(work, 'split.txt'), 'split\n')
+    await git(work, ['add', '-A'])
+    await git(work, ['commit', '-m', 'feat: split push'])
+    const head = await git(work, ['rev-parse', 'HEAD'])
+
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared.ok).toBe(true)
+    // 预览读的是实际 push 地址，而不是 fetch 地址。
+    expect(prepared.pushUrls).toEqual([pushTarget])
+    expect(prepared.plan.argv[prepared.plan.argv.length - 2]).toBe('origin')
+
+    // 预览之后 push 地址被改了：旧计划必须失效，两个远端都不能出现这次推送。
+    await git(work, ['remote', 'set-url', '--push', 'origin', bare])
+    const stale = await repository.executeFirstPush({}, prepared.plan.operationId)
+    expect(stale).toMatchObject({ ok: false, blocked: true, execution: null })
+    expect(stale.reason).toContain('推送地址')
+    await gitFails(pushTarget, ['rev-parse', '--verify', 'refs/heads/split-push'])
+    await gitFails(bare, ['rev-parse', '--verify', 'refs/heads/split-push'])
+
+    // 重新预览后，推送落到现在的实际 push 地址（fetch 地址那个 bare）。
+    const retry = await repository.prepareFirstPush({})
+    expect(retry.pushUrls).toEqual([bare])
+    const pushed = await repository.executeFirstPush({}, retry.plan.operationId)
+    expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
+    expect(await git(bare, ['rev-parse', 'refs/heads/split-push'])).toBe(head)
+    expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).toBe('origin/split-push')
+  })
+
+  it('lists every configured push URL and pushes to all of them', async () => {
+    const { bare, work, repository } = await setup()
+    const first = path.join(workspace, 'push-one.git')
+    const second = path.join(workspace, 'push-two.git')
+    await bareClone(bare, first)
+    await bareClone(bare, second)
+    await git(work, ['remote', 'set-url', '--push', 'origin', first])
+    await git(work, ['remote', 'set-url', '--add', '--push', 'origin', second])
+    expect((await git(work, ['remote', 'get-url', '--push', '--all', 'origin'])).split(/\r?\n/)).toEqual([first, second])
+
+    await git(work, ['switch', '-c', 'multi-push'])
+    fs.writeFileSync(path.join(work, 'multi.txt'), 'multi\n')
+    await git(work, ['add', '-A'])
+    await git(work, ['commit', '-m', 'feat: multi push'])
+    const head = await git(work, ['rev-parse', 'HEAD'])
+
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared.pushUrls).toEqual([first, second])
+    const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
+    expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
+    expect(await git(first, ['rev-parse', 'refs/heads/multi-push'])).toBe(head)
+    expect(await git(second, ['rev-parse', 'refs/heads/multi-push'])).toBe(head)
+  })
+
+  it('pushes only the branch when a tag shares its name and push.followTags is enabled', async () => {
+    const { bare, work, repository } = await setup()
+    await git(work, ['switch', '-c', 'shared-name'])
+    fs.writeFileSync(path.join(work, 'shared.txt'), 'shared\n')
+    await git(work, ['add', '-A'])
+    await git(work, ['commit', '-m', 'feat: same name'])
+    // 同名注解标签 + 全局 followTags：没有 `--no-follow-tags` 时 Git 会顺带推标签。
+    await git(work, ['tag', '-a', 'shared-name', '-m', 'release tag'])
+    await git(work, ['config', 'push.followTags', 'true'])
+    const head = await git(work, ['rev-parse', 'HEAD'])
+
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared.plan.argv).toContain('--no-follow-tags')
+    expect(prepared.plan.argv[prepared.plan.argv.length - 1]).toBe('refs/heads/shared-name:refs/heads/shared-name')
+    const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
+    expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
+    expect(await git(bare, ['rev-parse', 'refs/heads/shared-name'])).toBe(head)
+    // 标签没有被推到远端；本地标签仍在。
+    await gitFails(bare, ['rev-parse', '--verify', 'refs/tags/shared-name'])
+    expect(await git(work, ['rev-parse', '--verify', 'refs/tags/shared-name'])).toBeTruthy()
+  })
+})
+
+describe('v0.6.10 remote configuration version (real Git)', () => {
+  it('invalidates a reviewed plan when only the credential part of a remote URL changes', async () => {
+    const { work, repository, commands } = await setup()
+    // 先让 origin 带内嵌凭据（直接改配置，不经过应用）。
+    await git(work, ['remote', 'set-url', 'origin', 'https://user:first@example.test/team/repo.git'])
+    const prepared = await repository.prepareRemoteConfig('add', { name: 'upstream', url: 'https://example.test/team/repo.git' })
+    expect(prepared.ok).toBe(true)
+
+    // 只改凭据：界面与账本里的地址已经脱敏（共享的凭据过滤器会抹掉 userinfo），
+    // 两次读取看起来一样，但实际配置已经变了。
+    await git(work, ['remote', 'set-url', 'origin', 'https://user:second@example.test/team/repo.git'])
+    const details = await repository.remotesDetailed()
+    const shownUrl = details.remotes.find((entry) => entry.name === 'origin').url
+    expect(shownUrl).toBe('https://example.test/team/repo.git')
+    expect(shownUrl).not.toContain('second')
+
+    const stale = await repository.executeRemoteConfig('add', { name: 'upstream', url: 'https://example.test/team/repo.git' }, prepared.plan.operationId)
+    expect(stale).toMatchObject({ ok: false, blocked: true, execution: null })
+    expect(stale.reason).toContain('变化')
+    expect(await git(work, ['remote'])).not.toContain('upstream')
+    expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
   })
 })

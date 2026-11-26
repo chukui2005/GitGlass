@@ -5,6 +5,7 @@ const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, b
 const { classifyCloneSource, redactCloneSource, redactCloneOutput } = require('./repository-cloner.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
+const { createHash } = require('node:crypto')
 
 function isPath(value) { return typeof value === 'string' && value.length > 0 && !value.includes('\0') }
 function isBranchInput(value) { return typeof value === 'string' && value.length > 0 && value.length <= 255 && !value.includes('\0') }
@@ -623,17 +624,50 @@ class RepositoryService {
   // 计划里的 argv 是唯一会执行的命令，执行前重新读取仓库与远程配置，任何一项与
   // 预览时不一致就拒绝执行（用户改过配置、切过仓库、别人动过 remote）。
 
-  /** `git remote -v` 的解析：每个远程一行 fetch 地址（地址按克隆同一套占位符脱敏）。 */
+  /** `git remote -v` 的解析：每个远程一行 fetch 地址，外加全部 push 地址（同样脱敏）。 */
   async remotesDetailed() {
     const record = await this.run(['remote', '-v'], 'Read remote configuration', 'background', undefined, redactCloneOutput)
     const remotes = []
+    const pushUrls = new Map()
     if (record.ok) {
       for (const line of record.stdout.split(/\r?\n/)) {
         const match = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/.exec(line.trim())
-        if (match && match[3] === 'fetch') remotes.push({ name: match[1], url: redactCloneSource(match[2]) })
+        if (!match) continue
+        const url = redactCloneSource(match[2])
+        if (match[3] === 'fetch') remotes.push({ name: match[1], url })
+        else pushUrls.set(match[1], [...(pushUrls.get(match[1]) || []), url])
       }
     }
+    for (const remote of remotes) remote.pushUrls = pushUrls.get(remote.name) || []
     return { ok: record.ok, remotes, record }
+  }
+
+  /**
+   * 远程配置的内部版本：对 `git config --get-regexp '^remote\.'` 的**原始**输出取摘要。
+   *
+   * 计划是否过期由这份摘要判断，而不是界面上那份脱敏地址——只改地址里的凭据（界面上
+   * 全部显示为 `<redacted>`）也必须让旧计划失效。原始输出只在这里取哈希，不保留、不外传。
+   */
+  async remoteConfigDigest() {
+    const { record, stdout } = await this.commands.runCapturingOutput({
+      argv: ['config', '--get-regexp', '^remote\\.'],
+      intent: 'Read remote configuration version',
+      source: 'background',
+      cwd: this.cwd,
+    })
+    // 没有任何 remote.* 键时 `git config --get-regexp` 退出码是 1：那也是一个有效版本。
+    const known = record.exitCode === 0 || record.exitCode === 1
+    const digest = createHash('sha256').update(known ? stdout : '', 'utf8').digest('hex')
+    return { ok: known, digest, record }
+  }
+
+  /** 某个远程实际会用到的 push 地址（配置了多个时全部返回）。 */
+  async pushUrlsFor(remote) {
+    const record = await this.run(['remote', 'get-url', '--push', '--all', remote], 'Read remote push URL', 'background', undefined, redactCloneOutput)
+    const urls = record.ok
+      ? record.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((url) => redactCloneSource(url))
+      : []
+    return { ok: record.ok, urls, record }
   }
 
   /** 远程跟踪分支：完整引用 + 短名 + 远程名 + 分支名 + 短提交 ID。 */
@@ -675,7 +709,11 @@ class RepositoryService {
     }
     const argv = kind === 'add' ? ['remote', 'add', name, address.value] : ['remote', 'set-url', name, address.value]
     const plan = this.plan(argv, kind === 'add' ? 'Add remote' : 'Edit remote URL', operationId)
-    const snapshot = { repo: this.cwd, remotes: details.remotes.map((entry) => ({ name: entry.name, url: entry.url })) }
+    // 过期判断只用主进程内部的配置版本：界面与账本里的地址是脱敏的，凭据部分的变化
+    // 在界面上看不出来，但它同样会让旧计划失效。
+    const version = await this.remoteConfigDigest()
+    if (!version.ok) return { ok: false, blocked: true, reason: '无法读取远程配置版本，请刷新后重试。', plan: null, state }
+    const snapshot = { repo: this.cwd, configDigest: version.digest }
     this.rememberPreview(plan.operationId, { family: 'remote-config', kind, name, argv: plan.argv, intent: plan.intent, snapshot })
     return {
       ok: true,
@@ -687,19 +725,17 @@ class RepositoryService {
       previousUrl: existing?.url || '',
       snapshot,
       state,
+      remotes: details.remotes,
       plan,
     }
   }
 
-  /** 执行远程配置：取出预览时记下的 argv，复核仓库与远程配置仍一致后才运行。 */
+  /** 执行远程配置：取出预览时记下的 argv，复核仓库与配置版本后才运行。 */
   async executeRemoteConfig(kind, request, operationId) {
     const preview = this.takePreview(operationId, 'remote-config')
     if (!preview || preview.kind !== kind) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
-    const current = await this.remotesDetailed()
-    const unchanged =
-      current.ok &&
-      preview.snapshot.repo === this.cwd &&
-      JSON.stringify(current.remotes.map((entry) => ({ name: entry.name, url: entry.url }))) === JSON.stringify(preview.snapshot.remotes)
+    const version = await this.remoteConfigDigest()
+    const unchanged = version.ok && preview.snapshot.repo === this.cwd && version.digest === preview.snapshot.configDigest
     if (!unchanged) {
       return { execution: null, ok: false, blocked: true, reason: STALE_REPOSITORY, overview: await this.remoteOverview() }
     }
@@ -853,8 +889,20 @@ class RepositoryService {
     const targetRef = `refs/heads/${requestedBranch}`
     const head = await this.run(['rev-parse', '--verify', '--quiet', 'HEAD'], 'Read local HEAD for first push')
     if (!head.ok) return { ok: false, blocked: true, reason: '当前分支还没有提交，无法推送。', plan: null, state, remotes: remoteList.remotes }
-    const plan = this.plan(['push', '--set-upstream', remote, `${state.branch}:${targetRef}`], 'Push branch and set upstream', operationId)
-    const snapshot = { repo: this.cwd, branch: state.branch, remote, targetRef, head: head.stdout.trim() }
+    // 预览必须写清实际会用到的 push 地址（`remote.<name>.pushurl` 可能与 fetch 地址不同）。
+    const pushUrls = await this.pushUrlsFor(remote)
+    if (!pushUrls.ok || !pushUrls.urls.length) return { ok: false, blocked: true, reason: '无法读取该远程的推送地址，请刷新后重试。', plan: null, state, remotes: remoteList.remotes }
+    const version = await this.remoteConfigDigest()
+    if (!version.ok) return { ok: false, blocked: true, reason: '无法读取远程配置版本，请刷新后重试。', plan: null, state, remotes: remoteList.remotes }
+    // 源与目标都是完整引用：同名标签不会被当成要推的分支；`--no-follow-tags` 显式关掉
+    // `push.followTags`（它会顺带把注解标签推上去）。
+    const sourceRef = `refs/heads/${state.branch}`
+    const plan = this.plan(
+      ['push', '--set-upstream', '--no-follow-tags', remote, `${sourceRef}:${targetRef}`],
+      'Push branch and set upstream',
+      operationId,
+    )
+    const snapshot = { repo: this.cwd, branch: state.branch, remote, targetRef, sourceRef, pushUrls: pushUrls.urls, configDigest: version.digest, head: head.stdout.trim() }
     this.rememberPreview(plan.operationId, { family: 'first-push', argv: plan.argv, intent: plan.intent, snapshot })
     return {
       ok: true,
@@ -863,6 +911,8 @@ class RepositoryService {
       branch: state.branch,
       remote,
       remoteUrl: remoteEntry.url,
+      pushUrl: pushUrls.urls[0],
+      pushUrls: pushUrls.urls,
       remoteBranch: requestedBranch,
       targetRef,
       head: head.stdout.trim(),
@@ -877,15 +927,34 @@ class RepositoryService {
     const preview = this.takePreview(operationId, 'first-push')
     if (!preview) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
     const state = await this.state()
-    // 复核预览里的三个值：当前分支、远程与目标 refs/heads/…，任何一项变了都不执行。
+    // 复核预览里的值：当前分支、远程、目标 refs/heads/…、实际 push 地址与配置版本。
     const sameTarget =
       state.ok &&
       preview.snapshot.repo === this.cwd &&
       state.branch === preview.snapshot.branch &&
       preview.argv[preview.argv.length - 2] === preview.snapshot.remote &&
-      preview.argv[preview.argv.length - 1] === `${preview.snapshot.branch}:${preview.snapshot.targetRef}`
+      preview.argv[preview.argv.length - 1] === `${preview.snapshot.sourceRef}:${preview.snapshot.targetRef}`
     if (!sameTarget) {
       return { execution: null, ok: false, blocked: true, reason: STALE_BRANCH, state, overview: await this.remoteOverview() }
+    }
+    // 推送地址（可能配了多个，也可能与 fetch 地址不同）与配置版本都要和预览时一致。
+    const pushUrls = await this.pushUrlsFor(preview.snapshot.remote)
+    const version = await this.remoteConfigDigest()
+    const sameDestination =
+      pushUrls.ok &&
+      version.ok &&
+      pushUrls.urls.length > 0 &&
+      JSON.stringify(pushUrls.urls) === JSON.stringify(preview.snapshot.pushUrls) &&
+      version.digest === preview.snapshot.configDigest
+    if (!sameDestination) {
+      return {
+        execution: null,
+        ok: false,
+        blocked: true,
+        reason: '该远程的推送地址在预览后发生了变化，请重新预览再执行。',
+        state,
+        overview: await this.remoteOverview(),
+      }
     }
     const execution = await this.run(preview.argv, preview.intent, 'user', operationId, null, null, NETWORK_TIMEOUT_MS)
     // 推送后以上游的实际结果为准：失败时上游与远端引用都保持原值。
@@ -897,6 +966,7 @@ class RepositoryService {
       branch: preview.snapshot.branch,
       remote: preview.snapshot.remote,
       targetRef: preview.snapshot.targetRef,
+      pushUrls: preview.snapshot.pushUrls,
       upstream: upstreamRecord.ok ? parseUpstream(upstreamRecord.stdout) : null,
       state: await this.state(),
       overview: await this.remoteOverview(),

@@ -63,9 +63,14 @@ const FIRST_PUSH_PLAN = {
   branch: 'main',
   remote: 'origin',
   remoteUrl: 'git@example.test:team/repo.git',
+  pushUrl: 'ssh://push.example.test/team/repo.git',
+  pushUrls: ['ssh://push.example.test/team/repo.git'],
   remoteBranch: 'main',
   targetRef: 'refs/heads/main',
-  plan: { operationId: 'op-first-push', displayCommand: 'git push --set-upstream origin main:refs/heads/main' },
+  plan: {
+    operationId: 'op-first-push',
+    displayCommand: 'git push --set-upstream --no-follow-tags origin refs/heads/main:refs/heads/main',
+  },
 }
 
 async function renderRemote(overrides = {}) {
@@ -241,13 +246,43 @@ describe('first push with upstream in the workbench (rendered)', () => {
     expect(panel.getByText('推送目标')).toBeInTheDocument()
     expect(panel.getByText('目标引用')).toBeInTheDocument()
     expect(panel.getByText('refs/heads/main')).toBeInTheDocument()
-    expect(contextPanel().querySelector('.planned-command')).toHaveTextContent('git push --set-upstream origin main:refs/heads/main')
+    // 预览显示的是实际 push 地址（可能与 fetch 地址不同）。
+    expect(panel.getByText('推送地址')).toBeInTheDocument()
+    expect(panel.getByText('ssh://push.example.test/team/repo.git')).toBeInTheDocument()
+    expect(contextPanel().querySelector('.planned-command')).toHaveTextContent('git push --set-upstream --no-follow-tags origin refs/heads/main:refs/heads/main')
 
     await user.click(panel.getByRole('button', { name: '确认首次推送并设置上游' }))
     await waitFor(() => {
       expect(stub.executeFirstPush).toHaveBeenCalledWith({}, 'op-first-push')
     })
     expect(await screen.findByText('已推送并设置上游：origin/main。')).toBeInTheDocument()
+  })
+
+  it('shows every configured push URL in the preview', async () => {
+    const { user } = await renderRemote({
+      prepareFirstPush: vi.fn(async () => ({
+        ...FIRST_PUSH_PLAN,
+        pushUrls: ['ssh://push-one.example.test/team/repo.git', 'ssh://push-two.example.test/team/repo.git'],
+      })),
+    })
+    await user.click(within(sidebar()).getByRole('button', { name: '首次推送并设置上游…' }))
+    const panel = within(contextPanel())
+    expect(panel.getByText('推送地址')).toBeInTheDocument()
+    expect(panel.getByText('ssh://push-one.example.test/team/repo.git')).toBeInTheDocument()
+    expect(panel.getByText('ssh://push-two.example.test/team/repo.git')).toBeInTheDocument()
+  })
+
+  it('asks for a new preview when the push URL changed after the preview', async () => {
+    const reason = '该远程的推送地址在预览后发生了变化，请重新预览再执行。'
+    const { user } = await renderRemote({
+      executeFirstPush: vi.fn(async () => ({ ok: false, blocked: true, execution: null, reason })),
+    })
+    await user.click(within(sidebar()).getByRole('button', { name: '首次推送并设置上游…' }))
+    const panel = within(contextPanel())
+    await user.click(await panel.findByRole('button', { name: '确认首次推送并设置上游' }))
+
+    expect(await panel.findByRole('alert')).toHaveTextContent(reason)
+    expect(panel.queryByRole('button', { name: '确认首次推送并设置上游' })).toBeNull()
   })
 
   it('keeps the task open with the failure reason when Git rejects the push', async () => {
