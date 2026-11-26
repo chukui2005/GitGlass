@@ -123,6 +123,38 @@ describe('v0.6.10 clone and open (real Git)', () => {
     expect(prepared.target).toBe(path.join(workspace, 'origin'))
   })
 
+  it('strips a URL fragment before Git and the ledger, and keeps a # inside a local path', async () => {
+    tempWorkspace()
+    const { bare, head } = await createBareOrigin()
+    const parent = path.join(workspace, 'fragments')
+    fs.mkdirSync(parent)
+    const url = `file:///${bare.replace(/\\/g, '/')}`
+
+    const commands = new GitCommandService()
+    const prepared = prepareClone({ source: `${url}#ignored-fragment`, parent, name: 'from-url', commandService: commands })
+    expect(prepared.ok).toBe(true)
+    // Preview and argv carry the same fragment-free address.
+    expect(prepared.plan.argv[prepared.plan.argv.length - 2]).toBe(url)
+    expect(prepared.plan.displayCommand).not.toContain('#')
+    expect(prepared.plan.displayCommand).toContain(url)
+
+    const result = await executeClone({ source: `${url}#ignored-fragment`, parent, name: 'from-url', commandService: commands })
+    expect(result.ok, result.reason).toBe(true)
+    expect(await gitIn(path.join(parent, 'from-url'), ['rev-parse', 'HEAD'])).toBe(head)
+    const record = commands.history().find((entry) => entry.intent === 'Clone repository')
+    expect(record.argv.join(' ')).not.toContain('#')
+    expect(record.displayCommand).not.toContain('#')
+    expect(record.argv[record.argv.length - 2]).toBe(url)
+
+    // '#' is an ordinary filename character in a local path: it must survive untouched.
+    const hashed = path.join(workspace, 'hash#origin.git')
+    await gitIn(workspace, ['clone', '--bare', bare, hashed])
+    const local = await executeClone({ source: hashed, parent, name: 'from-path', commandService: new GitCommandService() })
+    expect(local.ok, local.reason).toBe(true)
+    expect(await gitIn(path.join(parent, 'from-path'), ['rev-parse', 'HEAD'])).toBe(head)
+    expect(local.plan.argv[local.plan.argv.length - 2]).toBe(hashed)
+  })
+
   it('refuses a non-empty target without running any Git command and leaves the folder intact', async () => {
     tempWorkspace()
     const { bare } = await createBareOrigin()
@@ -161,8 +193,14 @@ describe('v0.6.10 clone and open (real Git)', () => {
     const mirror = path.join(workspace, 'mirror')
     fs.mkdirSync(mirror)
     await gitIn(workspace, ['clone', '--bare', bare, path.join(mirror, 'repo.git')])
+    // The user's own configuration explicitly allows the file transport — exactly the
+    // case the `-c` flags alone cannot cover, because a per-protocol allow wins over
+    // `protocol.allow=never`. GIT_ALLOW_PROTOCOL is the whitelist that overrides both.
     const configFile = path.join(workspace, 'gitconfig')
-    fs.writeFileSync(configFile, `[url "file:///${mirror.replace(/\\/g, '/')}/"]\n\tinsteadOf = https://rewrite.invalid/\n`)
+    fs.writeFileSync(
+      configFile,
+      `[protocol "file"]\n\tallow = always\n[url "file:///${mirror.replace(/\\/g, '/')}/"]\n\tinsteadOf = https://rewrite.invalid/\n`,
+    )
 
     const previousGlobal = process.env.GIT_CONFIG_GLOBAL
     const previousNoSystem = process.env.GIT_CONFIG_NOSYSTEM
@@ -180,6 +218,18 @@ describe('v0.6.10 clone and open (real Git)', () => {
       const prepared = prepareClone({ source: 'https://rewrite.invalid/repo.git', parent, name: 'pinned', commandService: commands })
       expect(prepared.ok).toBe(true)
       expect(prepared.plan.argv).toEqual([...HTTPS_PROTOCOL, 'clone', '--', 'https://rewrite.invalid/repo.git', 'pinned'])
+
+      // Control 2: with the user's `protocol.file.allow=always`, the `-c` flags alone
+      // are not enough — the child-process allow-list is what refuses the rewrite.
+      const pinnedOnly = await new GitCommandService().run({
+        argv: [...HTTPS_PROTOCOL, 'clone', '--', 'https://rewrite.invalid/repo.git', 'pinned-only'],
+        intent: 'Fixture',
+        source: 'background',
+        cwd: parent,
+        timeoutMs: 60_000,
+      })
+      expect(pinnedOnly.ok, '用户配置显式允许 file 时，单靠 -c 固定挡不住 insteadOf 改写').toBe(true)
+      expect(await gitIn(path.join(parent, 'pinned-only'), ['rev-parse', 'HEAD'])).toBe(head)
 
       const result = await executeClone({ source: 'https://rewrite.invalid/repo.git', parent, name: 'pinned', commandService: commands })
       expect(result.ok).toBe(false)

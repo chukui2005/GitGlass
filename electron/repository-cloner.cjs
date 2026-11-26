@@ -39,6 +39,9 @@ const OPERATION_ID = /^[A-Za-z0-9._:-]{1,128}$/
 // a visible placeholder instead of a silent strip.
 const USERINFO_IN_TEXT = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@"']*@/gi
 const SECRET_QUERY_IN_TEXT = /([?&](?:access_token|auth|key|password|passwd|pwd|secret|token)=)[^&\s"']+/gi
+// The user-info span of an address, used to redact textually (bytes that are not a
+// credential stay exactly as the user typed them).
+const USERINFO_SPAN = /^([a-z][a-z0-9+.-]*:\/\/)([^/\s@]*)@/i
 
 const REASON = {
   invalidSource: '请输入仓库地址：HTTPS 或 SSH 地址（例如 https://host/owner/repo.git），也可以使用本地仓库路径。',
@@ -46,6 +49,7 @@ const REASON = {
   embeddedCredential: '地址中包含内嵌的用户名或令牌，GitGlass 不会执行或记录这类地址。请移除后重试；认证请使用本机 Git 凭据。',
   sshPassword: 'SSH 地址里包含密码，GitGlass 不会执行或记录这类地址。请改用 SSH 密钥或本机凭据管理器。',
   secretQuery: '地址的查询参数里带有令牌类字段（含百分号编码写法），GitGlass 不会执行或记录这类地址。请移除后重试。',
+  fileUrlHost: 'file:// 地址只支持本机路径。请改用本地文件夹地址（例如 D:\\repos\\demo.git），或去掉地址里的主机名。',
   invalidParent: '请选择克隆的目标位置（一个本地文件夹）。',
   missingParent: '目标位置不存在或无法访问，请重新选择。',
   parentNotDirectory: '目标位置不是文件夹，请重新选择。',
@@ -80,34 +84,48 @@ function isSensitiveQueryKey(key) {
  * Redacts the credential-bearing parts of an address for display and for records.
  * HTTPS/HTTP user info is replaced as a whole (a username there is usually a token),
  * an SSH password is replaced while the SSH username is kept, and sensitive query
- * values become the placeholder. Fragments are dropped: they are never sent to Git.
+ * values become the placeholder.
+ *
+ * The edit is textual on purpose: every byte that is not a credential stays exactly
+ * as typed, so the preview, the argv and the ledger describe the same address.
+ * Fragments are dropped for URL-shaped addresses (they are never sent to Git); a
+ * local path keeps its `#` because there it is a normal filename character.
  *
  * @param {string} value
  * @returns {string}
  */
 function redactCloneSource(value) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (!text) return ''
-  if (!SCHEME.test(text)) return text
-  let url
-  try {
-    url = new URL(text)
-  } catch {
-    return text.replace(USERINFO_IN_TEXT, `$1${PLACEHOLDER}@`).replace(SECRET_QUERY_IN_TEXT, `$1${PLACEHOLDER}`)
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+  if (!SCHEME.test(trimmed)) return trimmed
+  let display = trimmed.split('#')[0]
+  const userinfo = USERINFO_SPAN.exec(display)
+  if (userinfo) {
+    const scheme = userinfo[1].slice(0, -3).toLowerCase()
+    const credentials = userinfo[2]
+    let replacement
+    if (scheme === 'ssh') {
+      const colon = credentials.indexOf(':')
+      replacement = colon === -1 ? `${credentials}@` : `${credentials.slice(0, colon)}:${PLACEHOLDER}@`
+    } else {
+      replacement = `${PLACEHOLDER}@`
+    }
+    display = `${userinfo[1]}${replacement}${display.slice(userinfo[0].length)}`
   }
-  const scheme = url.protocol.replace(/:$/, '').toLowerCase()
-  const hasUserInfo = Boolean(url.username || url.password)
-  let display = `${scheme}://`
-  if (hasUserInfo) {
-    if (scheme === 'ssh') display += url.password ? `${url.username}:${PLACEHOLDER}@` : `${url.username}@`
-    else display += `${PLACEHOLDER}@`
+  const questionMark = display.indexOf('?')
+  if (questionMark !== -1) {
+    const head = display.slice(0, questionMark)
+    const query = display
+      .slice(questionMark + 1)
+      .split('&')
+      .map((pair) => {
+        const equals = pair.indexOf('=')
+        const key = equals === -1 ? pair : pair.slice(0, equals)
+        return isSensitiveQueryKey(key) ? `${key}=${PLACEHOLDER}` : pair
+      })
+      .join('&')
+    display = `${head}?${query}`
   }
-  display += url.host
-  display += url.pathname
-  const query = [...url.searchParams.entries()]
-    .map(([key, entry]) => `${encodeURIComponent(key)}=${isSensitiveQueryKey(key) ? PLACEHOLDER : encodeURIComponent(entry)}`)
-    .join('&')
-  if (query) display += `?${query}`
   return display
 }
 
@@ -140,13 +158,24 @@ function classifyCloneSource(input) {
   if (matched) {
     const scheme = matched[1].toLowerCase()
     if (!SUPPORTED_SCHEMES.has(scheme)) return { ok: false, reason: REASON.unsupportedScheme }
+    // A URL fragment is never part of what Git clones. It is stripped once, here, so
+    // the validated address — and therefore the argv, the preview and the ledger — is
+    // the same string everywhere.
+    const canonical = value.split('#')[0]
+    if (!canonical || !canonical.slice(matched[0].length).replace(/[\\/]+$/, '')) return { ok: false, reason: REASON.invalidSource }
     let url
     try {
-      url = new URL(value)
+      url = new URL(canonical)
     } catch {
       return { ok: false, reason: REASON.invalidSource }
     }
-    if (!url.hostname) return { ok: false, reason: REASON.invalidSource }
+    // `file://` is a local address with an empty (or `localhost`) host; every other
+    // supported scheme needs a host to be a real address.
+    if (scheme === 'file') {
+      if (url.hostname && url.hostname !== 'localhost') return { ok: false, reason: REASON.fileUrlHost }
+    } else if (!url.hostname) {
+      return { ok: false, reason: REASON.invalidSource }
+    }
     if (scheme === 'ssh') {
       // A password in an SSH URL is credential material, not an address part.
       if (url.password) return { ok: false, reason: REASON.sshPassword }
@@ -157,7 +186,7 @@ function classifyCloneSource(input) {
       if (isSensitiveQueryKey(key)) return { ok: false, reason: REASON.secretQuery }
     }
     const kind = scheme === 'ssh' ? 'ssh' : scheme === 'file' ? 'path' : 'url'
-    return { ok: true, kind, scheme, protocol: PROTOCOL_FOR_SCHEME[scheme], value, display: redactCloneSource(value) }
+    return { ok: true, kind, scheme, protocol: PROTOCOL_FOR_SCHEME[scheme], value: canonical, display: redactCloneSource(canonical) }
   }
   if (SCP_LIKE.test(value)) return { ok: true, kind: 'ssh', scheme: 'ssh', protocol: 'ssh', value, display: value }
   if (WINDOWS_ABSOLUTE.test(value) || POSIX_ABSOLUTE.test(value)) {
@@ -179,6 +208,19 @@ function classifyCloneSource(input) {
 function cloneProtocolArgs(classified) {
   const protocol = classified.protocol || 'file'
   return ['-c', 'protocol.allow=never', '-c', `protocol.${protocol}.allow=always`]
+}
+
+/**
+ * The child-process allow-list for the same transport. `GIT_ALLOW_PROTOCOL` is a
+ * whitelist that overrides `protocol.<name>.allow` from the user's configuration, so
+ * it still holds when that configuration explicitly allows another transport (for
+ * example `protocol.file.allow=always`, which an `insteadOf` rewrite needs).
+ *
+ * @param {{ protocol?: string }} classified
+ * @returns {Record<string, string>}
+ */
+function cloneProtocolEnv(classified) {
+  return { GIT_ALLOW_PROTOCOL: classified.protocol || 'file' }
 }
 
 /**
@@ -405,6 +447,7 @@ async function executeClone({ source, parent, name, commandService, operationId 
     operationId: prepared.plan.operationId,
     timeoutMs: NETWORK_TIMEOUT_MS,
     redactOutput: redactCloneOutput,
+    env: cloneProtocolEnv(prepared.source),
   })
   if (!execution.ok) {
     return { ok: false, target: prepared.target, plan: prepared.plan, execution, reason: describeCloneFailure(execution) }
@@ -417,6 +460,7 @@ module.exports = {
   redactCloneSource,
   redactCloneOutput,
   cloneProtocolArgs,
+  cloneProtocolEnv,
   cloneDisplayCommand,
   sourceRepositoryName,
   sanitizeRepositoryName,

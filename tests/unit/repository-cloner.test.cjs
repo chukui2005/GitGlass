@@ -8,6 +8,7 @@ const {
   redactCloneSource,
   redactCloneOutput,
   cloneProtocolArgs,
+  cloneProtocolEnv,
   cloneDisplayCommand,
   sourceRepositoryName,
   sanitizeRepositoryName,
@@ -93,6 +94,12 @@ describe('clone source classification (structured)', () => {
     expect(classifyCloneSource(absolute('repo.git'))).toMatchObject({ ok: true, kind: 'path', scheme: 'path', protocol: 'file' })
   })
 
+  it('treats a local file:// address as a local path but refuses one with a remote host', () => {
+    const fileUrl = `file:///${absolute('demo.git').replace(/\\/g, '/')}`
+    expect(classifyCloneSource(fileUrl)).toMatchObject({ ok: true, kind: 'path', scheme: 'file', protocol: 'file', value: fileUrl, display: fileUrl })
+    expect(classifyCloneSource('file://server/share/demo.git')).toEqual({ ok: false, reason: REASON.fileUrlHost })
+  })
+
   it('refuses HTTP(S) user info, SSH passwords and percent-encoded secret query keys', () => {
     expect(classifyCloneSource('https://user:secret@example.com/owner/repo.git')).toMatchObject({ ok: false, reason: REASON.embeddedCredential })
     expect(classifyCloneSource('https://token@example.com/owner/repo.git')).toMatchObject({ ok: false, reason: REASON.embeddedCredential })
@@ -146,8 +153,59 @@ describe('placeholder redaction', () => {
     expect(cloneProtocolArgs({ protocol: 'https' })).toEqual(HTTPS_PROTOCOL)
     expect(cloneProtocolArgs({ protocol: 'ssh' })).toEqual(['-c', 'protocol.allow=never', '-c', 'protocol.ssh.allow=always'])
     expect(cloneProtocolArgs({ protocol: 'file' })).toEqual(FILE_PROTOCOL)
+    // The child-process allow-list names the same transport; it overrides
+    // `protocol.<name>.allow` from the user's git config.
+    expect(cloneProtocolEnv({ protocol: 'https' })).toEqual({ GIT_ALLOW_PROTOCOL: 'https' })
+    expect(cloneProtocolEnv({ protocol: 'file' })).toEqual({ GIT_ALLOW_PROTOCOL: 'file' })
+    expect(cloneProtocolEnv({})).toEqual({ GIT_ALLOW_PROTOCOL: 'file' })
     // No protocol name may be injected from outside the classifier's fixed map.
     expect(cloneProtocolArgs({ protocol: 'ext::sh -c echo' })).toEqual(['-c', 'protocol.allow=never', '-c', 'protocol.ext::sh -c echo.allow=always'])
+  })
+})
+
+describe('one validated address for preview, argv and ledger', () => {
+  it('drops a URL fragment before planning and keeps a local path that contains #', () => {
+    expect(classifyCloneSource('https://host/owner/repo.git#main')).toMatchObject({
+      ok: true,
+      kind: 'url',
+      value: 'https://host/owner/repo.git',
+      display: 'https://host/owner/repo.git',
+    })
+    expect(classifyCloneSource('ssh://git@host/owner/repo.git#refs/heads/main')).toMatchObject({
+      ok: true,
+      kind: 'ssh',
+      value: 'ssh://git@host/owner/repo.git',
+    })
+    // A local path may legitimately contain '#': there it is a filename character.
+    const pathWithHash = absolute('repo#1.git')
+    expect(classifyCloneSource(pathWithHash)).toMatchObject({ ok: true, kind: 'path', value: pathWithHash, display: pathWithHash })
+
+    const parent = tempDirectory()
+    const prepared = prepareClone({ source: 'https://host/owner/repo.git#main', parent, name: '', commandService: fakeCommands() })
+    expect(prepared.ok).toBe(true)
+    expect(prepared.plan.argv).toEqual([...HTTPS_PROTOCOL, 'clone', '--', 'https://host/owner/repo.git', 'repo'])
+    expect(prepared.plan.displayCommand).not.toContain('#')
+  })
+
+  it('shows exactly the address that Git receives, including ordinary query parameters', () => {
+    const parent = tempDirectory()
+    for (const source of [
+      'https://host/owner/repo.git',
+      'https://host/owner/repo.git?ref=main&depth=1',
+      'https://host/owner/repo.git?ref=main#readme',
+      'ssh://git@host:2222/owner/repo.git',
+      absolute('demo.git'),
+    ]) {
+      const prepared = prepareClone({ source, parent, name: 'target', commandService: fakeCommands() })
+      expect(prepared.ok, source).toBe(true)
+      const address = prepared.plan.argv[prepared.plan.argv.length - 2]
+      // The argv entry is the validated address; the preview repeats it verbatim, and the
+      // ledger record is built from this same argv, so all three describe one string.
+      expect(address, source).toBe(source.split('#')[0])
+      expect(prepared.plan.displayCommand).toContain(address)
+      expect(prepared.plan.displayCommand.split('clone -- ')[1].replace(/ target$/, '')).toBe(address)
+      expect(prepared.source.display).toBe(address)
+    }
   })
 })
 
@@ -301,10 +359,26 @@ describe('clone plans and execution', () => {
       intent: 'Clone repository',
       operationId: 'op-reviewed',
       timeoutMs: NETWORK_TIMEOUT_MS,
+      // The child process gets the transport allow-list, not just the `-c` flags.
+      env: { GIT_ALLOW_PROTOCOL: 'https' },
     })
     expect(typeof commands.calls[0].redactOutput).toBe('function')
     // Git's own error output goes through the placeholder layer before the ledger keeps it.
     expect(commands.calls[0].redactOutput("fatal: unable to access 'https://user:hunter2@host/x.git/'")).toBe(`fatal: unable to access 'https://${PLACEHOLDER}@host/x.git/'`)
+  })
+
+  it('keeps an ordinary query parameter identical in the preview and the ledger', async () => {
+    const parent = tempDirectory()
+    const commands = fakedGit('', 0)
+    const source = 'https://host/owner/repo.git?ref=main&depth=1'
+    const result = await executeClone({ source, parent, name: 'repo', commandService: commands })
+    expect(result.ok).toBe(true)
+    const record = commands.history()[0]
+    expect(record.argv[record.argv.length - 2]).toBe(source)
+    expect(record.displayCommand).toContain(source)
+    expect(result.plan.displayCommand).toContain(source)
+    // The ledger record is the executed plan: same argv, same address string.
+    expect(record.argv).toEqual(['git', ...result.plan.argv])
   })
 
   it('keeps a credential echoed by Git out of the ledger record', async () => {

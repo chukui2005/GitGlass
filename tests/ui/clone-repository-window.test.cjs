@@ -38,6 +38,9 @@ describe('clone repository in a real window', () => {
     expect(summary.ledger[0].argv).toEqual(
       expect.arrayContaining(['-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', 'clone', '--']),
     )
+    // 预览与账本描述同一个地址（账本记录直接来自 plan.argv）。
+    const plannedAddress = summary.ledger[0].argv[summary.ledger[0].argv.length - 2]
+    expect(summary.plannedCommand).toContain(plannedAddress)
 
     // 内嵌凭据的地址：对话框里给出原因、不出现确认入口，也没有第二条克隆记录。
     expect(summary.rejectedReason).toContain('内嵌的用户名或令牌')

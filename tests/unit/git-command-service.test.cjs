@@ -47,6 +47,26 @@ describe('GitCommandService', () => {
     expect(service.history()).toEqual([record])
   })
 
+  it('accepts a narrow environment extension but never lets it re-enable credential prompts', async () => {
+    let received
+    const spawnImpl = (binary, argv, options) => {
+      received = { binary, argv, options }
+      return fakeChild({ code: 0 })
+    }
+    const service = serviceWith(spawnImpl)
+    await service.run({
+      argv: ['-c', 'protocol.allow=never', 'clone', '--', 'https://host/x.git', 'x'],
+      intent: 'Clone repository',
+      source: 'user',
+      cwd: 'D:/parent',
+      env: { GIT_ALLOW_PROTOCOL: 'https', GIT_TERMINAL_PROMPT: '1', GIT_ASKPASS: 'askpass', SSH_ASKPASS: 'x', IGNORED: 5 },
+    })
+    // The caller's allow-list reaches Git; the prompt variables stay owned by the service,
+    // and non-string values are dropped instead of reaching spawn().
+    expect(received.options.env).toMatchObject({ GIT_ALLOW_PROTOCOL: 'https', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' })
+    expect(received.options.env.IGNORED).toBeUndefined()
+  })
+
   it('keeps a failure with stderr and a nonzero exit code', async () => {
     const service = serviceWith(() => fakeChild({ stderr: 'fatal: failed', code: 128 }))
     const record = await service.run({ argv: ['commit', '-m', 'test'], intent: 'Create commit', source: 'user', cwd: 'D:/repo' })

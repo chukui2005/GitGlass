@@ -51,6 +51,27 @@ function auditTarget({ target = '', hunk = '' } = {}) {
 }
 
 /**
+ * The three variables that keep Git from blocking on a credential prompt. A caller
+ * may extend the child environment (the clone transport allow-list needs it), but
+ * these three are owned by this module.
+ */
+const RESERVED_ENVIRONMENT = new Set(['GIT_TERMINAL_PROMPT', 'GIT_ASKPASS', 'SSH_ASKPASS'])
+
+/**
+ * @param {unknown} env Caller-supplied overrides
+ * @returns {Record<string, string>} Only string values, never a prompt variable
+ */
+function safeEnvironmentOverrides(env) {
+  const result = {}
+  if (!env || typeof env !== 'object') return result
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string' || RESERVED_ENVIRONMENT.has(key)) continue
+    result[key] = value
+  }
+  return result
+}
+
+/**
  * The only module allowed to execute the local Git binary. Each attempt,
  * including inexpensive background reads, appends one immutable CommandRecord.
  */
@@ -122,7 +143,7 @@ class GitCommandService {
   async runCapturingOutput(request) { return this.execute(request) }
 
   /** @returns {Promise<{ record: object, stdout: string }>} */
-  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '' }) {
+  async execute({ argv, intent, source, cwd, operationId = null, redactOutput = null, maxOutputBytes = null, timeoutMs = null, input = null, target = '', hunk = '', env = null }) {
     const outputLimit = Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0 ? maxOutputBytes : this.defaultMaxOutputBytes
     const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : this.defaultTimeoutMs
     const record = {
@@ -174,11 +195,13 @@ class GitCommandService {
         // Never pass a command string or enable a shell: argv is the source of truth.
         // Credential prompts are disabled so a missing credential fails instead of
         // blocking the process (and the update gate) until the timeout kills it.
+        // `env` is a narrow, per-command extension (the clone protocol allow-list);
+        // the three prompt variables can never be overridden through it.
         child = this.spawnImpl('git', argv, {
           cwd,
           shell: false,
           windowsHide: true,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' },
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', ...safeEnvironmentOverrides(env) },
         })
       } catch (error) { settle(-1, error.message); return }
       const collect = (field, data) => {
