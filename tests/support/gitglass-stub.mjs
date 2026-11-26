@@ -77,6 +77,14 @@ export function createGitglassStub(overrides = {}) {
     // 历史审查
     getCommits: vi.fn(async () => ({ commits: [] })),
     queryHistory: vi.fn(async () => ({ commits: [] })),
+    getRefs: vi.fn(async () => ({
+      ok: true,
+      head: { fullName: 'HEAD', shortName: 'HEAD', commit: '', detached: false, unborn: true, status: '当前分支还没有提交。' },
+      refs: [],
+      truncated: false,
+      reason: '',
+    })),
+    getCommit: vi.fn(async () => ({ ok: false, commit: null, reason: '假桥未配置 getCommit。' })),
     getCommitDetail: vi.fn(async () => ({ ok: true, changedFiles: [] })),
     getCommitDiff: vi.fn(async () => ({ ok: true, diff: '' })),
     compareCommits: vi.fn(async () => ({ ok: true, diff: '' })),

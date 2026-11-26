@@ -1,4 +1,5 @@
 const { parseStatus, parseBranches, parseCommits, parseCommitDetail, parseReflog, parseNumstat } = require('./git-parsers.cjs')
+const { REF_ARGV, parseRefs, buildHead, shortRefName } = require('./git-refs.cjs')
 const { NETWORK_TIMEOUT_MS } = require('./git-command-service.cjs')
 const { hunkDiffArgs, hunkApplyArgs, hunkRange, diffSnapshot, parsePatchHunks, buildHunkPatch, locateHunk, describeHunks, REASON_STALE_SNAPSHOT, REASON_TRUNCATED } = require('./patch-hunks.cjs')
 // 地址策略与占位符脱敏只有一份实现：远程 URL 与克隆地址用同一条白名单和同一套拦截。
@@ -358,15 +359,119 @@ class RepositoryService {
   commit(message) { return typeof message === 'string' && message.trim() && message.length <= 4096 ? this.run(['commit', '-m', message.trim()], 'Create commit', 'user') : Promise.resolve(this.invalid('Create commit', 'A commit message is required.')) }
   branches() { return this.run(['branch', '--format=%(refname:short)%00%(HEAD)%00%(objectname:short)'], 'Read local branches').then((record) => ({ record, branches: record.ok ? parseBranches(record.stdout) : [] })) }
   commits() {
-    return this.run(['log', `-${HISTORY_DEFAULT_LIMIT}`, '--date=iso-strict', HISTORY_PRETTY], 'Read recent commits').then((record) => {
+    // Graph layout needs children before their parents even when commit dates
+    // are skewed; `--topo-order` guarantees that, unlike plain date ordering.
+    return this.run(['log', `-${HISTORY_DEFAULT_LIMIT}`, '--topo-order', '--date=iso-strict', HISTORY_PRETTY], 'Read recent commits').then((record) => {
       // 空仓库或尚无提交的分支是正常状态，给出中文说明而不是原始 stderr。
       const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
       return {
         record,
         commits: record.ok ? parseCommits(record.stdout) : [],
+        limit: HISTORY_DEFAULT_LIMIT,
+        truncated: record.outputTruncated === true,
         reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请刷新后重试；诊断信息已保留在命令账本。',
       }
     })
+  }
+  // Refs are the navigation surface of the history lens. One fixed read lists
+  // all branches, remote-tracking refs and tags; HEAD needs its own symbolic and
+  // commit reads because an unborn or detached HEAD has no branch row.
+  async refs() {
+    const [refRecord, headRefRecord, headCommitRecord, remotesRecord] = await Promise.all([
+      this.run(REF_ARGV, 'Read Git refs'),
+      this.run(['symbolic-ref', '-q', 'HEAD'], 'Read HEAD reference'),
+      this.run(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], 'Read HEAD commit'),
+      this.run(['remote'], 'List remotes for default branch aliases'),
+    ])
+    const refsTruncated = refRecord.outputTruncated === true
+    const refs = refRecord.ok ? parseRefs(refRecord.stdout, { truncated: refsTruncated }) : []
+
+    // `for-each-ref` omits a symbolic `refs/remotes/<remote>/HEAD` when its
+    // target branch was deleted. Ask Git for each remote's default alias
+    // explicitly so a dangling alias stays visible and non-navigable.
+    const remotes = remotesRecord.ok
+      ? remotesRecord.stdout.split(/\r?\n/).map((name) => name.trim()).filter(isRemoteName)
+      : []
+    const aliasRecords = await Promise.all(remotes.map((remote) =>
+      this.run(['symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], 'Read remote default branch')))
+    const targetResolutionRecords = []
+    for (let index = 0; index < remotes.length; index += 1) {
+      const record = aliasRecords[index]
+      const targetRef = record.ok ? record.stdout.trim() : ''
+      if (!targetRef) continue
+      const fullName = `refs/remotes/${remotes[index]}/HEAD`
+      let alias = refs.find((entry) => entry.fullName === fullName)
+      if (!alias) {
+        alias = {
+          fullName,
+          shortName: `${remotes[index]}/HEAD`,
+          kind: 'alias',
+          objectName: '',
+          objectType: '',
+          commit: '',
+          head: false,
+          annotated: false,
+          status: '',
+        }
+        refs.push(alias)
+      }
+      const target = refs.find((entry) => entry.fullName === targetRef)
+      alias.kind = 'alias'
+      alias.targetRef = targetRef
+      alias.targetShortName = shortRefName(targetRef)
+      alias.commit = target?.commit || ''
+      alias.status = target ? target.status || '' : ''
+      if (target) continue
+
+      // The target may simply be past the for-each-ref truncation point. A
+      // ref-list miss is not proof of deletion: ask Git to resolve the exact
+      // remote-tracking ref and only then decide whether the alias is dangling.
+      const resolved = await this.run(
+        ['rev-parse', '--verify', '--quiet', `${targetRef}^{commit}`],
+        'Resolve remote default branch target',
+      )
+      targetResolutionRecords.push(resolved)
+      const commit = resolved.ok ? resolved.stdout.trim() : ''
+      alias.commit = /^[0-9a-f]{40}$/i.test(commit) ? commit : ''
+      alias.status = alias.commit ? '' : '目标分支不存在'
+    }
+
+    const head = buildHead({
+      symbolicRef: headRefRecord.ok ? headRefRecord.stdout : '',
+      headCommit: headCommitRecord.ok ? headCommitRecord.stdout : '',
+      refs,
+    })
+    const headRead = headRefRecord.ok || headCommitRecord.ok || head.unborn
+    return {
+      ok: refRecord.ok && headRead,
+      refs,
+      head,
+      truncated: refsTruncated,
+      records: [refRecord, headRefRecord, headCommitRecord, remotesRecord, ...aliasRecords, ...targetResolutionRecords],
+      reason: !refRecord.ok
+        ? '无法读取 Git 引用。请确认仓库仍可访问后刷新；诊断信息已保留在命令账本。'
+        : !headRead
+          ? '无法读取当前 HEAD。请刷新后重试；诊断信息已保留在命令账本。'
+          : '',
+    }
+  }
+  // A ref can point at a commit outside the current 80/200 row window. The
+  // renderer sends only the full SHA it received from refs(); the service
+  // re-verifies it and reads the structured one-line summary by that ID.
+  async commitBySha(hash) {
+    const verified = await this.verifyHistoryCommit(hash)
+    if (!verified.ok) return { ok: false, commit: null, reason: verified.reason, record: verified.record }
+    const record = await this.run(
+      ['show', '-s', '--no-ext-diff', '--date=iso-strict', HISTORY_PRETTY, verified.hash],
+      'Read commit by ID',
+    )
+    const commit = record.ok ? parseCommits(record.stdout)[0] || null : null
+    return {
+      ok: record.ok && Boolean(commit),
+      commit,
+      record,
+      reason: record.ok && commit ? '' : '无法按提交 ID 读取该提交。请刷新引用后重试；诊断信息已保留在命令账本。',
+    }
   }
   rejectHistoryQuery(reason, filters = {}) {
     const requested = [filters.keyword, filters.author, filters.branch, filters.filePath].filter((value) => typeof value === 'string' && value)
@@ -379,7 +484,7 @@ class RepositoryService {
     const filters = normalized.filters
     if (!filters.keyword && !filters.author && !filters.branch && !filters.filePath) {
       const defaults = await this.commits()
-      return { ok: defaults.record.ok, commits: defaults.commits, filters, record: defaults.record, reason: defaults.reason }
+      return { ok: defaults.record.ok, commits: defaults.commits, filters, limit: defaults.limit, truncated: defaults.truncated, record: defaults.record, reason: defaults.reason }
     }
     if (filters.branch) {
       const branchResult = await this.branches()
@@ -391,7 +496,7 @@ class RepositoryService {
       if (!tracked.ok) return { ok: false, commits: [], reason: '只能按当前已跟踪的文件筛选历史。请重新选择文件或清除文件条件。', filters, record: tracked }
     }
     const hasAuthor = Boolean(filters.author)
-    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
+    const argv = ['log', `-${HISTORY_QUERY_LIMIT}`, '--topo-order', '--date=iso-strict', '--regexp-ignore-case', HISTORY_PRETTY]
     // --fixed-strings also changes --author semantics. With an author filter,
     // escape both patterns for Git's basic-regexp matcher instead.
     if (!hasAuthor) argv.push('--fixed-strings')
@@ -405,7 +510,7 @@ class RepositoryService {
     if (filters.filePath) argv.push('--', filters.filePath)
     const record = await this.run(argv, 'Query commit history')
     const emptyHistory = !record.ok && /does not have any commits|ambiguous argument|unknown revision|fatal: .*(does not have any commits)/i.test(record.stderr || '')
-    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
+    return { ok: record.ok, commits: record.ok ? parseCommits(record.stdout) : [], filters, limit: HISTORY_QUERY_LIMIT, truncated: record.outputTruncated === true, record, reason: record.ok ? '' : emptyHistory ? '此仓库还没有提交记录。' : '无法读取提交历史。请检查筛选条件后重试；诊断信息已保留在命令账本。' }
   }
 
   async verifyHistoryCommit(hash) {

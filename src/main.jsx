@@ -47,6 +47,7 @@ import { useRemoteOverview } from "./use-remote-overview.js";
 import { useCloneRepository } from "./use-clone-repository.js";
 import { usePanelResize } from "./use-panel-resize.js";
 import { CloneRepositoryDialog } from "./clone-repository-dialog.jsx";
+import { HistoryGraphNotice, HistoryRefs } from "./history-graph.jsx";
 import {
   BatchStageToolbar,
   BranchContext,
@@ -201,6 +202,16 @@ export function App() {
     commitsReason,
     historyFiltersDirty,
     historySearchRef,
+    refs,
+    refsHead,
+    refsReason,
+    refsTruncated,
+    refsLoading,
+    refNotice,
+    historyGraph,
+    historyGraphRows,
+    graphAvailable,
+    selectedOutsideList,
     detailSubject,
     detailAuthor,
     detailEmail,
@@ -214,6 +225,8 @@ export function App() {
     beginQuery,
     applyQueryResultIfCurrent,
     selectHistoryCommit,
+    selectHistoryRef,
+    refreshHistoryRefs,
     viewParentCommit,
     readHistoryDiff,
     openCommitFileDiff,
@@ -576,6 +589,10 @@ export function App() {
     applyQueryResultIfCurrent(queryToken, commitResult);
     applyOverview(remoteResult);
     applyRemoteBranches(remoteBranchResult?.branches || []);
+    // External Git changes refresh the history list through this path; the refs
+    // sidebar must follow the same signal. The hook's sequence guard drops a
+    // response from a repository switch that happened while this read was live.
+    if (historyMode) await refreshHistoryRefs();
     await refreshLedger(cycle);
     // 所有刷新（操作成功后、外部 Git 变化、切库）都经过这里：展开着的暂存总览必须
     // 跟着实际暂存区更新；收起（或从未展开）时保持按需读取，不多发后台命令。
@@ -1206,6 +1223,16 @@ export function App() {
             onReset={() => applyHistoryFilters(undefined, true)}
             onUseSelected={() => applySelectedFile(selected)}
           />
+          <HistoryRefs
+            head={refsHead}
+            refs={refs}
+            reason={refsReason}
+            loading={refsLoading}
+            truncated={refsTruncated}
+            notice={refNotice}
+            activeHash={historySelected?.hash || ""}
+            onSelect={selectHistoryRef}
+          />
           <section className="branch-list compare-panel">
             <div className="section-label"><span>双提交比较</span></div>
             <p className="selection-line">
@@ -1310,6 +1337,19 @@ export function App() {
                     </>
                   )}
                   <div className="commit-list">
+                    {!historyFile && (
+                      <HistoryGraphNotice
+                        graph={historyGraph}
+                        available={graphAvailable}
+                        fileFiltered={Boolean(historyApplied?.filePath)}
+                        loading={loading}
+                      />
+                    )}
+                    {selectedOutsideList && !historyFile && (
+                      <div className="history-selection-note" role="status">
+                        当前选中的提交不在本页 {commits.length} 条历史中；右侧详情来自按完整 ID 的只读读取。
+                      </div>
+                    )}
                     {!repo ? (
                       <div className="history-empty"><p>打开仓库后可查看提交历史。</p></div>
                     ) : loading && !commits.length && !historyFile ? (
@@ -1347,6 +1387,7 @@ export function App() {
                         <CommitRow
                           key={commit.hash}
                           commit={commit}
+                          graph={graphAvailable ? historyGraphRows.get(commit.hash) : null}
                           selected={historySelected?.hash === commit.hash}
                           compareRole={
                             historyCompare.base?.hash === commit.hash
@@ -1357,7 +1398,10 @@ export function App() {
                           }
                           onSelect={() => selectHistoryCommit(commit)}
                           onCompare={() => pinCompare(commit)}
-                          busy={loading}
+                          // Once a commit/ref is selected, another row click is a
+                          // navigation intent: it must be able to cancel a slow
+                          // detail or Diff read instead of being disabled by it.
+                          busy={loading && !historySelected}
                         />
                       ))
                     )}

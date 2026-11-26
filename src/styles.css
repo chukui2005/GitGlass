@@ -382,3 +382,47 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .field-block label{color:var(--text);font-size:12px;font-weight:600}
 .field-block input{width:100%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);color:var(--text);font:12px var(--mono)}
 .field-block input:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+
+/* V0.6.10 PR3: refs sidebar + bounded commit graph. The graph is a visual
+   supplement inside the existing commit button, so keyboard behaviour stays
+   the native button row and no second tab stop is introduced. */
+.reference-panel{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);min-width:0}
+.reference-copy{margin:0 0 7px;color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
+.reference-head{display:grid;gap:2px;margin-bottom:5px}
+.reference-group{display:grid;gap:1px;margin-top:8px;min-width:0}
+.reference-group-title{display:flex;align-items:center;justify-content:space-between;min-height:20px;color:var(--muted);font-size:var(--font-aux);font-weight:600}
+.reference-group-title span{font:var(--font-aux) var(--mono);font-weight:500}
+.reference-empty,.ref-unborn{margin:4px 0;color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
+.reference-error{margin:4px 0;color:var(--red);font-size:var(--font-aux);line-height:var(--line-aux)}
+.reference-truncated{margin:4px 0;padding:5px 7px;border-left:2px solid var(--orange);background:var(--orange-soft);color:var(--orange-ink);font-size:var(--font-aux);line-height:var(--line-aux)}
+.ref-feedback{margin:5px 0;padding:5px 7px;border-left:2px solid var(--blue);background:var(--blue-soft);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
+.ref-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;width:100%;min-width:0;gap:6px;min-height:27px;padding:3px 4px;border-radius:var(--radius-sm);background:transparent;color:var(--text);text-align:left}
+.ref-row:hover{background:var(--active)}
+.ref-row.active{background:var(--blue-soft);box-shadow:inset 2px 0 var(--blue)}
+.ref-row.unresolved{background:transparent;color:var(--muted);cursor:default}
+.ref-row.head{border:1px solid var(--line);background:var(--surface)}
+.ref-kind{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--muted);font-size:var(--font-aux);font-weight:600;white-space:nowrap}
+.ref-kind i{padding:0 3px;border-radius:2px;background:var(--orange-soft);color:var(--orange-ink);font-style:normal;font-size:var(--font-aux)}
+.ref-name{min-width:0;overflow:hidden;color:var(--text);font:var(--font-aux) var(--mono);text-overflow:ellipsis;white-space:nowrap}
+.ref-commit{flex:none;color:var(--blue);font:var(--font-aux) var(--mono)}
+.ref-status{grid-column:1/-1;color:var(--orange-ink);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
+.commit-select.has-graph{grid-template-columns:96px minmax(0,1fr);padding:0}
+.commit-graph{display:block;align-self:stretch;width:96px;height:38px;overflow:visible}
+.graph-segment,.graph-edge{fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.graph-edge.boundary{stroke-dasharray:3 2;opacity:.8}
+.graph-node{fill:var(--surface);stroke-width:2;vector-effect:non-scaling-stroke}
+.history-row.selected .graph-node{fill:var(--blue-soft)}
+.graph-boundary{fill:var(--surface);stroke-width:1.3}
+.graph-lane-0{stroke:#2456b5}.graph-lane-1{stroke:#8b4b11}.graph-lane-2{stroke:#166534}.graph-lane-3{stroke:#6b3fa0}.graph-lane-4{stroke:#0f6f7a}.graph-lane-5{stroke:#a62632}.graph-lane-6{stroke:#586474}
+.merge-badge,.graph-boundary-badge{flex:none;padding:1px 5px;border-radius:3px;font:600 var(--font-aux) var(--mono)}
+.merge-badge{background:var(--active);color:var(--muted)}
+.graph-boundary-badge{background:var(--orange-soft);color:var(--orange-ink)}
+.graph-boundary-badge.omitted{background:var(--red-soft);color:var(--red)}
+.history-graph-notice{display:grid;gap:2px;margin:0 0 5px;padding:5px 0 6px;border-bottom:1px solid var(--line);color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
+.history-graph-notice>div{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.history-graph-notice strong{color:var(--text);font-size:var(--font-aux)}
+.history-graph-notice p{margin:0;color:var(--muted);overflow-wrap:anywhere}
+.history-graph-notice.list-only{padding:6px 8px;border-left:2px solid var(--orange);background:var(--orange-soft);color:var(--orange-ink)}
+.history-graph-notice.list-only strong{color:var(--orange-ink)}
+.history-selection-note{margin:0 0 5px;padding:5px 7px;border-left:2px solid var(--blue);background:var(--blue-soft);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux)}
+@media(max-width:1080px){.reference-panel{font-size:var(--font-aux)}.commit-select.has-graph{grid-template-columns:72px minmax(0,1fr)}.commit-graph{width:72px}}
