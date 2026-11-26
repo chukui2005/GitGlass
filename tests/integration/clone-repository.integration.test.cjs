@@ -20,7 +20,9 @@ afterEach(async () => {
 })
 
 function tempWorkspace() {
-  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-clone-'))
+  // CI's TEMP can be reached through the 8.3 alias (RUNNER~1); Git resolves the
+  // worktree root to its canonical spelling. Compare canonical paths.
+  workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-clone-')))
   return workspace
 }
 
