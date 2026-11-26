@@ -16,7 +16,7 @@ const ROOT = path.join(__dirname, '..', '..')
 const MARKER = '[CLONE-WINDOW] '
 const TARGET_NAME = 'probe-clone'
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-clone-window-')))
+const sandbox = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'gitglass-clone-window-')))
 app.setPath('userData', path.join(sandbox, 'user-data'))
 app.disableHardwareAcceleration()
 
