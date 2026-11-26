@@ -6,6 +6,10 @@ const { RepositoryService } = require('../../electron/repository-service.cjs')
 const { openRepositoryPath } = require('../../electron/repository-opener.cjs')
 const { prepareClone, executeClone, REASON } = require('../../electron/repository-cloner.cjs')
 
+// The protocol pin every plan carries: only the transport the address was classified as.
+const FILE_PROTOCOL = ['-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always']
+const HTTPS_PROTOCOL = ['-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always']
+
 // v0.6.10 PR 1「克隆并打开」的真实 Git 验收。所有断言都以实际磁盘与 Git 输出为准：
 // 每个用例都在临时目录里建真实的 bare 远程，克隆后核对 HEAD、origin、工作区文件与
 // 命令账本记录；失败用例核对「没有执行命令」「目标目录原样保留」。
@@ -85,7 +89,7 @@ describe('v0.6.10 clone and open (real Git)', () => {
     expect(cloneRecord).toBeDefined()
     expect(cloneRecord.source).toBe('user')
     expect(cloneRecord.ok).toBe(true)
-    expect(cloneRecord.argv).toEqual(['git', 'clone', '--', bare, 'cloned'])
+    expect(cloneRecord.argv).toEqual(['git', ...FILE_PROTOCOL, 'clone', '--', bare, 'cloned'])
     expect(cloneRecord.cwd).toBe(workspace)
     expect(cloneRecord.displayCommand).toContain('clone')
   })
@@ -98,7 +102,7 @@ describe('v0.6.10 clone and open (real Git)', () => {
 
     const existing = await cloneAndOpen({ source: bare, parent: workspace, name: '已有 空目录' })
     expect(existing.cloned.ok, existing.cloned.reason).toBe(true)
-    expect(existing.cloned.plan.argv).toEqual(['clone', '--', bare, '已有 空目录'])
+    expect(existing.cloned.plan.argv).toEqual([...FILE_PROTOCOL, 'clone', '--', bare, '已有 空目录'])
     expect(await gitIn(existing.cloned.target, ['rev-parse', 'HEAD'])).toBe(head)
     expect(existing.opened.path).toBe(path.join(workspace, '已有 空目录'))
 
@@ -145,6 +149,56 @@ describe('v0.6.10 clone and open (real Git)', () => {
     // 既没有执行，也没有任何记录可以泄漏那段凭据。
     expect(commands.history()).toHaveLength(0)
     expect(fs.existsSync(path.join(workspace, 'leaky'))).toBe(false)
+  })
+
+  it('pins the clone to the validated transport: an insteadOf rewrite onto the file protocol is refused', async () => {
+    tempWorkspace()
+    const { bare, head } = await createBareOrigin()
+    const parent = path.join(workspace, 'relocated')
+    fs.mkdirSync(parent)
+    // A real local mirror behind a rewritten HTTPS prefix: without the protocol pin the
+    // rewrite would silently move a validated HTTPS address onto the file transport.
+    const mirror = path.join(workspace, 'mirror')
+    fs.mkdirSync(mirror)
+    await gitIn(workspace, ['clone', '--bare', bare, path.join(mirror, 'repo.git')])
+    const configFile = path.join(workspace, 'gitconfig')
+    fs.writeFileSync(configFile, `[url "file:///${mirror.replace(/\\/g, '/')}/"]\n\tinsteadOf = https://rewrite.invalid/\n`)
+
+    const previousGlobal = process.env.GIT_CONFIG_GLOBAL
+    const previousNoSystem = process.env.GIT_CONFIG_NOSYSTEM
+    process.env.GIT_CONFIG_GLOBAL = configFile
+    process.env.GIT_CONFIG_NOSYSTEM = '1'
+    try {
+      // Control: with the user's config and no pin, the rewrite is live (the clone
+      // succeeds from the local mirror). This keeps the assertion below honest.
+      const control = new GitCommandService()
+      const rewritten = await control.run({ argv: ['clone', '--', 'https://rewrite.invalid/repo.git', 'control'], intent: 'Fixture', source: 'background', cwd: parent, timeoutMs: 60_000 })
+      expect(rewritten.ok, `insteadOf 改写没有生效，本用例会失去意义：${rewritten.stderr}`).toBe(true)
+      expect(await gitIn(path.join(parent, 'control'), ['rev-parse', 'HEAD'])).toBe(head)
+
+      const commands = new GitCommandService()
+      const prepared = prepareClone({ source: 'https://rewrite.invalid/repo.git', parent, name: 'pinned', commandService: commands })
+      expect(prepared.ok).toBe(true)
+      expect(prepared.plan.argv).toEqual([...HTTPS_PROTOCOL, 'clone', '--', 'https://rewrite.invalid/repo.git', 'pinned'])
+
+      const result = await executeClone({ source: 'https://rewrite.invalid/repo.git', parent, name: 'pinned', commandService: commands })
+      expect(result.ok).toBe(false)
+      expect(result.execution.stderr).toMatch(/transport 'file' not allowed/i)
+      expect(result.reason).toContain('传输协议')
+      // Nothing was created from the local mirror.
+      expect(fs.existsSync(path.join(parent, 'pinned', '.git'))).toBe(false)
+
+      // The absolute local path stays a supported source under the same isolated config.
+      const local = await executeClone({ source: bare, parent, name: 'local-copy', commandService: new GitCommandService() })
+      expect(local.ok, local.reason).toBe(true)
+      expect(await gitIn(path.join(parent, 'local-copy'), ['rev-parse', 'HEAD'])).toBe(head)
+      expect(await gitIn(path.join(parent, 'local-copy'), ['remote', 'get-url', 'origin'])).toBe(bare)
+    } finally {
+      if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobal
+      if (previousNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM
+      else process.env.GIT_CONFIG_NOSYSTEM = previousNoSystem
+    }
   })
 
   it('records a real Git failure and keeps the user folders exactly as they were', async () => {

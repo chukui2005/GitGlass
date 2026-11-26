@@ -42,32 +42,52 @@ export function useCloneRepository({ gitglass, loading, setLoading, setNotice, o
   const [running, setRunning] = useState(false);
   // 执行期间关闭对话框会让用户失去唯一的进度提示，所以按钮和 Esc 在运行中一律无效。
   const runningRef = useRef(false);
+  // 预览读取的序号：迟到的 prepare 响应（用户已改字段、关掉对话框或换了仓库）必须丢弃，
+  // 否则界面会冒出一份对不上输入框的计划，甚至被「开始克隆」确认执行。
+  const prepareSequence = useRef(0);
+  const pendingPrepares = useRef(new Set());
+  const openRef = useRef(false);
+  const draftRef = useRef(EMPTY_DRAFT);
+
+  const writeDraft = useCallback((next) => {
+    draftRef.current = next;
+    setDraft(next);
+  }, []);
 
   const start = useCallback(() => {
     if (loading || runningRef.current) return;
-    setDraft(EMPTY_DRAFT);
+    // 新一次打开是新会话：在飞的旧预览从此失效。
+    prepareSequence.current += 1;
+    openRef.current = true;
+    writeDraft(EMPTY_DRAFT);
     setPlanned(null);
     setError("");
     setOpen(true);
-  }, [loading]);
+  }, [loading, writeDraft]);
 
   const close = useCallback(() => {
     if (runningRef.current) return;
+    prepareSequence.current += 1;
+    openRef.current = false;
     setOpen(false);
     setPlanned(null);
     setError("");
     // 地址可能包含内网主机名：关闭即清空，下次打开是干净的输入。
-    setDraft(EMPTY_DRAFT);
-  }, []);
+    writeDraft(EMPTY_DRAFT);
+    // 只有当次预览还挂着 loading；对话框关掉后它不再有机会自己清掉。
+    pendingPrepares.current.clear();
+    setLoading(false);
+  }, [setLoading, writeDraft]);
 
   const updateField = useCallback((field, value) => {
-    setDraft((previous) => {
-      if (previous[/** @type {keyof CloneDraft} */ (field)] === value) return previous;
-      return { ...previous, [field]: value };
-    });
+    if (draftRef.current[/** @type {keyof CloneDraft} */ (field)] === value) return;
+    const next = { ...draftRef.current, [field]: value };
+    // 输入一变，任何在飞或已完成的预览都不再对应当前输入。
+    prepareSequence.current += 1;
+    writeDraft(next);
     setPlanned(null);
     setError("");
-  }, []);
+  }, [writeDraft]);
 
   const chooseTarget = useCallback(async () => {
     if (loading || runningRef.current) return;
@@ -81,15 +101,22 @@ export function useCloneRepository({ gitglass, loading, setLoading, setNotice, o
   }, [gitglass, loading, updateField]);
 
   const prepare = useCallback(async () => {
-    if (loading || runningRef.current) return;
-    if (!draft.source.trim() || !draft.parent.trim()) {
+    if (runningRef.current) return;
+    if (!draftRef.current.source.trim() || !draftRef.current.parent.trim()) {
       setError("请填写仓库地址并选择目标位置。");
       return;
     }
-    const input = { ...draft };
+    const sequence = ++prepareSequence.current;
+    const input = { ...draftRef.current };
+    // 每个在飞的预览用自己的标识占位：迟到的响应只能清掉自己那一次，不会把后来
+    // 那次的 loading 提前关掉。
+    const token = Symbol('clone-prepare');
+    pendingPrepares.current.add(token);
     setLoading(true);
     try {
       const result = await gitglass.prepareClone(input);
+      // 迟到的响应：期间改过任一字段、关过对话框，或已经开了新会话。
+      if (sequence !== prepareSequence.current || !openRef.current) return;
       if (!result?.ok) {
         setPlanned(null);
         setError(result?.reason || GENERIC_CLONE_FAILURE);
@@ -98,16 +125,25 @@ export function useCloneRepository({ gitglass, loading, setLoading, setNotice, o
       setError("");
       setPlanned({ ...result, input });
     } catch {
+      if (sequence !== prepareSequence.current || !openRef.current) return;
       setPlanned(null);
       setError(GENERIC_CLONE_FAILURE);
     } finally {
-      setLoading(false);
+      pendingPrepares.current.delete(token);
+      if (pendingPrepares.current.size === 0) setLoading(false);
     }
-  }, [draft, gitglass, loading, setLoading]);
+  }, [gitglass, setLoading]);
 
   const confirm = useCallback(async () => {
     if (!planned?.ok || !planned.input || !planned.plan || runningRef.current) return;
     const input = planned.input;
+    // 双保险：即使某条路径漏了失效处理，计划与当前输入不一致时也不执行。
+    const current = draftRef.current;
+    if (current.source !== input.source || current.parent !== input.parent || current.name !== input.name) {
+      setPlanned(null);
+      setError("地址或目标位置已修改，请重新预览克隆。");
+      return;
+    }
     runningRef.current = true;
     setRunning(true);
     setLoading(true);
@@ -123,9 +159,10 @@ export function useCloneRepository({ gitglass, loading, setLoading, setNotice, o
         return;
       }
       setNotice({ type: "success", text: `已克隆并打开仓库：${result.path || planned.target}` });
+      openRef.current = false;
       setOpen(false);
       setPlanned(null);
-      setDraft(EMPTY_DRAFT);
+      writeDraft(EMPTY_DRAFT);
     } catch {
       setError(GENERIC_CLONE_FAILURE);
     } finally {
@@ -133,7 +170,7 @@ export function useCloneRepository({ gitglass, loading, setLoading, setNotice, o
       setRunning(false);
       setLoading(false);
     }
-  }, [gitglass, onOpened, planned, setLoading, setNotice]);
+  }, [gitglass, onOpened, planned, setLoading, setNotice, writeDraft]);
 
   return { open, draft, planned, error, running, start, close, updateField, chooseTarget, prepare, confirm };
 }

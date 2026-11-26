@@ -3,7 +3,7 @@
 // v0.6.10 PR 1「克隆并打开」的真渲染断言：三个入口、预览 → 执行两步、输入改动后
 // 计划作废、失败时保留原仓库上下文。真实 Git 克隆在
 // tests/integration/clone-repository.integration.test.cjs 里验收。
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderApp } from '../support/render-app.mjs'
 import { OTHER_REPOSITORY_PATH, repositoryState } from '../support/gitglass-fixtures.mjs'
@@ -187,5 +187,60 @@ describe('clone repository entries (rendered)', () => {
     })
     expect(stub.prepareClone).not.toHaveBeenCalled()
     expect(stub.executeClone).not.toHaveBeenCalled()
+  })
+
+  it('drops a preview response that arrives after a field changed while it was pending', async () => {
+    let resolvePrepare
+    const pending = new Promise((resolve) => { resolvePrepare = resolve })
+    const { user, dialog, stub } = await openCloneDialog({ prepareClone: vi.fn(() => pending) })
+    await fillRequest(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '预览克隆' }))
+    await waitFor(() => {
+      expect(stub.prepareClone).toHaveBeenCalledTimes(1)
+    })
+
+    // The inputs stay editable while the plan is being read back.
+    await user.type(within(dialog).getByLabelText('仓库文件夹名（可选）'), 'late')
+    await act(async () => {
+      resolvePrepare(CLONE_PLAN)
+    })
+
+    // The stale plan must never appear, so it cannot be confirmed either.
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('button', { name: '开始克隆' })).toBeNull()
+    })
+    expect(within(dialog).queryByText('最终目录')).toBeNull()
+    expect(within(dialog).queryByText('计划执行（尚未运行）')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: '预览克隆' })).toBeEnabled()
+  })
+
+  it('does not restore a plan when the response lands after closing and reopening the dialog', async () => {
+    let resolvePrepare
+    const pending = new Promise((resolve) => { resolvePrepare = resolve })
+    const { user, dialog, stub } = await openCloneDialog({ prepareClone: vi.fn(() => pending) })
+    await fillRequest(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '预览克隆' }))
+    await waitFor(() => {
+      expect(stub.prepareClone).toHaveBeenCalledTimes(1)
+    })
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '克隆仓库' })).toBeNull()
+    })
+
+    // A new session starts clean, and the old response cannot fill it in afterwards.
+    await user.click(screen.getByRole('button', { name: '克隆仓库' }))
+    const reopened = await screen.findByRole('dialog', { name: '克隆仓库' })
+    expect(within(reopened).getByLabelText('仓库地址')).toHaveValue('')
+    await act(async () => {
+      resolvePrepare(CLONE_PLAN)
+    })
+
+    await waitFor(() => {
+      expect(within(reopened).queryByRole('button', { name: '开始克隆' })).toBeNull()
+    })
+    expect(within(reopened).queryByText('最终目录')).toBeNull()
+    expect(within(reopened).getByRole('button', { name: '预览克隆' })).toBeDisabled()
   })
 })
