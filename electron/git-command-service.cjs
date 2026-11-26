@@ -211,7 +211,8 @@ class GitCommandService {
       } catch (error) { settle(-1, error.message); return }
       const collect = (field, data) => {
         if (outputBytes >= outputLimit) {
-          if (keepOutput) record.outputTruncated = true
+          // 截断标志与是否保留输出无关：调用方必须知道这次读取不完整。
+          record.outputTruncated = true
           return
         }
         const text = data.toString()
@@ -222,7 +223,7 @@ class GitCommandService {
         else rawStderr += chunk
         if (keepOutput) record[field] += chunk
         outputBytes += Math.min(size, remaining)
-        if (size > remaining && keepOutput) record.outputTruncated = true
+        if (size > remaining) record.outputTruncated = true
       }
       child.stdout?.on('data', (data) => collect('stdout', data))
       child.stderr?.on('data', (data) => collect('stderr', data))

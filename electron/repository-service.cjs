@@ -153,6 +153,9 @@ function parseAheadBehind(value) {
 const PREVIEW_EXPIRED = '这份预览已过期，请重新预览后再执行。'
 const STALE_REPOSITORY = '仓库或远程配置在预览后发生了变化，请重新预览再执行。'
 const STALE_BRANCH = '本地分支或推送目标在预览后发生了变化，请重新预览再执行。'
+const TRUNCATED_REMOTES = '远程配置超出可读取上限（输出被截断），无法确认有没有同名远程。请精简远程配置后重试。'
+const TRUNCATED_CONFIG_VERSION = '远程配置超出可读取上限（输出被截断），无法确认配置版本。请精简远程配置后重试。'
+const TRUNCATED_PUSH_URLS = '该远程的推送地址超出可读取上限（输出被截断），无法确认实际推送目标。请精简 push 地址后重试。'
 
 class RepositoryService {
   constructor(commands, getRepoPath) { this.commands = commands; this.getRepoPath = getRepoPath; this.previews = new Map() }
@@ -524,8 +527,9 @@ class RepositoryService {
   async executeRemote(kind, operationId) {
     const prepared = await this.prepareRemote(kind, operationId)
     if (!prepared.ok) return { execution: null, ...prepared }
-    // fetch/push/pull talk to a remote: allow a longer deadline than local reads.
-    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId, null, null, NETWORK_TIMEOUT_MS)
+    // fetch/push/pull talk to a remote: allow a longer deadline than local reads, and
+    // scrub any URL Git echoes back with the shared remote redaction rules.
+    const execution = await this.run(prepared.plan.argv, prepared.plan.intent, 'user', prepared.plan.operationId, redactCloneOutput, null, NETWORK_TIMEOUT_MS)
     return { execution, ...prepared, overview: await this.remoteOverview() }
   }
 
@@ -639,7 +643,7 @@ class RepositoryService {
       }
     }
     for (const remote of remotes) remote.pushUrls = pushUrls.get(remote.name) || []
-    return { ok: record.ok, remotes, record }
+    return { ok: record.ok, remotes, truncated: record.outputTruncated === true, record }
   }
 
   /**
@@ -660,7 +664,10 @@ class RepositoryService {
     // 没有任何 remote.* 键时 `git config --get-regexp` 退出码是 1：那也是一个有效版本。
     const known = record.exitCode === 0 || record.exitCode === 1
     const digest = createHash('sha256').update(known ? stdout : '', 'utf8').digest('hex')
-    return { ok: known, digest, record }
+    // 被截断的读取不能被当成“完整配置的版本”：拿部分内容算出来的哈希会让外部修改
+    // 看起来像没变，所以这里明确返回 ok: false。
+    const truncated = record.outputTruncated === true
+    return { ok: known && !truncated, digest, truncated, record }
   }
 
   /** 某个远程实际会用到的 push 地址（配置了多个时全部返回）。 */
@@ -669,7 +676,7 @@ class RepositoryService {
     const urls = record.ok
       ? record.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((url) => redactCloneSource(url))
       : []
-    return { ok: record.ok, urls, record }
+    return { ok: record.ok && record.outputTruncated !== true, urls, truncated: record.outputTruncated === true, record }
   }
 
   /** 远程跟踪分支：完整引用 + 短名 + 远程名 + 分支名 + 短提交 ID。 */
@@ -702,6 +709,7 @@ class RepositoryService {
     if (!state.ok) return { ok: false, blocked: true, reason: state.error, plan: null, state }
     const details = await this.remotesDetailed()
     if (!details.ok) return { ok: false, blocked: true, reason: '无法读取远程配置，请刷新后重试。', plan: null, state }
+    if (details.truncated) return { ok: false, blocked: true, reason: TRUNCATED_REMOTES, plan: null, state, remotes: details.remotes }
     const existing = details.remotes.find((entry) => entry.name === name)
     if (kind === 'add' && existing) {
       return { ok: false, blocked: true, reason: `远程「${name}」已存在。请换一个名称，或编辑现有远程的地址。`, plan: null, state, remotes: details.remotes }
@@ -714,7 +722,7 @@ class RepositoryService {
     // 过期判断只用主进程内部的配置版本：界面与账本里的地址是脱敏的，凭据部分的变化
     // 在界面上看不出来，但它同样会让旧计划失效。
     const version = await this.remoteConfigDigest()
-    if (!version.ok) return { ok: false, blocked: true, reason: '无法读取远程配置版本，请刷新后重试。', plan: null, state }
+    if (!version.ok) return { ok: false, blocked: true, reason: version.truncated ? TRUNCATED_CONFIG_VERSION : '无法读取远程配置版本，请刷新后重试。', plan: null, state }
     const snapshot = { repo: this.cwd, configDigest: version.digest }
     this.rememberPreview(plan.operationId, { family: 'remote-config', kind, name, argv: plan.argv, intent: plan.intent, snapshot })
     return {
@@ -737,11 +745,14 @@ class RepositoryService {
     const preview = this.takePreview(operationId, 'remote-config')
     if (!preview || preview.kind !== kind) return { execution: null, ok: false, blocked: true, reason: PREVIEW_EXPIRED }
     const version = await this.remoteConfigDigest()
+    if (version.truncated) {
+      return { execution: null, ok: false, blocked: true, reason: TRUNCATED_CONFIG_VERSION, overview: await this.remoteOverview() }
+    }
     const unchanged = version.ok && preview.snapshot.repo === this.cwd && version.digest === preview.snapshot.configDigest
     if (!unchanged) {
       return { execution: null, ok: false, blocked: true, reason: STALE_REPOSITORY, overview: await this.remoteOverview() }
     }
-    const execution = await this.run(preview.argv, preview.intent, 'user', operationId)
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId, redactCloneOutput)
     const details = await this.remotesDetailed()
     return {
       execution,
@@ -880,6 +891,7 @@ class RepositoryService {
     if (!state.branch || state.branch === 'DETACHED HEAD') return { ok: false, blocked: true, reason: '当前处于分离头指针状态，没有可推送的本地分支。', plan: null, state }
     const remoteList = await this.remotesDetailed()
     if (!remoteList.ok) return { ok: false, blocked: true, reason: '无法读取远程配置，请刷新后重试。', plan: null, state }
+    if (remoteList.truncated) return { ok: false, blocked: true, reason: TRUNCATED_REMOTES, plan: null, state, remotes: remoteList.remotes }
     const remote = typeof request?.remote === 'string' && request.remote ? request.remote : remoteList.remotes[0]?.name || ''
     if (!isRemoteName(remote)) return { ok: false, blocked: true, reason: '请选择一个远程仓库。', plan: null, state, remotes: remoteList.remotes }
     const remoteEntry = remoteList.remotes.find((entry) => entry.name === remote)
@@ -893,6 +905,8 @@ class RepositoryService {
     if (!head.ok) return { ok: false, blocked: true, reason: '当前分支还没有提交，无法推送。', plan: null, state, remotes: remoteList.remotes }
     // 预览必须写清实际会用到的 push 地址（`remote.<name>.pushurl` 可能与 fetch 地址不同）。
     const pushUrls = await this.pushUrlsFor(remote)
+    // 被截断的读取不能当作“只有一个地址”或“完整列表”：直接阻断，不生成计划。
+    if (pushUrls.truncated) return { ok: false, blocked: true, reason: TRUNCATED_PUSH_URLS, plan: null, pushUrls: pushUrls.urls, state, remotes: remoteList.remotes }
     if (!pushUrls.ok || !pushUrls.urls.length) return { ok: false, blocked: true, reason: '无法读取该远程的推送地址，请刷新后重试。', plan: null, state, remotes: remoteList.remotes }
     // v0.6.10 Beta 的首次推送只支持单一 push 地址：配置了多个时把地址列出来、说明限制，
     // 并且不生成计划（界面因此没有确认入口），一条命令都不执行。
@@ -959,6 +973,10 @@ class RepositoryService {
     // 推送地址（可能配了多个，也可能与 fetch 地址不同）与配置版本都要和预览时一致。
     const pushUrls = await this.pushUrlsFor(preview.snapshot.remote)
     const version = await this.remoteConfigDigest()
+    if (pushUrls.truncated || version.truncated) {
+      const reason = pushUrls.truncated ? TRUNCATED_PUSH_URLS : TRUNCATED_CONFIG_VERSION
+      return { execution: null, ok: false, blocked: true, reason, state, overview: await this.remoteOverview() }
+    }
     const sameDestination =
       pushUrls.ok &&
       version.ok &&
@@ -975,7 +993,7 @@ class RepositoryService {
         overview: await this.remoteOverview(),
       }
     }
-    const execution = await this.run(preview.argv, preview.intent, 'user', operationId, null, null, NETWORK_TIMEOUT_MS)
+    const execution = await this.run(preview.argv, preview.intent, 'user', operationId, redactCloneOutput, null, NETWORK_TIMEOUT_MS)
     // 推送后以上游的实际结果为准：失败时上游与远端引用都保持原值。
     const upstreamRecord = await this.run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], 'Read branch upstream after push')
     return {

@@ -81,7 +81,24 @@ describe('GitCommandService', () => {
     expect(record.stdout).toBe('')
     expect(record.stderr).toBe('')
     expect(record.outputRetained).toBe(false)
+    expect(record.outputTruncated).toBe(false)
     expect(record).toMatchObject({ intent: 'Read remote configuration version', exitCode: 0, ok: true })
+  })
+
+  it('still flags truncation when the output is not retained', async () => {
+    const big = `${'x'.repeat(200)}\n`.repeat(40)
+    const service = serviceWith(() => fakeChild({ stdout: big, code: 0 }), { defaultMaxOutputBytes: 128 })
+    const { record, stdout } = await service.runCapturingOutput({
+      argv: ['config', '--get-regexp', '^remote\\.'],
+      intent: 'Read remote configuration version',
+      source: 'background',
+      cwd: 'D:/repo',
+      retainOutput: false,
+    })
+    // 不保留输出，但必须知道自己被截断了：否则按部分内容算出的版本会被当成完整版本。
+    expect(record.outputTruncated).toBe(true)
+    expect(record.stdout).toBe('')
+    expect(stdout.length).toBeLessThan(big.length)
   })
 
   it('keeps a failure with stderr and a nonzero exit code', async () => {

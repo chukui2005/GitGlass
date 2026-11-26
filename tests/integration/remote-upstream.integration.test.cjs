@@ -1,4 +1,5 @@
 const fs = require('node:fs')
+const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
 const { GitCommandService } = require('../../electron/git-command-service.cjs')
@@ -31,8 +32,26 @@ const gitFails = async (cwd, argv) => {
 }
 // `git config --get` exits 1 when the key is absent: read it tolerantly.
 const configValue = async (cwd, key) => {
-  const record = await commandsFor(cwd).run({ argv: ['config', '--get', key], intent: 'Fixture', source: 'background', cwd })
+  const record = await commandsFor().run({ argv: ['config', '--get', key], intent: 'Fixture', source: 'background', cwd })
   return record.ok ? record.stdout.trim() : ''
+}
+
+// Append entries straight to `.git/config`: a real, large configuration without
+// thousands of Git invocations. Duplicate `[remote "…"]` sections merge normally.
+const configPath = (dir) => path.join(dir, '.git', 'config')
+function appendRemoteSections(dir, count) {
+  let block = ''
+  for (let index = 0; index < count; index += 1) {
+    block += `[remote "bulk-${index}"]\n\turl = https://example.test/team/repository-${index}-with-a-long-name.git\n\tfetch = +refs/heads/*:refs/remotes/bulk-${index}/*\n`
+  }
+  fs.appendFileSync(configPath(dir), block, 'utf8')
+}
+function appendPushUrls(dir, count) {
+  let block = '[remote "origin"]\n'
+  for (let index = 0; index < count; index += 1) {
+    block += `\tpushurl = https://push.example.test/team/repository-${index}-target.git\n`
+  }
+  fs.appendFileSync(configPath(dir), block, 'utf8')
 }
 
 // A real bare remote with `main` plus a second branch `feature/report`.
@@ -437,5 +456,97 @@ describe('v0.6.10 remote configuration version (real Git)', () => {
     expect(stale.reason).toContain('变化')
     expect(await git(work, ['remote'])).not.toContain('upstream')
     expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
+  })
+})
+
+describe('v0.6.10 real remote failures are redacted before the ledger and the renderer (real Git)', () => {
+  it('redacts an encoded token echoed by a local HTTP 403 during the first push', async () => {
+    const { work, repository, commands } = await setup()
+    const token = 'placeholder-token-9c1'
+    const server = http.createServer((request, response) => {
+      response.writeHead(403)
+      response.end('forbidden')
+    })
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address()
+    try {
+      // 已有的 origin 指向本地 403 服务，地址里带占位令牌（直接改配置，不经过应用）。
+      await git(work, ['remote', 'set-url', 'origin', `http://127.0.0.1:${port}/team/repo.git?access%5Ftoken=${token}`])
+      await git(work, ['switch', '-c', 'rejected-by-http'])
+      fs.writeFileSync(path.join(work, 'http.txt'), 'http\n')
+      await git(work, ['add', '-A'])
+      await git(work, ['commit', '-m', 'feat: rejected by http'])
+
+      const prepared = await repository.prepareFirstPush({})
+      expect(prepared.ok, prepared.reason).toBe(true)
+      // 预览响应里也没有令牌原文。
+      expect(JSON.stringify(prepared)).not.toContain(token)
+
+      const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
+      expect(pushed.execution.ok).toBe(false)
+      // Git 回显的 403 失败输出在进入账本与渲染层之前已经脱敏。
+      expect(pushed.execution.stderr).toContain('403')
+      expect(pushed.execution.stderr).not.toContain(token)
+      expect(pushed.execution.stderr).toContain('<redacted>')
+      expect(JSON.stringify(pushed)).not.toContain(token)
+
+      const record = commands.history().find((entry) => entry.intent === 'Push branch and set upstream')
+      expect(record).toBeDefined()
+      expect(record.ok).toBe(false)
+      expect(JSON.stringify(record)).not.toContain(token)
+      // 推送失败没有设置上游。
+      await gitFails(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
+  })
+})
+
+describe('v0.6.10 truncated reads block write plans (real Git)', () => {
+  it('refuses both the old preview and a new one when the configuration read is truncated', async () => {
+    const { work, repository, commands } = await setup()
+    const prepared = await repository.prepareRemoteConfig('add', { name: 'upstream', url: 'https://example.test/team/repo.git' })
+    expect(prepared.ok).toBe(true)
+
+    // 外部把配置撑到超过默认 64 KiB 读取上限。
+    appendRemoteSections(work, 2000)
+    const digest = await repository.remoteConfigDigest()
+    expect(digest.truncated).toBe(true)
+    expect(digest.ok).toBe(false)
+    expect(digest.record.outputTruncated).toBe(true)
+    // 版本读取仍然不把配置内容写进账本。
+    expect(digest.record.stdout).toBe('')
+
+    // 旧预览不能覆盖外部修改：执行被拒，理由指向截断，而不是“配置没变”。
+    const stale = await repository.executeRemoteConfig('add', { name: 'upstream', url: 'https://example.test/team/repo.git' }, prepared.plan.operationId)
+    expect(stale).toMatchObject({ ok: false, blocked: true, execution: null })
+    expect(stale.reason).toContain('截断')
+    expect((await git(work, ['remote'])).split(/\r?\n/)).not.toContain('upstream')
+    expect(cloneRecords(commands, 'Add remote')).toHaveLength(0)
+
+    // 新预览同样被阻断：不生成计划，也就没有可确认的写入。
+    const blocked = await repository.prepareRemoteConfig('add', { name: 'another', url: 'https://example.test/team/repo.git' })
+    expect(blocked).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(blocked.reason).toContain('截断')
+  })
+
+  it('refuses the first push when the push-URL read is truncated', async () => {
+    const { work, repository, commands } = await setup()
+    await git(work, ['switch', '-c', 'many-pushes'])
+    fs.writeFileSync(path.join(work, 'many.txt'), 'many\n')
+    await git(work, ['add', '-A'])
+    await git(work, ['commit', '-m', 'feat: many pushes'])
+    // 2000 个 push 地址：`git remote get-url --push --all` 的输出远超 64 KiB。
+    appendPushUrls(work, 2000)
+
+    const pushUrls = await repository.pushUrlsFor('origin')
+    expect(pushUrls.truncated).toBe(true)
+    expect(pushUrls.ok).toBe(false)
+
+    const prepared = await repository.prepareFirstPush({})
+    expect(prepared).toMatchObject({ ok: false, blocked: true, plan: null })
+    expect(prepared.reason).toContain('截断')
+    expect(commands.history().filter((record) => record.intent === 'Push branch and set upstream')).toHaveLength(0)
+    await gitFails(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
   })
 })
