@@ -38,10 +38,13 @@ const OPERATION_ID = /^[A-Za-z0-9._:-]{1,128}$/
 // Same shapes as git-command-service's credential filter, but the replacement here is
 // a visible placeholder instead of a silent strip.
 const USERINFO_IN_TEXT = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@"']*@/gi
-const SECRET_QUERY_IN_TEXT = /([?&](?:access_token|auth|key|password|passwd|pwd|secret|token)=)[^&\s"']+/gi
 // The user-info span of an address, used to redact textually (bytes that are not a
 // credential stay exactly as the user typed them).
 const USERINFO_SPAN = /^([a-z][a-z0-9+.-]*:\/\/)([^/\s@]*)@/i
+// Query pairs inside free text (a command's stderr, `git remote -v`): the key is
+// matched verbatim here and decoded in `isSensitiveQueryKey`, so `access%5Ftoken`
+// is treated like `access_token`.
+const QUERY_PAIR_IN_TEXT = /([?&])([^=&\s"']+)=([^&\s"']*)/g
 
 const REASON = {
   invalidSource: '请输入仓库地址：HTTPS 或 SSH 地址（例如 https://host/owner/repo.git），也可以使用本地仓库路径。',
@@ -132,13 +135,17 @@ function redactCloneSource(value) {
 /**
  * Replaces credentials in Git output with the same placeholder. This runs on top of
  * GitCommandService's own stripping so a URL a remote echoes back still reads as
- * `<redacted>` in the ledger instead of silently losing a component.
+ * `<redacted>` in the ledger instead of silently losing a component. Query keys are
+ * compared after percent-decoding, so `?access%5Ftoken=…` is redacted as well as
+ * `?access_token=…`.
  *
  * @param {string} text
  * @returns {string}
  */
 function redactCloneOutput(text) {
-  return String(text ?? '').replace(USERINFO_IN_TEXT, `$1${PLACEHOLDER}@`).replace(SECRET_QUERY_IN_TEXT, `$1${PLACEHOLDER}`)
+  return String(text ?? '')
+    .replace(USERINFO_IN_TEXT, `$1${PLACEHOLDER}@`)
+    .replace(QUERY_PAIR_IN_TEXT, (match, separator, key) => (isSensitiveQueryKey(key) ? `${separator}${key}=${PLACEHOLDER}` : match))
 }
 
 /**

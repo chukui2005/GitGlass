@@ -67,6 +67,23 @@ describe('GitCommandService', () => {
     expect(received.options.env.IGNORED).toBeUndefined()
   })
 
+  it('can keep only execution metadata and discard the output entirely', async () => {
+    const service = serviceWith(() => fakeChild({ stdout: 'remote.origin.url https://user:token@host/x.git\n', code: 0 }))
+    const { record, stdout } = await service.runCapturingOutput({
+      argv: ['config', '--get-regexp', '^remote\\.'],
+      intent: 'Read remote configuration version',
+      source: 'background',
+      cwd: 'D:/repo',
+      retainOutput: false,
+    })
+    // 原始输出只回给调用方做哈希，账本记录里一个字都不留。
+    expect(stdout).toContain('token')
+    expect(record.stdout).toBe('')
+    expect(record.stderr).toBe('')
+    expect(record.outputRetained).toBe(false)
+    expect(record).toMatchObject({ intent: 'Read remote configuration version', exitCode: 0, ok: true })
+  })
+
   it('keeps a failure with stderr and a nonzero exit code', async () => {
     const service = serviceWith(() => fakeChild({ stderr: 'fatal: failed', code: 128 }))
     const record = await service.run({ argv: ['commit', '-m', 'test'], intent: 'Create commit', source: 'user', cwd: 'D:/repo' })

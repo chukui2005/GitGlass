@@ -258,18 +258,30 @@ describe('first push with upstream in the workbench (rendered)', () => {
     expect(await screen.findByText('已推送并设置上游：origin/main。')).toBeInTheDocument()
   })
 
-  it('shows every configured push URL in the preview', async () => {
-    const { user } = await renderRemote({
+  it('lists every configured push URL, explains the Beta limit and offers no confirmation', async () => {
+    const reason =
+      '该远程配置了 2 个推送地址。v0.6.10 Beta 的首次推送只支持一个 push 地址：请先在 Git 配置中只保留一个，或使用终端推送。'
+    const { user, stub } = await renderRemote({
       prepareFirstPush: vi.fn(async () => ({
-        ...FIRST_PUSH_PLAN,
+        ok: false,
+        blocked: true,
+        kind: 'first-push',
+        plan: null,
+        reason,
+        branch: 'main',
+        targetRef: 'refs/heads/main',
         pushUrls: ['ssh://push-one.example.test/team/repo.git', 'ssh://push-two.example.test/team/repo.git'],
       })),
     })
     await user.click(within(sidebar()).getByRole('button', { name: '首次推送并设置上游…' }))
     const panel = within(contextPanel())
+    expect(await panel.findByRole('alert')).toHaveTextContent(reason)
+    // 预览阶段就把两个地址列出来，并且没有确认入口。
     expect(panel.getByText('推送地址')).toBeInTheDocument()
     expect(panel.getByText('ssh://push-one.example.test/team/repo.git')).toBeInTheDocument()
     expect(panel.getByText('ssh://push-two.example.test/team/repo.git')).toBeInTheDocument()
+    expect(panel.queryByRole('button', { name: '确认首次推送并设置上游' })).toBeNull()
+    expect(stub.executeFirstPush).not.toHaveBeenCalled()
   })
 
   it('asks for a new preview when the push URL changed after the preview', async () => {

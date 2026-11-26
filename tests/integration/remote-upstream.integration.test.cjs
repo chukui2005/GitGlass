@@ -316,28 +316,47 @@ describe('v0.6.10 first push uses the actual push URL (real Git)', () => {
     expect(await git(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).toBe('origin/split-push')
   })
 
-  it('lists every configured push URL and pushes to all of them', async () => {
-    const { bare, work, repository } = await setup()
-    const first = path.join(workspace, 'push-one.git')
-    const second = path.join(workspace, 'push-two.git')
-    await bareClone(bare, first)
-    await bareClone(bare, second)
-    await git(work, ['remote', 'set-url', '--push', 'origin', first])
-    await git(work, ['remote', 'set-url', '--add', '--push', 'origin', second])
-    expect((await git(work, ['remote', 'get-url', '--push', '--all', 'origin'])).split(/\r?\n/)).toEqual([first, second])
+  it('blocks the first push when several push URLs are configured, without touching either remote', async () => {
+    const { bare, work, repository, commands } = await setup()
+    const accepting = path.join(workspace, 'push-accepting.git')
+    const rejecting = path.join(workspace, 'push-rejecting.git')
+    await bareClone(bare, accepting)
+    await bareClone(bare, rejecting)
+
+    // rejecting 上先放一个同名分支且历史分叉：真推过去一定会被 Git 拒绝。
+    const rival = path.join(workspace, 'rival')
+    const rivalClone = await commandsFor().run({ argv: ['clone', '--', rejecting, rival], intent: 'Fixture', source: 'background', cwd: workspace })
+    expect(rivalClone.ok, rivalClone.stderr).toBe(true)
+    await git(rival, ['config', 'user.name', 'Rival'])
+    await git(rival, ['config', 'user.email', 'rival@test.local'])
+    await git(rival, ['switch', '-c', 'multi-push'])
+    fs.writeFileSync(path.join(rival, 'rival.txt'), 'rival\n')
+    await git(rival, ['add', '-A'])
+    await git(rival, ['commit', '-m', 'feat: rival branch'])
+    await git(rival, ['push', 'origin', 'multi-push'])
+    const rivalHead = await git(rejecting, ['rev-parse', 'refs/heads/multi-push'])
+
+    await git(work, ['remote', 'set-url', '--push', 'origin', accepting])
+    await git(work, ['remote', 'set-url', '--add', '--push', 'origin', rejecting])
+    expect((await git(work, ['remote', 'get-url', '--push', '--all', 'origin'])).split(/\r?\n/)).toEqual([accepting, rejecting])
 
     await git(work, ['switch', '-c', 'multi-push'])
-    fs.writeFileSync(path.join(work, 'multi.txt'), 'multi\n')
+    fs.writeFileSync(path.join(work, 'local.txt'), 'local\n')
     await git(work, ['add', '-A'])
-    await git(work, ['commit', '-m', 'feat: multi push'])
-    const head = await git(work, ['rev-parse', 'HEAD'])
+    await git(work, ['commit', '-m', 'feat: local branch'])
 
     const prepared = await repository.prepareFirstPush({})
-    expect(prepared.pushUrls).toEqual([first, second])
-    const pushed = await repository.executeFirstPush({}, prepared.plan.operationId)
-    expect(pushed.execution.ok, pushed.execution.stderr).toBe(true)
-    expect(await git(first, ['rev-parse', 'refs/heads/multi-push'])).toBe(head)
-    expect(await git(second, ['rev-parse', 'refs/heads/multi-push'])).toBe(head)
+    expect(prepared).toMatchObject({ ok: false, blocked: true, plan: null })
+    // 预览阶段把所有地址列出来，并说明 Beta 的限制。
+    expect(prepared.pushUrls).toEqual([accepting, rejecting])
+    expect(prepared.reason).toContain('只支持一个')
+
+    // 一条命令都没执行：accepting 上没有新分支，rejecting 的引用保持原值，上游未设置。
+    await gitFails(accepting, ['rev-parse', '--verify', 'refs/heads/multi-push'])
+    expect(await git(rejecting, ['rev-parse', 'refs/heads/multi-push'])).toBe(rivalHead)
+    await gitFails(work, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    expect(await configValue(work, 'branch.multi-push.remote')).toBe('')
+    expect(commands.history().filter((record) => record.intent === 'Push branch and set upstream')).toHaveLength(0)
   })
 
   it('pushes only the branch when a tag shares its name and push.followTags is enabled', async () => {
@@ -360,6 +379,40 @@ describe('v0.6.10 first push uses the actual push URL (real Git)', () => {
     // 标签没有被推到远端；本地标签仍在。
     await gitFails(bare, ['rev-parse', '--verify', 'refs/tags/shared-name'])
     expect(await git(work, ['rev-parse', '--verify', 'refs/tags/shared-name'])).toBeTruthy()
+  })
+})
+
+describe('v0.6.10 remote URLs keep credentials out of the renderer and the ledger (real Git)', () => {
+  it('redacts a percent-encoded token query parameter in every response and every new ledger record', async () => {
+    const { work, repository, commands } = await setup()
+    const token = 'placeholder-token-7f3a'
+    // 已有的远程地址里带一个占位令牌（直接改配置，不经过应用）。
+    await git(work, ['remote', 'set-url', 'origin', `https://example.test/team/repo.git?access%5Ftoken=${token}&ref=main`])
+
+    const overview = await repository.remoteOverview()
+    const details = await repository.remotesDetailed()
+    const pushUrls = await repository.pushUrlsFor('origin')
+    const digest = await repository.remoteConfigDigest()
+
+    // 渲染层能拿到的每一份响应都不含令牌原文。
+    for (const payload of [overview, details, pushUrls]) {
+      expect(JSON.stringify(payload)).not.toContain(token)
+    }
+    expect(overview.details.find((entry) => entry.name === 'origin').url).toContain('<redacted>')
+    expect(overview.details.find((entry) => entry.name === 'origin').url).toContain('ref=main')
+    expect(pushUrls.urls[0]).toContain('<redacted>')
+
+    // 配置版本读取只留执行元数据：账本里没有 stdout/stderr。
+    expect(digest.record).toMatchObject({ intent: 'Read remote configuration version', outputRetained: false, stdout: '', stderr: '' })
+
+    // 这些读取新增的每一条账本记录都已脱敏。
+    const reads = commands.history().filter((record) =>
+      ['Read remote configuration', 'Read remote push URL', 'Read remote configuration version'].includes(record.intent),
+    )
+    expect(reads.length).toBeGreaterThanOrEqual(3)
+    for (const record of reads) {
+      expect(JSON.stringify(record)).not.toContain(token)
+    }
   })
 })
 

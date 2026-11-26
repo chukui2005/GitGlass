@@ -654,6 +654,8 @@ class RepositoryService {
       intent: 'Read remote configuration version',
       source: 'background',
       cwd: this.cwd,
+      // 账本只留执行元数据：原始配置在这里取哈希后立刻丢弃，记录里 stdout/stderr 为空。
+      retainOutput: false,
     })
     // 没有任何 remote.* 键时 `git config --get-regexp` 退出码是 1：那也是一个有效版本。
     const known = record.exitCode === 0 || record.exitCode === 1
@@ -892,6 +894,23 @@ class RepositoryService {
     // 预览必须写清实际会用到的 push 地址（`remote.<name>.pushurl` 可能与 fetch 地址不同）。
     const pushUrls = await this.pushUrlsFor(remote)
     if (!pushUrls.ok || !pushUrls.urls.length) return { ok: false, blocked: true, reason: '无法读取该远程的推送地址，请刷新后重试。', plan: null, state, remotes: remoteList.remotes }
+    // v0.6.10 Beta 的首次推送只支持单一 push 地址：配置了多个时把地址列出来、说明限制，
+    // 并且不生成计划（界面因此没有确认入口），一条命令都不执行。
+    if (pushUrls.urls.length > 1) {
+      return {
+        ok: false,
+        blocked: true,
+        kind: 'first-push',
+        reason: `该远程配置了 ${pushUrls.urls.length} 个推送地址。v0.6.10 Beta 的首次推送只支持一个 push 地址：请先在 Git 配置中只保留一个，或使用终端推送。`,
+        plan: null,
+        pushUrls: pushUrls.urls,
+        branch: state.branch,
+        remote,
+        targetRef,
+        state,
+        remotes: remoteList.remotes,
+      }
+    }
     const version = await this.remoteConfigDigest()
     if (!version.ok) return { ok: false, blocked: true, reason: '无法读取远程配置版本，请刷新后重试。', plan: null, state, remotes: remoteList.remotes }
     // 源与目标都是完整引用：同名标签不会被当成要推的分支；`--no-follow-tags` 显式关掉

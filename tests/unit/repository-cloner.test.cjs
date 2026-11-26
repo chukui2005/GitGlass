@@ -147,6 +147,11 @@ describe('placeholder redaction', () => {
     expect(output).not.toContain('hunter2')
     expect(output).toContain(`https://${PLACEHOLDER}@host/x.git/`)
     expect(output).toContain(`access_token=${PLACEHOLDER}`)
+    // 百分号编码的键同样按敏感参数处理（账本里的 `git remote -v` 输出走这条路径）。
+    const encoded = redactCloneOutput("origin\thttps://host/x.git?access%5Ftoken=secret-token&ref=main (fetch)")
+    expect(encoded).not.toContain('secret-token')
+    expect(encoded).toContain(`access%5Ftoken=${PLACEHOLDER}`)
+    expect(encoded).toContain('ref=main')
   })
 
   it('pins the transport for the classified address only', () => {
