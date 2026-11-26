@@ -48,6 +48,18 @@ Staging and unstaging a single hunk are the first operations whose *input* is a 
 - The patch text travels over stdin as command input, so it is neither an argv entry nor part of any record. Because `git apply --cached -` does not name the file, the record carries the two audit facts separately: `target` (repository-relative path) and `hunk` (the `@@ -a,b +c,d @@` range). Both fields appear only on patch operations, and the `hunk` annotation still passes through `redactCredentials()` so no annotation can become a way around the credential filter.
 - Boundaries kept on purpose: new, deleted, renamed, binary, permission-changing, unmerged and truncated diffs are rejected for hunk operations and keep the existing whole-file flow; so is any diff Node could not decode byte-exactly, because re-encoding it would corrupt the index entry.
 
+## Clone and open boundary (0.6.10)
+
+`repo:clone:*` is the first write flow that can start with **no repository open**, so its validation is earlier and narrower than every other operation:
+
+- The renderer sends only `{ source, parent, name }` (an empty `name` means "derive it") plus the `operationId` of the plan it reviewed. `normalizeCloneRequest()` refuses unknown keys, so argv, a working directory or switches such as `--bare` can never travel from the renderer.
+- `classifyCloneSource()` accepts three shapes: HTTPS/HTTP without embedded user info or `token`/`password`-style query parameters, SSH (`ssh://` or the scp-like `user@host:path`, where the username is an ordinary address part), and absolute local paths — the real-Git tests and local mirrors need the last one. An address carrying embedded credentials is refused *before* any command or ledger record exists; that rejection deliberately produces no record at all, so the credential cannot be echoed back.
+- `validateCloneTarget()` requires an existing parent folder and a target directory that is either absent or empty, and returns the exact final directory. `resolveRepositoryName()` refuses separators, `.`/`..`, Windows reserved names and a trailing dot or space; an empty name is derived from the address (`origin.git` → `origin`).
+- The fixed execution matrix is `git clone -- <source> <name>` with `cwd` set to the chosen parent folder (Git itself creates the final folder), using `NETWORK_TIMEOUT_MS` and the shared `GIT_TERMINAL_PROMPT=0` environment. The ledger records the real argv, `cwd`, exit code and stdout/stderr; a plan is presentation only and is never a `CommandRecord`.
+- `repo:clone:prepare` returns the plan and final directory, `repo:clone:execute` replays it with the same `operationId`. Changing the address, the target position or the folder name drops the reviewed plan, so the confirmed command is always the one the dialog displayed.
+- A failure cleans up nothing itself: Git rolls back what it created, an existing empty folder and any other user files stay exactly as they were. Only a successful clone goes through `openRepositoryPath()` — still `git rev-parse --show-toplevel` for the real root, still the same "remember + watcher" tail — so a failed clone leaves the open repository, commit draft and staged content untouched.
+- `describeCloneFailure()` maps timeout, authentication failure, an existing destination, a missing remote and an unreachable host to one Chinese sentence each; the raw stderr stays in the ledger for diagnosis.
+
 ## Remote synchronization safety boundary
 
 `RepositoryService.remoteOverview()` reads `git remote`, `git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`, `git remote get-url <remote>`, and `git rev-list --left-right --count @{upstream}...HEAD`. Each is a background CommandRecord. It returns a clear absence reason for a missing remote or upstream instead of fabricating counts.
@@ -83,6 +95,9 @@ All methods below are exposed as `window.gitglass`; none expose Electron objects
 | `prepareRemote(kind)` | `{ ok, blocked, reason, plan, overview }` | background remote safety reads; plan is not a ledger entry |
 | `executeRemote(kind, operationId)` | `{ execution, ok, blocked, reason, plan, overview }` | repeats safety reads, then appends one user record with the planned operation ID |
 | `openRepository(path)` | `{ ok, path, state, execution }` or `{ ok: false, message }` | one `background` `rev-parse --show-toplevel` record |
+| `chooseCloneTarget()` | `{ canceled: true }` or `{ canceled: false, path }` | none (a folder picker, no Git command) |
+| `prepareClone(request)` | `{ ok, blocked, reason, plan, target, existingEmpty, name, parent, source }` | none; the plan is not a ledger entry |
+| `executeClone(request)` | `{ ok, path, state, target, plan, execution }` or `{ ok: false, reason, target, execution }` | one `user` `Clone repository` record, then one `background` `rev-parse --show-toplevel` record on success |
 | `getRecentRepositories()` | `[{ path, name, exists }]` newest first, at most five | read-only, no record |
 | `forgetRecentRepository(path)` | same list after removal | read-only, no record |
 | `onRepositoryChanged(listener)` | subscription; callback receives `{ reason: 'head' \| 'refs' \| 'index' }` | none (watcher never writes the repository) |
