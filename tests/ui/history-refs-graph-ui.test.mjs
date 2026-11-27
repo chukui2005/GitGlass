@@ -122,7 +122,7 @@ describe('history refs and bounded graph (rendered)', () => {
     const mergeParents = [...mergeRow.querySelectorAll('svg.commit-graph [data-parent]')]
       .map((edge) => edge.getAttribute('data-parent'))
     expect(mergeParents).toEqual([B, C])
-    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('4 条父边')
+    expect(container.querySelector('.history-graph-notice')).toBeNull()
     expect(container.textContent).not.toContain('NaN')
   })
 
@@ -261,8 +261,7 @@ describe('history refs and bounded graph (rendered)', () => {
     const row = screen.getByRole('button', { name: `查看提交 ${octopus.subject}` })
     expect(within(row).getByText('省略 2')).toHaveAttribute('title', expect.stringContaining(parentHashes[8]))
     expect(row.querySelectorAll('svg.commit-graph [data-parent]')).toHaveLength(7)
-    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('已省略 2 条连接')
-    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('没有画成错误的实线')
+    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('省略 2 条连接')
   })
 
   it('marks a parent outside the current page as a visible boundary edge', async () => {
@@ -279,8 +278,8 @@ describe('history refs and bounded graph (rendered)', () => {
     const row = screen.getByRole('button', { name: `查看提交 ${boundaryCommit.subject}` })
     expect(within(row).getByText('边界')).toHaveAttribute('title', expect.stringContaining(MISSING))
     expect(row.querySelector('svg.commit-graph [data-boundary="true"]')).toHaveAttribute('data-parent', MISSING)
-    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('边界 1')
-    expect(container.querySelector('.history-graph-notice')).toHaveTextContent('父提交不在读取范围内')
+    expect(within(container.querySelector('.history-graph-notice')).getByText('页外父提交 1'))
+      .toHaveAttribute('title', '虚线指向列表外的父提交')
   })
 
   it('keeps the list-only view when a file filter would use Git history simplification', async () => {
@@ -291,7 +290,7 @@ describe('history refs and bounded graph (rendered)', () => {
     await waitFor(() => expect(stub.queryHistory).toHaveBeenCalledWith(expect.objectContaining({ filePath: 'src/main.jsx' })))
 
     const notice = container.querySelector('.history-graph-notice.list-only')
-    expect(notice).toHaveTextContent('文件筛选会经过 Git 的历史简化')
+    expect(notice).toHaveTextContent('文件筛选仅显示列表')
     expect(container.querySelector('svg.commit-graph')).toBeNull()
     // The commit list remains usable.
     expect(screen.getByRole('button', { name: `查看提交 ${MERGE.subject}` })).toBeInTheDocument()
