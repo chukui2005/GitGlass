@@ -89,34 +89,21 @@ export function HistoryGraphNotice({ graph, available = true, fileFiltered = fal
   if (fileFiltered) {
     return (
       <div className="history-graph-notice list-only" role="note">
-        <strong>列表视图</strong>
-        <span>文件筛选会经过 Git 的历史简化，父关系不再是完整提交图；清除文件条件后恢复提交图。</span>
+        <span>文件筛选仅显示列表</span>
       </div>
     );
   }
   if (!available || !graph?.rows?.length) {
     return loading ? <div className="history-graph-notice" role="status">正在读取提交关系…</div> : null;
   }
-  const summary = summarizeHistoryGraph(graph);
+  const { atLimit, truncated, boundaryEdges, omittedEdges, overflow } = summarizeHistoryGraph(graph);
+  if (!atLimit && !truncated && !boundaryEdges && !overflow && !omittedEdges) return null;
   return (
     <div className="history-graph-notice" role="note" aria-label="提交图范围说明">
-      <div>
-        <strong>提交图</strong>
-        <span>{summary.commits} 条提交 · {summary.parentEdges} 条父边{summary.mergeCommits ? ` · ${summary.mergeCommits} 个合并提交` : ""}</span>
-        {summary.boundaryEdges > 0 && <b className="graph-boundary-badge">边界 {summary.boundaryEdges}</b>}
-        {summary.omittedEdges > 0 && <b className="graph-boundary-badge">已省略 {summary.omittedEdges} 条连接</b>}
-      </div>
-      {(summary.boundaryEdges > 0 || summary.atLimit || summary.truncated || summary.overflow) && (
-        <p>
-          {summary.truncated ? "本次历史读取被截断。" : summary.atLimit ? "当前只读取最近一页提交。" : ""}
-          {summary.omittedEdges > 0
-            ? "泳道达到上限，无法放入的父连接已标记为省略，没有画成错误的实线。"
-            : summary.overflow
-              ? "泳道达到上限，超出画布的边界连接已压缩到最右泳道。"
-              : ""}
-          父提交不在读取范围内时，虚线在列表底部标出边界；列表与详情仍然可读。
-        </p>
-      )}
+      {(truncated || atLimit) && <span>{truncated ? "历史读取已截断" : "仅显示部分提交"}</span>}
+      {boundaryEdges > 0 && <span className="graph-boundary-badge" title="虚线指向列表外的父提交">页外父提交 {boundaryEdges}</span>}
+      {omittedEdges > 0 && <span className="graph-boundary-badge">省略 {omittedEdges} 条连接</span>}
+      {overflow && !omittedEdges && <span>部分连线共用泳道</span>}
     </div>
   );
 }
@@ -164,7 +151,6 @@ function RefRow({ ref, activeHash, onSelect }) {
 export function HistoryRefs({ head, refs = [], reason = "", loading = false, truncated = false, notice = "", activeHash = "", onSelect }) {
   const groups = groupReferences(refs);
   const headRef = headReference(head);
-  const count = refs.length + (headRef?.commit ? 1 : 0);
 
   function moveFocus(event) {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -184,9 +170,8 @@ export function HistoryRefs({ head, refs = [], reason = "", loading = false, tru
     <section className="reference-panel" aria-label="Git 引用" onKeyDown={moveFocus}>
       <div className="section-label">
         <span>引用</span>
-        <b>{loading ? "读取中" : count}</b>
+        {loading && <b role="status">读取中</b>}
       </div>
-      <p className="reference-copy">点击分支、远程跟踪分支或标签，定位到它实际指向的提交。</p>
       {headRef && (
         <div className="reference-head">
           <span className="reference-group-title">当前 HEAD</span>
@@ -212,7 +197,7 @@ export function HistoryRefs({ head, refs = [], reason = "", loading = false, tru
       {reason && <p className="reference-error" role="alert">{reason}</p>}
       {truncated && (
         <p className="reference-truncated" role="status">
-          仅显示部分引用：引用列表超过读取上限，末尾不完整记录已丢弃。
+          仅显示部分引用
         </p>
       )}
       {notice && <p className="ref-feedback" role="status" aria-live="polite">{notice}</p>}
@@ -221,7 +206,7 @@ export function HistoryRefs({ head, refs = [], reason = "", loading = false, tru
       )}
       {groups.map((group) => (
         <div className="reference-group" key={group.kind}>
-          <div className="reference-group-title">{group.label}<span>{group.refs.length}</span></div>
+          <div className="reference-group-title">{group.label}</div>
           {group.refs.map((ref) => (
             <RefRow
               key={ref.fullName}

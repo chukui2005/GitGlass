@@ -1210,7 +1210,6 @@ export function App() {
       {historyMode ? <div ref={workspaceRef} id="workspace-main" className="workspace history-workspace" style={{ "--left-panel-width": `${panelWidths.left}px`, "--right-panel-width": `${panelWidths.right}px` }} tabIndex="-1">
         <aside className="status-panel">
           <div className="panel-heading"><h2>历史审查</h2></div>
-          <p className="inspector-copy">默认读取最近 80 条；应用筛选后最多返回 200 条。所有查询都作为系统读取记录在命令账本中。</p>
           <HistoryFilters
             draft={historyDraft}
             branches={branches}

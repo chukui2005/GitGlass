@@ -37,7 +37,7 @@ describe('v0.6.10 PR3 history refs and graph (real window)', () => {
     expect(data.graph.edges).toHaveLength(2)
     expect(data.graph.edges).toEqual(expect.arrayContaining([data.commits.feature]))
     expect(data.graph.nodes).toBe(1)
-    expect(data.graph.notice).toContain('条父边')
+    expect(data.graph.notice).toBe('')
     expect(data.tagJumpScreenshotBytes).toBeGreaterThan(10_000)
     expect(data.repositoryUnchanged).toBe(true)
   }, 180_000)

@@ -387,11 +387,9 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
    supplement inside the existing commit button, so keyboard behaviour stays
    the native button row and no second tab stop is introduced. */
 .reference-panel{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);min-width:0}
-.reference-copy{margin:0 0 7px;color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
 .reference-head{display:grid;gap:2px;margin-bottom:5px}
 .reference-group{display:grid;gap:1px;margin-top:8px;min-width:0}
-.reference-group-title{display:flex;align-items:center;justify-content:space-between;min-height:20px;color:var(--muted);font-size:var(--font-aux);font-weight:600}
-.reference-group-title span{font:var(--font-aux) var(--mono);font-weight:500}
+.reference-group-title{display:flex;align-items:center;min-height:20px;color:var(--muted);font-size:var(--font-aux);font-weight:600}
 .reference-empty,.ref-unborn{margin:4px 0;color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux);overflow-wrap:anywhere}
 .reference-error{margin:4px 0;color:var(--red);font-size:var(--font-aux);line-height:var(--line-aux)}
 .reference-truncated{margin:4px 0;padding:5px 7px;border-left:2px solid var(--orange);background:var(--orange-soft);color:var(--orange-ink);font-size:var(--font-aux);line-height:var(--line-aux)}
@@ -418,11 +416,7 @@ html,body,#root,.app-shell{min-width:0}.app-shell{width:100%}.topbar{min-width:0
 .merge-badge{background:var(--active);color:var(--muted)}
 .graph-boundary-badge{background:var(--orange-soft);color:var(--orange-ink)}
 .graph-boundary-badge.omitted{background:var(--red-soft);color:var(--red)}
-.history-graph-notice{display:grid;gap:2px;margin:0 0 5px;padding:5px 0 6px;border-bottom:1px solid var(--line);color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
-.history-graph-notice>div{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
-.history-graph-notice strong{color:var(--text);font-size:var(--font-aux)}
-.history-graph-notice p{margin:0;color:var(--muted);overflow-wrap:anywhere}
+.history-graph-notice{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:0 0 5px;padding:4px 0 5px;border-bottom:1px solid var(--line);color:var(--muted);font-size:var(--font-aux);line-height:var(--line-aux)}
 .history-graph-notice.list-only{padding:6px 8px;border-left:2px solid var(--orange);background:var(--orange-soft);color:var(--orange-ink)}
-.history-graph-notice.list-only strong{color:var(--orange-ink)}
 .history-selection-note{margin:0 0 5px;padding:5px 7px;border-left:2px solid var(--blue);background:var(--blue-soft);color:var(--text);font-size:var(--font-aux);line-height:var(--line-aux)}
 @media(max-width:1080px){.reference-panel{font-size:var(--font-aux)}.commit-select.has-graph{grid-template-columns:72px minmax(0,1fr)}.commit-graph{width:72px}}
